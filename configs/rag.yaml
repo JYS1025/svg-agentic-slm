@@ -1,0 +1,13 @@
+# RAG configuration
+rag:
+  backend: "chromadb"  # Options: chromadb
+  collection_name: "svg_patterns"
+  persist_directory: "./data/chroma_db"
+  embedding_model: "all-MiniLM-L6-v2"  # Sentence-transformers model
+  top_k: 3
+  similarity_threshold: 0.5
+
+  # Document loading
+  corpus_path: "./data/rag_corpus/svg_patterns_sample.jsonl"
+  chunk_size: 512
+  chunk_overlap: 50

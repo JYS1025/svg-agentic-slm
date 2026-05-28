@@ -1,0 +1,11 @@
+# Model configuration
+model:
+  model_id: "google/gemma-3-4b-it"  # Placeholder; update to Gemma 4 E4B when available
+  backend_type: "huggingface"  # Options: huggingface
+  device_map: "auto"
+  torch_dtype: "bfloat16"
+  trust_remote_code: false
+  load_in_4bit: false
+  load_in_8bit: false
+  attn_implementation: null  # Options: null, flash_attention_2, sdpa
+  max_memory: null  # e.g., {0: "20GiB", "cpu": "30GiB"}

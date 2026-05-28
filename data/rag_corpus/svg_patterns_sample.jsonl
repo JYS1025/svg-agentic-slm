@@ -1,0 +1,4 @@
+{"pattern_name": "centered_circle", "description": "A circle centered on the canvas", "svg_snippet": "<circle cx=\"128\" cy=\"128\" r=\"48\" fill=\"{color}\"/>", "tags": ["shape", "circle", "centered"]}
+{"pattern_name": "full_background", "description": "A full-canvas background rectangle", "svg_snippet": "<rect width=\"256\" height=\"256\" fill=\"{color}\"/>", "tags": ["background", "rectangle", "fill"]}
+{"pattern_name": "bordered_rectangle", "description": "A rectangle with a stroke border", "svg_snippet": "<rect x=\"{x}\" y=\"{y}\" width=\"{w}\" height=\"{h}\" fill=\"{fill}\" stroke=\"{stroke}\" stroke-width=\"{sw}\"/>", "tags": ["shape", "rectangle", "border", "stroke"]}
+{"pattern_name": "text_label", "description": "A centered text label", "svg_snippet": "<text x=\"128\" y=\"128\" text-anchor=\"middle\" dominant-baseline=\"middle\" font-size=\"{size}\" fill=\"{color}\">{text}</text>", "tags": ["text", "label", "centered"]}

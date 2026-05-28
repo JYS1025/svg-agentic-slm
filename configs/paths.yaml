@@ -1,0 +1,23 @@
+# Path configuration
+paths:
+  project_root: "."  # Resolved at runtime
+  
+  # Data directories
+  data:
+    raw: "./data/raw"
+    processed: "./data/processed"
+    examples: "./data/examples"
+    rag_corpus: "./data/rag_corpus"
+  
+  # Output directories
+  outputs:
+    generations: "./outputs/generations"
+    renders: "./outputs/renders"
+    eval_reports: "./outputs/eval_reports"
+  
+  # Model and training
+  checkpoints: "./checkpoints"
+  logs: "./logs"
+  
+  # Prompts
+  prompts: "./src/svg_agentic_slm/prompts"

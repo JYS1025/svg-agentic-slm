@@ -1,0 +1,23 @@
+# Generation configuration
+generation:
+  max_new_tokens: 2048
+  temperature: 0.7
+  top_p: 0.9
+  top_k: 50
+  do_sample: true
+  repetition_penalty: 1.1
+  num_return_sequences: 1
+  seed: 42
+
+  # SVG-specific generation settings
+  svg:
+    target_width: 256
+    target_height: 256
+    max_svg_length: 8192  # characters
+
+  # Orchestration settings
+  orchestration:
+    enable_rag: false
+    enable_critic: false
+    max_revision_rounds: 2
+    critic_type: "rule"  # Options: rule, llm, both

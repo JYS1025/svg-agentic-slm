@@ -1,0 +1,49 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+*.egg-info/
+dist/
+build/
+*.egg
+.eggs/
+
+# Virtual environments
+.venv/
+venv/
+env/
+conda-env/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Jupyter
+.ipynb_checkpoints/
+
+# Environment
+.env
+
+# Outputs
+outputs/
+checkpoints/
+logs/
+
+# Data (keep examples)
+data/raw/*
+data/processed/*
+!data/raw/.gitkeep
+!data/processed/.gitkeep
+!data/examples/
+!data/rag_corpus/
+
+# Model artifacts
+*.bin
+*.safetensors
+*.pt
+*.onnx

@@ -1,0 +1,40 @@
+# LoRA fine-tuning configuration
+train:
+  # Base model
+  base_model_id: "google/gemma-3-4b-it"  # Placeholder
+  
+  # LoRA parameters
+  lora:
+    r: 16
+    lora_alpha: 32
+    lora_dropout: 0.05
+    target_modules:
+      - "q_proj"
+      - "v_proj"
+    bias: "none"
+    task_type: "CAUSAL_LM"
+
+  # SFT training parameters
+  sft:
+    output_dir: "./checkpoints/lora_text_to_svg"
+    num_train_epochs: 3
+    per_device_train_batch_size: 4
+    gradient_accumulation_steps: 4
+    learning_rate: 2.0e-4
+    weight_decay: 0.01
+    warmup_ratio: 0.03
+    lr_scheduler_type: "cosine"
+    logging_steps: 10
+    save_steps: 100
+    eval_steps: 100
+    max_seq_length: 4096
+    fp16: false
+    bf16: true
+    seed: 42
+
+  # Dataset
+  dataset:
+    train_path: "./data/processed/train.jsonl"
+    eval_path: "./data/processed/eval.jsonl"
+    text_field: "instruction"
+    target_field: "output_svg"

@@ -1,0 +1,20 @@
+# Evaluation configuration
+eval:
+  dataset_path: "./data/processed/eval.jsonl"
+  output_dir: "./outputs/eval_reports"
+  
+  # Metrics to compute
+  metrics:
+    - svg_validity_rate
+    - render_success_rate
+    - generation_latency
+    - simple_instruction_alignment
+  
+  # Evaluation settings
+  batch_size: 8
+  max_samples: null  # null = all samples
+  seed: 42
+  
+  # Rendering for eval
+  renderer_backend: "cairosvg"  # Options: cairosvg, playwright
+  render_output_dir: "./outputs/renders"
