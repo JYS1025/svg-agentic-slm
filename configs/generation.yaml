@@ -21,3 +21,11 @@ generation:
     enable_critic: false
     max_revision_rounds: 2
     critic_type: "rule"  # Options: rule, llm, both
+
+  # Render settings for generated SVG artifacts
+  render:
+    enabled: true
+    backend: "cairosvg"  # Options: cairosvg
+    output_format: "png"  # Options: png, pdf, ps, svg
+    width: null  # null = use svg.target_width
+    height: null  # null = use svg.target_height

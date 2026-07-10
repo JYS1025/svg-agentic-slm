@@ -45,6 +45,7 @@ def generate_report(
         "render_success_rate": result.render_success_rate,
         "avg_generation_latency": result.avg_generation_latency,
         "avg_instruction_alignment": result.avg_instruction_alignment,
+        "per_sample_results": result.per_sample_results,
         "metadata": result.metadata,
     }
     with open(json_path, "w") as f:
@@ -54,6 +55,17 @@ def generate_report(
     txt_path = output_dir / f"{report_name}.txt"
     with open(txt_path, "w") as f:
         f.write(result.summary())
+        if result.per_sample_results:
+            f.write("\n\nPer-sample results:\n")
+            for sample in result.per_sample_results:
+                instruction = sample.get("instruction", "")
+                svg_path = sample.get("svg_path", "")
+                render_success = sample.get("render_success", False)
+                is_valid = sample.get("is_valid", False)
+                f.write(
+                    f"- valid={is_valid} render_success={render_success} "
+                    f"instruction={instruction} svg_path={svg_path}\n"
+                )
 
     logger.info("Report saved to %s and %s", json_path, txt_path)
     return json_path
