@@ -1,6 +1,6 @@
 # Evaluation configuration
 eval:
-  dataset_path: "./data/processed/eval.jsonl"
+  artifact_path: "./outputs/generations"
   output_dir: "./outputs/eval_reports"
   
   # Metrics to compute

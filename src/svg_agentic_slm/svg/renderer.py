@@ -47,40 +47,72 @@ class CairoSVGRenderer(BaseRenderer):
         TODO: Handle rendering errors gracefully.
         TODO: Add support for PDF and PS output formats.
         """
+        output_format = output_format.lower()
         logger.info(
-            "[PLACEHOLDER] Would render SVG to %s at %dx%d",
+            "Rendering SVG to %s at %dx%d using CairoSVG (%s)",
             output_path,
             width,
             height,
+            output_format,
         )
 
-        # TODO: Implement when CairoSVG is available:
-        # import cairosvg
-        # try:
-        #     output_path.parent.mkdir(parents=True, exist_ok=True)
-        #     cairosvg.svg2png(
-        #         bytestring=svg_content.encode("utf-8"),
-        #         write_to=str(output_path),
-        #         output_width=width,
-        #         output_height=height,
-        #     )
-        #     return SVGRenderResult(
-        #         success=True,
-        #         output_path=output_path,
-        #         format=output_format,
-        #         width=width,
-        #         height=height,
-        #     )
-        # except Exception as e:
-        #     return SVGRenderResult(success=False, error=str(e))
+        supported_formats = {"png", "pdf", "ps", "svg"}
+        if output_format not in supported_formats:
+            return SVGRenderResult(
+                success=False,
+                output_path=output_path,
+                format=output_format,
+                width=width,
+                height=height,
+                error=f"Unsupported render format: {output_format}",
+            )
+
+        try:
+            import cairosvg
+        except ImportError as exc:
+            logger.warning("CairoSVG is not available: %s", exc)
+            return SVGRenderResult(
+                success=False,
+                output_path=output_path,
+                format=output_format,
+                width=width,
+                height=height,
+                error="CairoSVG is not installed.",
+            )
+
+        renderers = {
+            "png": cairosvg.svg2png,
+            "pdf": cairosvg.svg2pdf,
+            "ps": cairosvg.svg2ps,
+            "svg": cairosvg.svg2svg,
+        }
+        renderer = renderers[output_format]
+
+        try:
+            output_path.parent.mkdir(parents=True, exist_ok=True)
+            renderer(
+                bytestring=svg_content.encode("utf-8"),
+                write_to=str(output_path),
+                output_width=width,
+                output_height=height,
+            )
+        except Exception as exc:
+            logger.exception("SVG rendering failed for %s", output_path)
+            return SVGRenderResult(
+                success=False,
+                output_path=output_path,
+                format=output_format,
+                width=width,
+                height=height,
+                error=str(exc),
+            )
 
         return SVGRenderResult(
-            success=False,
+            success=True,
             output_path=output_path,
             format=output_format,
             width=width,
             height=height,
-            error="Rendering not yet implemented (placeholder).",
         )
 
 

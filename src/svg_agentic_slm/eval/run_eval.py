@@ -10,7 +10,15 @@ import logging
 from pathlib import Path
 from typing import Any
 
+from svg_agentic_slm.artifacts.generation import (
+    GenerationArtifactRecord,
+    list_generation_artifacts,
+    load_generation_artifact,
+)
+from svg_agentic_slm.cli.overrides import merge_nested_dicts
+from svg_agentic_slm.eval.evaluator import Evaluator
 from svg_agentic_slm.eval.schemas import EvaluationResult
+from svg_agentic_slm.svg.validator import SVGValidator
 from svg_agentic_slm.utils.config import load_yaml_config
 
 logger = logging.getLogger(__name__)
@@ -20,7 +28,7 @@ def run_evaluation(
     config_path: str | Path,
     overrides: dict[str, Any] | None = None,
 ) -> EvaluationResult:
-    """Load configuration and run evaluation.
+    """Load configuration and evaluate generated artifact bundles.
 
     Args:
         config_path: Path to the eval.yaml config file.
@@ -29,23 +37,44 @@ def run_evaluation(
     Returns:
         Evaluation results.
 
-    TODO: Implement full evaluation setup:
-    1. Load eval config.
-    2. Build model backend.
-    3. Build orchestrator with components.
-    4. Load evaluation dataset.
-    5. Run evaluator.
-    6. Generate report.
+    Supported artifact sources:
+    - directory of generated `.json` sidecars
+    - single `.json` sidecar
+    - single `.svg` file with matching `.json` sidecar
     """
     config = load_yaml_config(config_path)
+    if overrides:
+        config = merge_nested_dicts(config, overrides)
     eval_config = config.get("eval", {})
 
-    logger.info("[PLACEHOLDER] Would run evaluation with config from: %s", config_path)
-    logger.info("Dataset: %s", eval_config.get("dataset_path", "not specified"))
-    logger.info("Metrics: %s", eval_config.get("metrics", []))
+    source_path = Path(
+        eval_config.get("artifact_path")
+        or eval_config.get("dataset_path", "./outputs/generations")
+    )
+    logger.info("Running artifact-backed evaluation from: %s", source_path)
 
-    # Placeholder result
-    return EvaluationResult(
-        num_samples=0,
-        metadata={"config_path": str(config_path), "status": "placeholder"},
+    artifacts = _load_artifact_records(source_path)
+    evaluator = Evaluator(validator=SVGValidator())
+    result = evaluator.evaluate_artifacts(
+        artifacts,
+        max_samples=eval_config.get("max_samples"),
+    )
+    result.metadata.update(
+        {
+            "config_path": str(config_path),
+            "artifact_source": str(source_path),
+            "metrics": eval_config.get("metrics", []),
+            "requested_max_samples": eval_config.get("max_samples"),
+        }
+    )
+    return result
+
+
+def _load_artifact_records(source_path: Path) -> list[GenerationArtifactRecord]:
+    if source_path.is_dir():
+        return list_generation_artifacts(source_path)
+    if source_path.suffix in {".json", ".svg"}:
+        return [load_generation_artifact(source_path)]
+    raise ValueError(
+        "artifact_path must be a directory, a .json metadata sidecar, or a .svg artifact file."
     )

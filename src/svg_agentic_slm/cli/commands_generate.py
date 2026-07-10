@@ -8,6 +8,12 @@ from typing import Optional
 import typer
 from rich.console import Console
 
+from svg_agentic_slm.cli.overrides import parse_override_items, set_nested_override
+from svg_agentic_slm.factories.generation import (
+    build_generation_runtime,
+    persist_generation_artifacts,
+)
+
 console = Console()
 
 
@@ -36,6 +42,31 @@ def generate(
         "--critic",
         help="Enable critic feedback.",
     ),
+    max_new_tokens: Optional[int] = typer.Option(
+        None,
+        "--max-new-tokens",
+        help="Override generation.max_new_tokens for this run.",
+    ),
+    temperature: Optional[float] = typer.Option(
+        None,
+        "--temperature",
+        help="Override generation.temperature for this run.",
+    ),
+    seed: Optional[int] = typer.Option(
+        None,
+        "--seed",
+        help="Override generation.seed for this run.",
+    ),
+    render_enabled: Optional[bool] = typer.Option(
+        None,
+        "--render/--no-render",
+        help="Override generation.render.enabled for this run.",
+    ),
+    overrides: Optional[list[str]] = typer.Option(
+        None,
+        "--set",
+        help="Nested config override in dotted.path=value form. Example: --set generation.top_p=0.8",
+    ),
 ) -> None:
     """Generate an SVG from a text description.
 
@@ -48,26 +79,46 @@ def generate(
     console.print(f"RAG: {'enabled' if enable_rag else 'disabled'}")
     console.print(f"Critic: {'enabled' if enable_critic else 'disabled'}")
 
-    # TODO: Implement full generation pipeline:
-    # 1. Load config
-    # 2. Build model backend
-    # 3. Build orchestrator with components
-    # 4. Run generation
-    # 5. Save output
+    try:
+        cli_overrides = parse_override_items(overrides)
+        if max_new_tokens is not None:
+            set_nested_override(cli_overrides, "generation.max_new_tokens", max_new_tokens)
+        if temperature is not None:
+            set_nested_override(cli_overrides, "generation.temperature", temperature)
+        if seed is not None:
+            set_nested_override(cli_overrides, "generation.seed", seed)
+        if render_enabled is not None:
+            set_nested_override(cli_overrides, "generation.render.enabled", render_enabled)
 
-    placeholder_svg = (
-        '<svg width="256" height="256" viewBox="0 0 256 256" '
-        'xmlns="http://www.w3.org/2000/svg">'
-        '<rect width="256" height="256" fill="#f0f0f0"/>'
-        '<text x="128" y="128" text-anchor="middle" '
-        'font-size="12" fill="#666">Placeholder</text>'
-        '</svg>'
-    )
+        runtime = build_generation_runtime(
+            config_path=config,
+            prompt=prompt,
+            enable_rag=enable_rag,
+            enable_critic=enable_critic,
+            output_path=output,
+            overrides=cli_overrides,
+        )
+        result = runtime.orchestrator.run(runtime.request)
+        artifacts = persist_generation_artifacts(result=result, runtime=runtime)
+    except Exception as e:
+        console.print(f"[bold red]Generation failed: {e}[/bold red]")
+        raise typer.Exit(code=1)
 
     console.print("\n[bold green]Generated SVG:[/bold green]")
-    console.print(placeholder_svg)
+    console.print(result.generated_svg)
+    console.print(f"\nValid SVG: {result.is_valid}")
 
-    if output:
-        output.parent.mkdir(parents=True, exist_ok=True)
-        output.write_text(placeholder_svg)
-        console.print(f"\nSaved to: {output}")
+    if result.critic_feedback:
+        latest_feedback = result.critic_feedback[-1]
+        console.print(
+            "Critic feedback: "
+            f"{latest_feedback.critic_type} score={latest_feedback.score:.1f}"
+        )
+
+    console.print(f"\nSVG saved to: {artifacts.svg_path}")
+    if artifacts.render_path is not None:
+        console.print(f"Render saved to: {artifacts.render_path}")
+    elif result.metadata.get("render", {}).get("enabled"):
+        render_error = result.metadata.get("render", {}).get("error")
+        console.print(f"[yellow]Render not produced: {render_error}[/yellow]")
+    console.print(f"Metadata saved to: {artifacts.metadata_path}")
