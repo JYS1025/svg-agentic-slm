@@ -8,11 +8,13 @@ pipeline without rewriting command code.
 from __future__ import annotations
 
 import json
+import os
 import re
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
+from uuid import uuid4
 
 from svg_agentic_slm.agents.base import BaseCritic
 from svg_agentic_slm.agents.generator import GeneratorAgent
@@ -164,6 +166,10 @@ def build_generation_runtime(
         render_enabled=render_config["enabled"],
         render_format=render_config["output_format"],
     )
+    svg_output_path = artifact_paths["svg"]
+    metadata_output_path = artifact_paths["metadata"]
+    if svg_output_path is None or metadata_output_path is None:
+        raise RuntimeError("Generation artifact paths were not resolved.")
 
     model_backend = GemmaModelBackend(
         model_id=model_config.get("model_id", "google/gemma-3-4b-it"),
@@ -208,8 +214,8 @@ def build_generation_runtime(
         request=request,
         output_dir=output_dir,
         render_output_dir=render_output_dir,
-        svg_output_path=artifact_paths["svg"],
-        metadata_output_path=artifact_paths["metadata"],
+        svg_output_path=svg_output_path,
+        metadata_output_path=metadata_output_path,
         render_output_path=artifact_paths["render"],
         generation_config=generation_config,
         model_config=model_config,
@@ -237,11 +243,18 @@ def persist_generation_artifacts(
     runtime.svg_output_path.parent.mkdir(parents=True, exist_ok=True)
     runtime.svg_output_path.write_text(result.generated_svg, encoding="utf-8")
 
+    metadata_dir = runtime.metadata_output_path.parent.resolve()
+    svg_reference = _relative_artifact_reference(runtime.svg_output_path, metadata_dir)
+    render_reference = (
+        _relative_artifact_reference(Path(result.render_path), metadata_dir)
+        if result.render_path
+        else None
+    )
     metadata_payload = {
         "instruction": result.instruction,
-        "svg_path": str(runtime.svg_output_path),
+        "svg_path": svg_reference,
         "is_valid": result.is_valid,
-        "render_path": result.render_path,
+        "render_path": render_reference,
         "revision_count": result.revision_count,
         "critic_feedback": [
             {
@@ -268,7 +281,9 @@ def persist_generation_artifacts(
             "planned_artifacts": {
                 "svg_path": str(runtime.svg_output_path),
                 "metadata_path": str(runtime.metadata_output_path),
-                "render_path": str(runtime.render_output_path) if runtime.render_output_path else None,
+                "render_path": (
+                    str(runtime.render_output_path) if runtime.render_output_path else None
+                ),
             },
         },
         "metadata": result.metadata,
@@ -356,7 +371,9 @@ def _resolve_artifact_paths(
 ) -> dict[str, Path | None]:
     if output_path is not None:
         path = Path(output_path)
-        svg_path = path if path.suffix else path.with_suffix(".svg")
+        if path.suffix and path.suffix.lower() != ".svg":
+            raise ValueError("Generation output path must use the .svg extension.")
+        svg_path = path.with_suffix(".svg")
         metadata_path = svg_path.with_suffix(".json")
         render_path = (
             _build_render_output_path(
@@ -374,9 +391,9 @@ def _resolve_artifact_paths(
             "render": render_path,
         }
 
-    timestamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
+    timestamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%S%fZ")
     slug = _slugify_instruction(instruction)
-    stem = f"{timestamp}_{slug}"
+    stem = f"{timestamp}_{slug}_{uuid4().hex[:8]}"
     return {
         "svg": generations_dir / f"{stem}.svg",
         "metadata": generations_dir / f"{stem}.json",
@@ -421,3 +438,8 @@ def _unique_strings(items: Any) -> list[str]:
             seen.add(item)
             unique_items.append(item)
     return unique_items
+
+
+def _relative_artifact_reference(path: Path, metadata_dir: Path) -> str:
+    """Return a sidecar-relative path so artifact bundles remain portable."""
+    return os.path.relpath(path.resolve(), start=metadata_dir)

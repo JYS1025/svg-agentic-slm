@@ -63,3 +63,35 @@ def test_list_generation_artifacts_returns_sorted_records(tmp_path: Path) -> Non
     records = list_generation_artifacts(tmp_path)
 
     assert [record.instruction for record in records] == ["draw a", "draw b"]
+
+
+def test_load_generation_artifact_resolves_paths_relative_to_sidecar(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    """Portable sidecars should resolve artifact paths independently of cwd."""
+    artifact_dir = tmp_path / "bundle"
+    artifact_dir.mkdir()
+    svg_path = artifact_dir / "sample.svg"
+    render_path = artifact_dir / "sample.png"
+    metadata_path = artifact_dir / "sample.json"
+    svg_path.write_text("<svg></svg>", encoding="utf-8")
+    render_path.write_bytes(b"render")
+    metadata_path.write_text(
+        json.dumps(
+            {
+                "instruction": "Draw a square.",
+                "svg_path": "sample.svg",
+                "render_path": "sample.png",
+            }
+        ),
+        encoding="utf-8",
+    )
+    other_dir = tmp_path / "elsewhere"
+    other_dir.mkdir()
+    monkeypatch.chdir(other_dir)
+
+    record = load_generation_artifact(metadata_path)
+
+    assert record.svg_path == svg_path
+    assert record.render_path == render_path

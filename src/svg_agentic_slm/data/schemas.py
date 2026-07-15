@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Any
 
 
 @dataclass
@@ -19,11 +20,11 @@ class TextToSVGExample:
     task: str
     instruction: str
     output_svg: str
-    metadata: dict | None = None
+    metadata: dict[str, Any] | None = None
 
-    def to_dict(self) -> dict:
+    def to_dict(self) -> dict[str, Any]:
         """Convert to a dictionary suitable for JSONL serialization."""
-        d = {
+        d: dict[str, Any] = {
             "task": self.task,
             "instruction": self.instruction,
             "output_svg": self.output_svg,
@@ -33,7 +34,7 @@ class TextToSVGExample:
         return d
 
     @classmethod
-    def from_dict(cls, data: dict) -> TextToSVGExample:
+    def from_dict(cls, data: dict[str, Any]) -> TextToSVGExample:
         """Create from a dictionary (e.g., parsed from JSONL)."""
         return cls(
             task=data["task"],

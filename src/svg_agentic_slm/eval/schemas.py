@@ -30,10 +30,20 @@ class EvaluationResult:
 
     def summary(self) -> str:
         """Return a human-readable summary of the evaluation results."""
-        return (
-            f"Evaluation Results ({self.num_samples} samples):\n"
-            f"  SVG Validity Rate:        {self.svg_validity_rate:.1%}\n"
-            f"  Render Success Rate:      {self.render_success_rate:.1%}\n"
-            f"  Avg Generation Latency:   {self.avg_generation_latency:.3f}s\n"
-            f"  Avg Instruction Alignment: {self.avg_instruction_alignment:.1%}"
-        )
+        computed_metrics = self.metadata.get("computed_metrics")
+        selected = set(computed_metrics) if isinstance(computed_metrics, list) else None
+        lines = [f"Evaluation Results ({self.num_samples} samples):"]
+        metric_lines = [
+            ("svg_validity_rate", f"  SVG Validity Rate:        {self.svg_validity_rate:.1%}"),
+            ("render_success_rate", f"  Render Success Rate:      {self.render_success_rate:.1%}"),
+            (
+                "generation_latency",
+                f"  Avg Generation Latency:   {self.avg_generation_latency:.3f}s",
+            ),
+            (
+                "simple_instruction_alignment",
+                f"  Avg Instruction Alignment: {self.avg_instruction_alignment:.1%}",
+            ),
+        ]
+        lines.extend(line for name, line in metric_lines if selected is None or name in selected)
+        return "\n".join(lines)

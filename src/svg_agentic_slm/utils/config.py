@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import yaml
 from dotenv import load_dotenv
@@ -32,10 +32,14 @@ def load_yaml_config(config_path: str | Path) -> dict[str, Any]:
     if not config_path.exists():
         raise FileNotFoundError(f"Config file not found: {config_path}")
 
-    with open(config_path, "r") as f:
+    with open(config_path, "r", encoding="utf-8") as f:
         config = yaml.safe_load(f)
 
-    return config if config is not None else {}
+    if config is None:
+        return {}
+    if not isinstance(config, dict):
+        raise ValueError(f"YAML config root must be a mapping: {config_path}")
+    return cast(dict[str, Any], config)
 
 
 def load_env(env_path: str | Path | None = None) -> None:
