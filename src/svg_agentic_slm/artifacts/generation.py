@@ -30,14 +30,23 @@ def load_generation_artifact(path: str | Path) -> GenerationArtifactRecord:
     metadata_path = _resolve_metadata_path(path)
     payload = json.loads(metadata_path.read_text(encoding="utf-8"))
 
-    svg_path = Path(payload.get("svg_path", metadata_path.with_suffix(".svg")))
+    svg_path = _resolve_artifact_reference(
+        payload.get("svg_path"),
+        metadata_path=metadata_path,
+        fallback=metadata_path.with_suffix(".svg"),
+    )
     render_path_value = payload.get("render_path")
+    render_path = (
+        _resolve_artifact_reference(render_path_value, metadata_path=metadata_path)
+        if render_path_value
+        else None
+    )
 
     return GenerationArtifactRecord(
         instruction=payload.get("instruction", ""),
         svg_path=svg_path,
         metadata_path=metadata_path,
-        render_path=Path(render_path_value) if render_path_value else None,
+        render_path=render_path,
         is_valid=payload.get("is_valid", False),
         revision_count=payload.get("revision_count", 0),
         critic_feedback=payload.get("critic_feedback", []),
@@ -70,3 +79,29 @@ def _resolve_metadata_path(path: Path) -> Path:
         raise FileNotFoundError(f"Artifact metadata file not found: {metadata_path}")
 
     return metadata_path
+
+
+def _resolve_artifact_reference(
+    value: object,
+    *,
+    metadata_path: Path,
+    fallback: Path | None = None,
+) -> Path:
+    """Resolve new sidecar-relative paths while retaining legacy cwd paths."""
+    if value is None:
+        if fallback is None:
+            raise ValueError("Artifact path is missing from generation metadata.")
+        return fallback
+    if not isinstance(value, str):
+        raise ValueError("Artifact paths in generation metadata must be strings.")
+
+    path = Path(value)
+    if path.is_absolute():
+        return path
+
+    sidecar_relative = metadata_path.parent / path
+    if sidecar_relative.exists():
+        return sidecar_relative
+    if path.exists():
+        return path
+    return sidecar_relative

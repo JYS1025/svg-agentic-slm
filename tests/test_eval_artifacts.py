@@ -149,6 +149,71 @@ def test_eval_command_applies_cli_overrides(tmp_path: Path) -> None:
     assert payload["metadata"]["artifact_source"] == str(artifact_dir)
     assert payload["metadata"]["requested_max_samples"] == 1
     assert payload["metadata"]["metrics"] == ["svg_validity_rate"]
+    assert payload["render_success_rate"] == 0.0
+
+
+def test_eval_command_uses_configured_report_directory(tmp_path: Path) -> None:
+    """The config output directory should apply when --report-dir is omitted."""
+    artifact_dir = tmp_path / "artifacts"
+    report_dir = tmp_path / "configured-reports"
+    _write_artifact_bundle(
+        artifact_dir,
+        stem="sample",
+        instruction="Draw a square.",
+        svg_content='<svg xmlns="http://www.w3.org/2000/svg"><rect/></svg>',
+        render_success=False,
+        latency=0.1,
+    )
+    config_path = tmp_path / "eval.yaml"
+    config_path.write_text(
+        yaml.safe_dump(
+            {"eval": {"artifact_path": str(artifact_dir), "output_dir": str(report_dir)}}
+        ),
+        encoding="utf-8",
+    )
+
+    result = runner.invoke(app, ["eval", "--config", str(config_path)])
+
+    assert result.exit_code == 0
+    assert (report_dir / "eval_report.json").exists()
+
+
+def test_evaluation_excludes_disabled_rendering_from_success_rate(tmp_path: Path) -> None:
+    """A skipped render is not a failed render attempt."""
+    artifact_dir = tmp_path / "artifacts"
+    _write_artifact_bundle(
+        artifact_dir,
+        stem="rendered",
+        instruction="Draw a square.",
+        svg_content='<svg xmlns="http://www.w3.org/2000/svg"><rect/></svg>',
+        render_success=True,
+        latency=0.1,
+    )
+    _write_artifact_bundle(
+        artifact_dir,
+        stem="not_rendered",
+        instruction="Draw a circle.",
+        svg_content='<svg xmlns="http://www.w3.org/2000/svg"><circle/></svg>',
+        render_success=False,
+        latency=0.1,
+        render_enabled=False,
+    )
+    config_path = tmp_path / "eval.yaml"
+    config_path.write_text(
+        yaml.safe_dump({"eval": {"artifact_path": str(artifact_dir)}}),
+        encoding="utf-8",
+    )
+
+    result = run_evaluation(config_path)
+
+    assert result.render_success_rate == 1.0
+    assert result.metadata["render_attempt_count"] == 1
+    disabled_sample = next(
+        sample
+        for sample in result.per_sample_results
+        if sample["instruction"] == "Draw a circle."
+    )
+    assert disabled_sample["render_success"] is None
 
 
 def _write_artifact_bundle(
@@ -159,22 +224,27 @@ def _write_artifact_bundle(
     svg_content: str,
     render_success: bool,
     latency: float,
+    render_enabled: bool = True,
 ) -> None:
     artifact_dir.mkdir(parents=True, exist_ok=True)
     svg_path = artifact_dir / f"{stem}.svg"
     metadata_path = artifact_dir / f"{stem}.json"
     svg_path.write_text(svg_content, encoding="utf-8")
+    render_path = artifact_dir / f"{stem}.png"
+    if render_enabled and render_success:
+        render_path.write_bytes(b"render")
 
     payload = {
         "instruction": instruction,
         "svg_path": str(svg_path),
-        "render_path": str(artifact_dir / f"{stem}.png") if render_success else None,
+        "render_path": str(render_path) if render_success else None,
         "is_valid": render_success,
         "revision_count": 0,
         "critic_feedback": [],
-        "runtime": {"enable_render": True},
+        "runtime": {"enable_render": render_enabled},
         "metadata": {
             "render": {
+                "enabled": render_enabled,
                 "success": render_success,
             },
             "timing": {

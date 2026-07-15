@@ -119,8 +119,12 @@ Each generate run writes:
 
 If `--output` is not provided, the command writes to:
 
-- `<outputs.generations>/<UTC timestamp>_<instruction slug>.svg`
-- `<outputs.renders>/<UTC timestamp>_<instruction slug>.png`
+- `<outputs.generations>/<UTC timestamp>_<instruction slug>_<run id>.svg`
+- `<outputs.renders>/<UTC timestamp>_<instruction slug>_<run id>.png`
+
+The timestamp includes microseconds and the run ID is random, so concurrent
+runs and prompts whose slugs normalize to the same value cannot overwrite one
+another.
 
 If `--output` is provided, the command writes:
 
@@ -128,11 +132,23 @@ If `--output` is provided, the command writes:
 - the metadata sidecar next to the SVG
 - the render artifact next to the SVG with the same stem
 
+An explicit generation output must either omit its extension or use `.svg`.
+Other extensions are rejected before generation so the SVG cannot collide with
+its JSON sidecar or be written under a misleading file type.
+
+The canonical top-level `svg_path` and `render_path` stored in the JSON sidecar
+are relative to the sidecar location. Artifact readers also retain compatibility
+with older absolute and working-directory-relative sidecars. This lets a
+complete artifact bundle be moved and evaluated from a different working
+directory.
+
 The standalone `render` command follows the same renderer backend and format
 rules, but it is strict:
 
 - render success returns exit code `0`
 - render failure returns exit code `1`
+- an explicit `--format` must match an explicit output-file extension
+- when no output path is given, `--format` determines the output extension
 
 The JSON sidecar currently captures:
 
@@ -188,6 +204,18 @@ Supported sources are:
 - a directory of `.json` sidecars
 - a single `.json` sidecar
 - a single `.svg` artifact with a matching `.json` sidecar
+
+`eval.metrics` controls which aggregate metrics are computed. Unknown metric
+names fail fast instead of silently producing incomplete reports. Render
+success rate includes only artifacts where rendering was enabled, and a
+recorded success counts only while the referenced render file exists.
+
+The report directory precedence is:
+
+1. explicit `--report-dir`
+2. `--set eval.output_dir=...`
+3. `eval.output_dir` from the evaluation config
+4. `./outputs/eval_reports`
 
 ## Shared CLI Override Rules
 

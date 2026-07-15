@@ -46,10 +46,16 @@ def render(
     ),
 ) -> None:
     """Render an SVG file to a raster image."""
+    resolved_format = (output_format or (output.suffix.lstrip(".") if output else "png")).lower()
     if output is None:
-        output = input_file.with_suffix(".png")
+        output = input_file.with_suffix(f".{resolved_format}")
+    elif output.suffix and output.suffix.lower() != f".{resolved_format}":
+        console.print(
+            "[bold red]Output extension "
+            f"'{output.suffix}' does not match --format '{resolved_format}'.[/bold red]"
+        )
+        raise typer.Exit(code=1)
 
-    resolved_format = (output_format or output.suffix.lstrip(".") or "png").lower()
     if not output.suffix:
         output = output.with_suffix(f".{resolved_format}")
 

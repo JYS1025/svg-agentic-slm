@@ -19,10 +19,10 @@ def evaluate(
         "--config", "-c",
         help="Path to evaluation config file.",
     ),
-    report_dir: Path = typer.Option(
-        "outputs/eval_reports",
+    report_dir: Optional[Path] = typer.Option(
+        None,
         "--report-dir", "-r",
-        help="Directory for evaluation reports.",
+        help="Override the configured directory for evaluation reports.",
     ),
     artifact_path: Optional[Path] = typer.Option(
         None,
@@ -52,14 +52,16 @@ def evaluate(
     """
     console.print(f"[bold blue]Evaluation[/bold blue]")
     console.print(f"Config: {config}")
-    console.print(f"Report directory: {report_dir}")
+    if report_dir is not None:
+        console.print(f"Report directory override: {report_dir}")
 
     from svg_agentic_slm.eval.run_eval import run_evaluation
     from svg_agentic_slm.eval.report import generate_report
 
     try:
         cli_overrides = parse_override_items(overrides)
-        set_nested_override(cli_overrides, "eval.output_dir", str(report_dir))
+        if report_dir is not None:
+            set_nested_override(cli_overrides, "eval.output_dir", str(report_dir))
         if artifact_path is not None:
             set_nested_override(cli_overrides, "eval.artifact_path", str(artifact_path))
         if max_samples is not None:
@@ -70,7 +72,8 @@ def evaluate(
         result = run_evaluation(config_path=config, overrides=cli_overrides)
         console.print(f"\n{result.summary()}")
 
-        report_path = generate_report(result, output_dir=report_dir)
+        resolved_report_dir = Path(result.metadata["output_dir"])
+        report_path = generate_report(result, output_dir=resolved_report_dir)
         console.print(f"\n[green]Report saved to: {report_path}[/green]")
     except Exception as e:
         console.print(f"[bold red]Evaluation failed: {e}[/bold red]")

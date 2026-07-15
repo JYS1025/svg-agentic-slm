@@ -23,6 +23,13 @@ from svg_agentic_slm.utils.config import load_yaml_config
 
 logger = logging.getLogger(__name__)
 
+DEFAULT_METRICS = [
+    "svg_validity_rate",
+    "render_success_rate",
+    "generation_latency",
+    "simple_instruction_alignment",
+]
+
 
 def run_evaluation(
     config_path: str | Path,
@@ -54,17 +61,24 @@ def run_evaluation(
     logger.info("Running artifact-backed evaluation from: %s", source_path)
 
     artifacts = _load_artifact_records(source_path)
+    metrics = eval_config.get("metrics")
+    if metrics is None:
+        metrics = DEFAULT_METRICS
+    if not isinstance(metrics, list) or not all(isinstance(metric, str) for metric in metrics):
+        raise ValueError("eval.metrics must be a list of metric names.")
     evaluator = Evaluator(validator=SVGValidator())
     result = evaluator.evaluate_artifacts(
         artifacts,
         max_samples=eval_config.get("max_samples"),
+        metrics=metrics,
     )
     result.metadata.update(
         {
             "config_path": str(config_path),
             "artifact_source": str(source_path),
-            "metrics": eval_config.get("metrics", []),
+            "metrics": metrics,
             "requested_max_samples": eval_config.get("max_samples"),
+            "output_dir": str(eval_config.get("output_dir", "./outputs/eval_reports")),
         }
     )
     return result

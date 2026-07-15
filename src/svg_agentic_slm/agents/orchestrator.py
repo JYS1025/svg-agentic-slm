@@ -84,9 +84,7 @@ class SVGGenerationOrchestrator:
         Returns:
             The generation result with SVG, validation, and feedback.
 
-        TODO: Implement the full pipeline with RAG, critic, and revisions.
-        TODO: Add timing/latency tracking.
-        TODO: Add output saving.
+        TODO: Implement critic-driven revisions when the generator contract supports them.
         """
         logger.info("Starting generation pipeline for: %s", request.instruction[:80])
         started_at = time.perf_counter()

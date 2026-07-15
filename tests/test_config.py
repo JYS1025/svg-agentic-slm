@@ -36,6 +36,15 @@ def test_load_empty_yaml(tmp_path: Path) -> None:
     assert loaded == {}
 
 
+def test_load_yaml_config_rejects_non_mapping_root(tmp_path: Path) -> None:
+    """Configuration files must contain a mapping at the document root."""
+    config_path = tmp_path / "invalid.yaml"
+    config_path.write_text("- item\n", encoding="utf-8")
+
+    with pytest.raises(ValueError, match="root must be a mapping"):
+        load_yaml_config(config_path)
+
+
 def test_merge_configs() -> None:
     """Test merging multiple config dictionaries."""
     a = {"key1": "a", "key2": "a"}

@@ -43,9 +43,6 @@ class CairoSVGRenderer(BaseRenderer):
         Returns:
             Render result with success/failure status.
 
-        TODO: Implement actual rendering with cairosvg.svg2png().
-        TODO: Handle rendering errors gracefully.
-        TODO: Add support for PDF and PS output formats.
         """
         output_format = output_format.lower()
         logger.info(
@@ -65,10 +62,10 @@ class CairoSVGRenderer(BaseRenderer):
                 width=width,
                 height=height,
                 error=f"Unsupported render format: {output_format}",
-            )
+        )
 
         try:
-            import cairosvg
+            import cairosvg  # type: ignore[import-not-found]
         except ImportError as exc:
             logger.warning("CairoSVG is not available: %s", exc)
             return SVGRenderResult(

@@ -11,6 +11,7 @@ from typer.testing import CliRunner
 
 from svg_agentic_slm.cli.app import app
 from svg_agentic_slm.factories.generation import build_generation_runtime
+from svg_agentic_slm.factories.generation import _resolve_artifact_paths
 
 runner = CliRunner()
 
@@ -66,6 +67,7 @@ def test_generate_command_persists_svg_and_metadata(tmp_path: Path) -> None:
 
     metadata = json.loads(json_files[0].read_text(encoding="utf-8"))
     assert metadata["instruction"] == "Draw a blue circle."
+    assert metadata["svg_path"] == svg_files[0].name
     assert metadata["runtime"]["enable_critic"] is True
     assert metadata["runtime"]["enable_rag"] is False
     assert metadata["runtime"]["enable_render"] is False
@@ -105,7 +107,7 @@ def test_generate_command_persists_render_output(tmp_path: Path) -> None:
 
     metadata_files = sorted(output_dir.glob("*.json"))
     metadata = json.loads(metadata_files[0].read_text(encoding="utf-8"))
-    assert metadata["render_path"] == str(png_files[0])
+    assert metadata["render_path"] == str(Path("..") / "renders" / png_files[0].name)
     assert metadata["metadata"]["render"]["success"] is True
     assert metadata["runtime"]["planned_artifacts"]["render_path"] == str(png_files[0])
 
@@ -146,6 +148,50 @@ def test_generate_command_applies_cli_overrides(tmp_path: Path) -> None:
     assert metadata["runtime"]["generation_config"]["top_p"] == 0.8
     assert metadata["runtime"]["model_config"]["model_id"] == "override-model"
     assert metadata["runtime"]["enable_render"] is False
+
+
+def test_generate_command_rejects_non_svg_output_path(tmp_path: Path) -> None:
+    """An explicit generation output must not collide with its JSON sidecar."""
+    output_dir = tmp_path / "outputs" / "generations"
+    _write_generation_config_bundle(tmp_path, output_dir)
+
+    result = runner.invoke(
+        app,
+        [
+            "generate",
+            "Draw a circle.",
+            "--config",
+            str(tmp_path / "generation.yaml"),
+            "--output",
+            str(tmp_path / "result.json"),
+        ],
+    )
+
+    assert result.exit_code == 1
+    assert "must use the .svg extension" in result.stdout
+    assert not (tmp_path / "result.json").exists()
+
+
+def test_generated_artifact_names_are_unique_for_non_ascii_prompts(tmp_path: Path) -> None:
+    """Distinct runs must not overwrite each other when prompt slugs are identical."""
+    first = _resolve_artifact_paths(
+        generations_dir=tmp_path,
+        renders_dir=tmp_path,
+        instruction="파란 원을 그려줘",
+        output_path=None,
+        render_enabled=False,
+        render_format="png",
+    )
+    second = _resolve_artifact_paths(
+        generations_dir=tmp_path,
+        renders_dir=tmp_path,
+        instruction="빨간 사각형을 그려줘",
+        output_path=None,
+        render_enabled=False,
+        render_format="png",
+    )
+
+    assert first["svg"] != second["svg"]
 
 
 def _write_generation_config_bundle(
