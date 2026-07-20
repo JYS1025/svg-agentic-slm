@@ -22,6 +22,8 @@ class GenerationArtifactRecord:
     runtime: dict[str, Any]
     metadata: dict[str, Any]
     generated_at_utc: str | None
+    schema_version: int = 0
+    run_id: str | None = None
 
 
 def load_generation_artifact(path: str | Path) -> GenerationArtifactRecord:
@@ -53,6 +55,8 @@ def load_generation_artifact(path: str | Path) -> GenerationArtifactRecord:
         runtime=payload.get("runtime", {}),
         metadata=payload.get("metadata", {}),
         generated_at_utc=payload.get("generated_at_utc"),
+        schema_version=payload.get("schema_version", 0),
+        run_id=payload.get("run_id"),
     )
 
 

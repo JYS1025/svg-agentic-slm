@@ -8,8 +8,17 @@ specific model backends or processing logic.
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
+from typing import TYPE_CHECKING
 
-from svg_agentic_slm.agents.schemas import CriticFeedback, GenerationRequest
+from svg_agentic_slm.agents.schemas import (
+    CriticFeedback,
+    CriticFeedbackEvent,
+    GenerationRequest,
+    GeneratorOutput,
+)
+
+if TYPE_CHECKING:
+    from svg_agentic_slm.rag.schemas import RetrievedExample
 
 
 class BaseAgent(ABC):
@@ -33,18 +42,28 @@ class BaseGenerator(BaseAgent):
     def generate(
         self,
         request: GenerationRequest,
-        context: str | None = None,
-    ) -> str:
-        """Generate an SVG string from a generation request.
+        context: list[RetrievedExample] | None = None,
+    ) -> GeneratorOutput:
+        """Generate an initial SVG attempt.
 
         Args:
             request: The generation request containing the instruction.
-            context: Optional additional context (e.g., from RAG retrieval).
+            context: Optional typed items returned by RAG.
 
         Returns:
-            Generated SVG string.
+            Typed initial attempt and provenance.
         """
         ...
+
+    def revise(
+        self,
+        request: GenerationRequest,
+        previous: GeneratorOutput,
+        feedback: CriticFeedbackEvent,
+        context: list[RetrievedExample] | None = None,
+    ) -> GeneratorOutput:
+        """Revise a previous SVG attempt using correlated Critic feedback."""
+        raise NotImplementedError(f"{self.name} does not implement revision.")
 
 
 class BaseCritic(BaseAgent):

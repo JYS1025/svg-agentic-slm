@@ -1,7 +1,9 @@
 # LoRA fine-tuning configuration
 train:
   # Base model
-  base_model_id: "google/gemma-3-4b-it"  # Placeholder
+  # Training remains a separate, unresolved scaffold. Do not point this at the
+  # inference-only GGUF distribution in configs/model.yaml.
+  base_model_id: "google/gemma-3-4b-it"  # Training owner must replace this placeholder.
   
   # LoRA parameters
   lora:

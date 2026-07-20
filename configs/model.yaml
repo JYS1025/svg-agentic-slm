@@ -1,11 +1,20 @@
 # Model configuration
 model:
-  model_id: "google/gemma-3-4b-it"  # Placeholder; update to Gemma 4 E4B when available
-  backend_type: "huggingface"  # Options: huggingface
-  device_map: "auto"
-  torch_dtype: "bfloat16"
-  trust_remote_code: false
-  load_in_4bit: false
-  load_in_8bit: false
-  attn_implementation: null  # Options: null, flash_attention_2, sdpa
-  max_memory: null  # e.g., {0: "20GiB", "cpu": "30GiB"}
+  backend_type: "llama_cpp"
+  model_id: "lmstudio-community/gemma-4-12B-it-QAT-GGUF"
+  filename: "gemma-4-12B-it-QAT-Q4_0.gguf"
+  revision: "291406f49e16eff811c85ad8884d375f34138663"
+  upstream_model_id: "google/gemma-4-12B-it-qat-q4_0-unquantized"
+  quantization: "Q4_0"
+  quantization_provider: "LM Studio Community"
+  conversion_runtime: "llama.cpp b9518"
+
+  # Compatibility pin: the Google-hosted GGUF at the previous revision aborts
+  # during vocabulary loading. -1 requests full CUDA offload.
+  n_gpu_layers: -1
+  n_ctx: 8192
+  n_batch: 512
+  flash_attn: true
+  use_mmap: true
+  verbose: false
+  chat_format: null  # Use the chat template stored in GGUF metadata.

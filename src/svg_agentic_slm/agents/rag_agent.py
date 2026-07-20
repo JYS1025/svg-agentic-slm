@@ -8,7 +8,13 @@ pipeline with a consistent interface.
 from __future__ import annotations
 
 import logging
+from dataclasses import replace
 from typing import TYPE_CHECKING
+
+from svg_agentic_slm.rag.metadata_policy import (
+    MINIMAL_RETRIEVAL_METADATA_POLICY,
+    RetrievalMetadataPolicy,
+)
 
 if TYPE_CHECKING:
     from svg_agentic_slm.rag.base import BaseRetriever
@@ -28,9 +34,17 @@ class RAGAgent:
         top_k: Number of examples to retrieve.
     """
 
-    def __init__(self, retriever: BaseRetriever, top_k: int = 3) -> None:
+    def __init__(
+        self,
+        retriever: BaseRetriever,
+        top_k: int = 3,
+        metadata_policy: RetrievalMetadataPolicy = MINIMAL_RETRIEVAL_METADATA_POLICY,
+    ) -> None:
+        if top_k <= 0:
+            raise ValueError("top_k must be positive.")
         self._retriever = retriever
         self._top_k = top_k
+        self._metadata_policy = metadata_policy
 
     def retrieve(self, query: str) -> list[RetrievedExample]:
         """Retrieve relevant SVG examples for a query.
@@ -42,7 +56,24 @@ class RAGAgent:
             List of retrieved examples.
         """
         logger.info("Retrieving %d examples for query: %s", self._top_k, query[:80])
-        return self._retriever.retrieve(query, top_k=self._top_k)
+        examples = self._retriever.retrieve(query, top_k=self._top_k)
+        sanitized_examples: list[RetrievedExample] = []
+        for index, example in enumerate(examples, 1):
+            metadata, dropped_keys = self._metadata_policy.apply(example.metadata)
+            if dropped_keys:
+                logger.info(
+                    "Dropped non-whitelisted RAG metadata for item '%s': %s",
+                    example.item_id,
+                    ", ".join(dropped_keys),
+                )
+            sanitized_examples.append(
+                replace(
+                    example,
+                    rank=example.rank if example.rank is not None else index,
+                    metadata=metadata,
+                )
+            )
+        return sanitized_examples
 
     def format_context(self, examples: list[RetrievedExample]) -> str:
         """Format retrieved examples into a context string for the prompt.

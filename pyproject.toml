@@ -32,6 +32,10 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+local-gpu = [
+    "huggingface-hub==0.34.4",
+    "llama-cpp-python==0.3.34",
+]
 dev = [
     "pytest>=8.0",
     "pytest-cov>=5.0",

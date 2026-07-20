@@ -4,7 +4,7 @@ Evaluates SVG quality using deterministic rules rather than
 an LLM. This is fast, reproducible, and does not require GPU.
 """
 
-from __future__  import annotations
+from __future__ import annotations
 
 import logging
 
@@ -68,4 +68,5 @@ class RuleBasedCritic(BaseCritic):
             issues=issues,
             suggestions=suggestions,
             critic_type="rule",
+            critic_version="rule-svg-validation-v1",
         )

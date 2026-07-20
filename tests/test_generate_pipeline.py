@@ -10,10 +10,44 @@ import yaml
 from typer.testing import CliRunner
 
 from svg_agentic_slm.cli.app import app
-from svg_agentic_slm.factories.generation import build_generation_runtime
-from svg_agentic_slm.factories.generation import _resolve_artifact_paths
+from svg_agentic_slm.factories.generation import (
+    _resolve_artifact_paths,
+    build_generation_runtime,
+)
+from svg_agentic_slm.models.schemas import ModelResponse
 
 runner = CliRunner()
+
+
+class _FakeModelBackend:
+    """Network-free backend injected into config-driven pipeline tests."""
+
+    def load_model(self) -> None:
+        pass
+
+    def is_loaded(self) -> bool:
+        return True
+
+    def generate(self, prompt: str, **kwargs) -> ModelResponse:
+        return ModelResponse(
+            text=(
+                '<svg xmlns="http://www.w3.org/2000/svg" width="256" height="256">'
+                '<circle cx="128" cy="128" r="64" fill="blue"/></svg>'
+            ),
+            model_id="fake-model",
+            model_revision="test-revision",
+            finish_reason="stop",
+            prompt_tokens=10,
+            completion_tokens=20,
+        )
+
+
+@pytest.fixture(autouse=True)
+def _inject_fake_model_backend(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        "svg_agentic_slm.factories.generation._build_model_backend",
+        lambda model_config, generation_config: _FakeModelBackend(),
+    )
 
 
 def test_build_generation_runtime_from_sibling_configs(tmp_path: Path) -> None:
@@ -63,9 +97,11 @@ def test_generate_command_persists_svg_and_metadata(tmp_path: Path) -> None:
 
     assert len(svg_files) == 1
     assert len(json_files) == 1
-    assert "Placeholder" in svg_files[0].read_text(encoding="utf-8")
+    assert "<circle" in svg_files[0].read_text(encoding="utf-8")
 
     metadata = json.loads(json_files[0].read_text(encoding="utf-8"))
+    assert metadata["schema_version"] == 1
+    assert metadata["run_id"].startswith("run_")
     assert metadata["instruction"] == "Draw a blue circle."
     assert metadata["svg_path"] == svg_files[0].name
     assert metadata["runtime"]["enable_critic"] is True
@@ -73,6 +109,16 @@ def test_generate_command_persists_svg_and_metadata(tmp_path: Path) -> None:
     assert metadata["runtime"]["enable_render"] is False
     assert metadata["metadata"]["validation"]["is_valid"] is True
     assert metadata["critic_feedback"][0]["critic_type"] == "rule"
+    assert metadata["critic_feedback"][0]["critic_version"] == "rule-svg-validation-v1"
+    attempt = metadata["metadata"]["generator"]["attempts"][0]
+    assert attempt["model_calls"]
+    assert attempt["raw_output_ref"]
+    assert (json_files[0].parent / attempt["raw_output_ref"]).exists()
+    model_call = attempt["model_calls"][0]
+    assert (json_files[0].parent / model_call["prompt_ref"]).exists()
+    assert (json_files[0].parent / model_call["system_prompt_ref"]).exists()
+    assert model_call["generation_parameters"]["max_new_tokens"] == 128
+    assert metadata["critic_feedback"][0]["target_attempt_id"] == attempt["attempt_id"]
 
 
 def test_generate_command_persists_render_output(tmp_path: Path) -> None:

@@ -6,8 +6,8 @@ import json
 from pathlib import Path
 
 from svg_agentic_slm.artifacts.generation import (
-    load_generation_artifact,
     list_generation_artifacts,
+    load_generation_artifact,
 )
 
 
@@ -37,6 +37,7 @@ def test_load_generation_artifact_from_svg_path(tmp_path: Path) -> None:
     assert record.metadata_path == metadata_path
     assert record.render_path == tmp_path / "sample.png"
     assert record.runtime["enable_render"] is True
+    assert record.schema_version == 0
 
 
 def test_list_generation_artifacts_returns_sorted_records(tmp_path: Path) -> None:
@@ -95,3 +96,24 @@ def test_load_generation_artifact_resolves_paths_relative_to_sidecar(
 
     assert record.svg_path == svg_path
     assert record.render_path == render_path
+
+
+def test_load_generation_artifact_reads_version_and_run_id(tmp_path: Path) -> None:
+    svg_path = tmp_path / "sample.svg"
+    metadata_path = tmp_path / "sample.json"
+    svg_path.write_text("<svg></svg>", encoding="utf-8")
+    metadata_path.write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "run_id": "run-1",
+                "svg_path": "sample.svg",
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    record = load_generation_artifact(metadata_path)
+
+    assert record.schema_version == 1
+    assert record.run_id == "run-1"

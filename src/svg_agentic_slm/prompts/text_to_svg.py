@@ -3,7 +3,6 @@
 Contains functions to build formatted prompts for the text-to-SVG
 generation task, including optional RAG context injection.
 
-# TODO: Add prompt versioning and template selection based on config.
 """
 
 from __future__ import annotations
@@ -12,6 +11,9 @@ from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from svg_agentic_slm.rag.schemas import RetrievedExample
+
+INITIAL_PROMPT_VERSION = "text-to-svg-v1"
+REVISION_PROMPT_VERSION = "svg-revision-v1"
 
 
 def build_text_to_svg_prompt(
@@ -29,18 +31,33 @@ def build_text_to_svg_prompt(
         The formatted prompt string ready for model input.
     """
     parts: list[str] = []
-
-    # Add few-shot examples from RAG if available
-    if retrieved_examples:
-        parts.append("Here are some similar SVG examples for reference:\n")
-        for i, example in enumerate(retrieved_examples, 1):
-            parts.append(f"Example {i}:")
-            parts.append(f"Description: {example.description}")
-            parts.append(f"SVG: {example.content}")
-            parts.append("")
+    retrieval_context = build_retrieval_context(retrieved_examples)
+    if retrieval_context:
+        parts.append(retrieval_context)
 
     parts.append(f"Now generate an SVG for the following description:\n{instruction}")
 
+    return "\n".join(parts)
+
+
+def build_retrieval_context(
+    retrieved_examples: list[RetrievedExample] | None,
+) -> str:
+    """Format typed RAG items without adding a generation instruction."""
+    if not retrieved_examples:
+        return ""
+
+    parts = [
+        "Use the following retrieved items only as reference. "
+        "The user instruction has higher priority.\n"
+    ]
+    for i, example in enumerate(retrieved_examples, 1):
+        parts.append(f"--- Retrieved item {i} ({example.kind}) ---")
+        parts.append(f"Source: {example.source or example.item_id}")
+        parts.append(f"Description: {example.description}")
+        parts.append("Content:")
+        parts.append(example.content)
+        parts.append("")
     return "\n".join(parts)
 
 
@@ -65,5 +82,6 @@ def build_revision_prompt(
         f"Original instruction: {instruction}\n\n"
         f"Previous SVG output:\n{previous_svg}\n\n"
         f"Feedback from reviewer:\n{feedback}\n\n"
-        "Please generate an improved SVG that addresses the feedback above."
+        "Generate a complete revised SVG that addresses the feedback. "
+        "Return only the SVG document."
     )

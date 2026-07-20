@@ -13,13 +13,20 @@ import logging
 import time
 from pathlib import Path
 from typing import TYPE_CHECKING
+from uuid import uuid4
 
-from svg_agentic_slm.agents.schemas import GenerationRequest, GenerationResult
+from svg_agentic_slm.agents.schemas import (
+    CriticFeedbackEvent,
+    GenerationRequest,
+    GenerationResult,
+    GeneratorOutput,
+)
 
 if TYPE_CHECKING:
     from svg_agentic_slm.agents.base import BaseCritic, BaseGenerator
     from svg_agentic_slm.agents.rag_agent import RAGAgent
     from svg_agentic_slm.svg.base import BaseRenderer, BaseValidator
+    from svg_agentic_slm.svg.schemas import SVGValidationResult
 
 logger = logging.getLogger(__name__)
 
@@ -62,7 +69,12 @@ class SVGGenerationOrchestrator:
         render_width: int = 256,
         render_height: int = 256,
         render_format: str = "png",
+        critic_acceptance_score: float = 8.0,
     ) -> None:
+        if max_revisions < 0:
+            raise ValueError("max_revisions must be non-negative.")
+        if not 0.0 <= critic_acceptance_score <= 10.0:
+            raise ValueError("critic_acceptance_score must be between 0 and 10.")
         self._generator = generator
         self._validator = validator
         self._renderer = renderer
@@ -74,6 +86,7 @@ class SVGGenerationOrchestrator:
         self._render_width = render_width
         self._render_height = render_height
         self._render_format = render_format
+        self._critic_acceptance_score = critic_acceptance_score
 
     def run(self, request: GenerationRequest) -> GenerationResult:
         """Run the full SVG generation pipeline.
@@ -84,56 +97,91 @@ class SVGGenerationOrchestrator:
         Returns:
             The generation result with SVG, validation, and feedback.
 
-        TODO: Implement critic-driven revisions when the generator contract supports them.
         """
         logger.info("Starting generation pipeline for: %s", request.instruction[:80])
         started_at = time.perf_counter()
+        run_id = request.run_id or f"run_{uuid4().hex}"
 
-        result = GenerationResult(instruction=request.instruction)
+        result = GenerationResult(instruction=request.instruction, run_id=run_id)
         result.metadata["request"] = {
             "task": request.task,
             "config_overrides": request.config_overrides,
+            "run_id": run_id,
         }
 
         # Step 1: RAG retrieval (optional)
-        context: str | None = None
-        retrieved_count = 0
+        context = []
         if self._rag_agent is not None:
-            examples = self._rag_agent.retrieve(request.instruction)
-            context = self._rag_agent.format_context(examples)
-            retrieved_count = len(examples)
-            logger.info("Retrieved %d RAG examples.", len(examples))
+            context = self._rag_agent.retrieve(request.instruction)
+            logger.info("Retrieved %d RAG examples.", len(context))
         result.metadata["rag"] = {
             "enabled": self._rag_agent is not None,
-            "retrieved_examples": retrieved_count,
+            "retrieved_examples": len(context),
+            "items": [
+                {
+                    "item_id": item.item_id,
+                    "source": item.source,
+                    "score": item.score,
+                    "score_kind": item.score_kind,
+                    "rank": item.rank,
+                    "kind": item.kind,
+                    "corpus_version": item.corpus_version,
+                    "metadata": item.metadata,
+                }
+                for item in context
+            ],
         }
 
         # Step 2: Generate SVG
-        generated_svg = self._generator.generate(request, context=context)
-        result.generated_svg = generated_svg
+        current = self._generator.generate(request, context=context)
+        current = _coerce_generator_output(current)
+        result.attempts.append(current)
 
-        # Step 3: Validate
-        validation = self._validator.validate(generated_svg)
+        validation = self._validate_attempt(current)
+        latest_feedback_event: CriticFeedbackEvent | None = None
+
+        # Step 3: Critique and revise
+        while self._critic is not None and current.status == "succeeded":
+            feedback = self._critic.critique(request.instruction, current.svg)
+            latest_feedback_event = CriticFeedbackEvent(
+                feedback_id=f"feedback_{uuid4().hex}",
+                target_attempt_id=current.attempt_id,
+                feedback=feedback,
+            )
+            result.critic_feedback.append(feedback)
+            result.feedback_events.append(latest_feedback_event)
+            logger.info("Critic feedback: score=%.1f", feedback.score)
+
+            if (
+                feedback.score >= self._critic_acceptance_score
+                or result.revision_count >= self._max_revisions
+            ):
+                break
+
+            current.metadata["outcome"] = "rejected"
+            current.metadata["stop_reason"] = "critic_revision_requested"
+            current = self._generator.revise(
+                request,
+                previous=current,
+                feedback=latest_feedback_event,
+                context=context,
+            )
+            current = _coerce_generator_output(current)
+            result.attempts.append(current)
+            result.revision_count += 1
+            validation = self._validate_attempt(current)
+
+        result.generated_svg = current.svg
         result.is_valid = validation.is_valid
-        logger.info("Validation result: valid=%s, errors=%s", validation.is_valid, validation.errors)
-        result.metadata["validation"] = {
-            "is_valid": validation.is_valid,
-            "errors": validation.errors,
-            "warnings": validation.warnings,
-            "has_svg_tag": validation.has_svg_tag,
-            "has_closing_tag": validation.has_closing_tag,
-            "is_well_formed_xml": validation.is_well_formed_xml,
-        }
+        result.metadata["validation"] = _validation_metadata(validation)
 
         # Step 4: Render (optional)
         render_success = False
         render_error: str | None = None
-        if self._renderer is not None:
-            render_path = self._render_output_path or (
-                self._output_dir / "render.png"
-            )
+        if self._renderer is not None and current.status == "succeeded":
+            render_path = self._render_output_path or (self._output_dir / "render.png")
             render_result = self._renderer.render(
-                generated_svg,
+                current.svg,
                 render_path,
                 width=self._render_width,
                 height=self._render_height,
@@ -152,7 +200,9 @@ class SVGGenerationOrchestrator:
         result.metadata["render"] = {
             "enabled": self._renderer is not None,
             "render_path": result.render_path,
-            "planned_output_path": str(self._render_output_path) if self._render_output_path else None,
+            "planned_output_path": (
+                str(self._render_output_path) if self._render_output_path else None
+            ),
             "success": render_success,
             "error": render_error,
             "format": self._render_format,
@@ -160,26 +210,95 @@ class SVGGenerationOrchestrator:
             "height": self._render_height,
         }
 
-        # Step 5: Critic feedback (optional)
-        if self._critic is not None:
-            feedback = self._critic.critique(request.instruction, generated_svg)
-            result.critic_feedback.append(feedback)
-            logger.info("Critic feedback: score=%.1f", feedback.score)
-
-            # TODO: Implement revision loop
-            # for revision in range(self._max_revisions):
-            #     if feedback.score >= 8.0:
-            #         break
-            #     revised_svg = self._generator.generate_revision(...)
-            #     ...
         result.metadata["critic"] = {
             "enabled": self._critic is not None,
             "feedback_count": len(result.critic_feedback),
+            "acceptance_score": self._critic_acceptance_score,
         }
+        if current.status == "failed":
+            current.metadata["outcome"] = "failed"
+        elif validation.is_valid and (
+            latest_feedback_event is None
+            or latest_feedback_event.feedback.score >= self._critic_acceptance_score
+        ):
+            current.metadata["outcome"] = "accepted"
+        else:
+            current.metadata["outcome"] = "rejected"
+        current.metadata["stop_reason"] = _stop_reason(
+            current=current,
+            validation_is_valid=validation.is_valid,
+            feedback_event=latest_feedback_event,
+            acceptance_score=self._critic_acceptance_score,
+            revision_count=result.revision_count,
+            max_revisions=self._max_revisions,
+        )
 
         result.metadata["timing"] = {
             "generation_latency_seconds": round(time.perf_counter() - started_at, 6),
         }
 
-        logger.info("Pipeline complete. Valid=%s, Revisions=%d", result.is_valid, result.revision_count)
+        logger.info(
+            "Pipeline complete. Valid=%s, Revisions=%d",
+            result.is_valid,
+            result.revision_count,
+        )
         return result
+
+    def _validate_attempt(self, attempt: GeneratorOutput) -> SVGValidationResult:
+        validation = self._validator.validate(attempt.svg)
+        attempt.metadata["validation"] = _validation_metadata(validation)
+        logger.info(
+            "Validation result: valid=%s, errors=%s",
+            validation.is_valid,
+            validation.errors,
+        )
+        return validation
+
+
+def _validation_metadata(validation: SVGValidationResult) -> dict:
+    return {
+        "is_valid": validation.is_valid,
+        "errors": validation.errors,
+        "warnings": validation.warnings,
+        "has_svg_tag": validation.has_svg_tag,
+        "has_closing_tag": validation.has_closing_tag,
+        "is_well_formed_xml": validation.is_well_formed_xml,
+    }
+
+
+def _coerce_generator_output(value: GeneratorOutput | str) -> GeneratorOutput:
+    """Adapt legacy string-returning test or third-party Generators."""
+    if isinstance(value, GeneratorOutput):
+        return value
+    if isinstance(value, str):
+        return GeneratorOutput(
+            attempt_id=f"attempt_{uuid4().hex}",
+            mode="initial",
+            svg=value,
+            raw_output=value,
+            status="succeeded",
+            prompt_version="legacy",
+        )
+    raise TypeError("Generator must return GeneratorOutput.")
+
+
+def _stop_reason(
+    *,
+    current: GeneratorOutput,
+    validation_is_valid: bool,
+    feedback_event: CriticFeedbackEvent | None,
+    acceptance_score: float,
+    revision_count: int,
+    max_revisions: int,
+) -> str:
+    if current.status == "failed":
+        return current.error or "generator_failed"
+    if not validation_is_valid:
+        return "validation_failed"
+    if feedback_event is None:
+        return "generator_only_complete"
+    if feedback_event.feedback.score >= acceptance_score:
+        return "critic_acceptance_threshold_met"
+    if revision_count >= max_revisions:
+        return "max_revisions_reached"
+    return "revision_stopped"

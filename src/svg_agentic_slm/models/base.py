@@ -10,6 +10,8 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from typing import Any
 
+from svg_agentic_slm.models.schemas import ModelResponse
+
 
 class BaseModelBackend(ABC):
     """Abstract interface for a language model backend.
@@ -28,7 +30,7 @@ class BaseModelBackend(ABC):
         ...
 
     @abstractmethod
-    def generate(self, prompt: str, **kwargs: Any) -> str:
+    def generate(self, prompt: str, **kwargs: Any) -> ModelResponse:
         """Generate text from a prompt.
 
         Args:
@@ -37,7 +39,7 @@ class BaseModelBackend(ABC):
                       max_new_tokens) that override defaults.
 
         Returns:
-            The generated text string.
+            Typed generated text and backend provenance.
         """
         ...
 

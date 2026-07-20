@@ -1,14 +1,29 @@
 # SVG Agentic SLM
 
-An agentic pipeline utilizing Small Language Models (SLMs) to generate, validate, and refine Scaleable Vector Graphics (SVG) from natural language descriptions. The long-term goal of the project is to evaluate and fine-tune lightweight open-source models, such as Gemma 4 E4B, to produce valid, semantically rich SVG output.
+An agentic pipeline utilizing Small Language Models (SLMs) to generate, validate, and refine Scalable Vector Graphics (SVG) from natural language descriptions. The current local baseline is the quantized Gemma 4 12B instruction model; the long-term goal is to evaluate and fine-tune lightweight open-source models for valid, semantically rich SVG output.
 
 ## Key Features
 
 - **Agentic Generation & Refinement**: Implements an iterative feedback loop where generator agents produce SVG drafts, and rules-based or LLM-based critic agents analyze and refine the output to fix visual errors or syntax anomalies.
-- **Retrieval-Augmented Generation (RAG)**: Integrates ChromaDB-driven vector storage to perform semantic code-snippet retrieval, providing generator agents with high-quality reference patterns based on descriptive text.
-- **Extensible LLM Backend**: Built with abstraction interfaces supporting Hugging Face Transformers and optimized local inference execution for lightweight architectures such as the Gemma 4 E4B model.
-- **SVG Processing Engine**: Includes complete validation steps (schema checking, XML syntax validation, and tag whitelisting), format normalization, and high-fidelity rasterized rendering support.
-- **Rigorous Evaluation Framework**: Evaluates model performance across datasets utilizing semantic structure, XML diffing, image visual similarity comparisons, and text-image alignment metrics.
+- **Retrieval-Augmented Generation (RAG) Contract**: Defines typed, provenance-preserving retrieval inputs and a metadata whitelist; the concrete ChromaDB retrieval backend remains RAG-owned and in progress.
+- **Extensible LLM Backend**: Uses a backend interface with a pinned CUDA llama.cpp/Gemma 4 12B Q4_0 local profile and injectable fake backends for contract tests.
+- **SVG Processing Engine**: Provides lightweight structural validation, format normalization, and raster rendering; strict XML safety and element/reference policy remain in progress.
+- **Artifact Evaluation Framework**: Reports validity, rendering, and latency from generated artifacts; dataset-backed semantic and visual evaluation remains in progress.
+
+---
+
+## Project Documents
+
+- [Generator Cross-Team Contract and Research Assumptions](docs/generator-cross-team-contract.md):
+  shared Generator assumptions that affect RAG, Critic, Orchestration, Artifact,
+  Validation, and Evaluation workstreams.
+- [Generator Implementation Plan](docs/generator-implementation-plan.md):
+  dependency-driven implementation and experiment cycles for the Generator.
+- [Generator Cycle 0 Status and Experiment Runbook](docs/generator-cycle0-status-and-runbook.md):
+  completion gates, agreed contracts, and user-run model/dataset experiment
+  commands.
+- [Generate Command Workflow](docs/generate-command-workflow.md): current CLI,
+  ownership, configuration, and artifact flow.
 
 ---
 
@@ -80,6 +95,10 @@ svg-agentic-slm/
 │   │   ├── orchestrator.py # Core orchestrator managing the generation-critique-refinement loops
 │   │   └── schemas.py      # Structured representations for agent interactions
 │   │
+│   ├── benchmarks/         # One isolated preparation adapter per benchmark candidate
+│   │   ├── schemas.py      # Shared prepared-record and result boundary
+│   │   └── svgenius.py     # SVGenius-only candidate download/join/manifest logic
+│   │
 │   ├── cli/                # Command line interface applications and commands
 │   │   ├── __init__.py
 │   │   ├── app.py          # Main Typer CLI router
@@ -92,21 +111,23 @@ svg-agentic-slm/
 │   ├── data/               # Raw, processed, and custom dataset pipelines
 │   │   ├── __init__.py
 │   │   ├── jsonl.py        # Custom reader/writer for dataset serialization
-│   │   ├── preprocess.py   # Dataset filters and normalizers
+│   │   ├── preprocess.py   # Placeholder for future dataset-neutral post-processing
 │   │   ├── schemas.py      # Standardized python structures representing text-to-SVG data samples
 │   │   └── text_to_svg_dataset.py # PyTorch dataset definitions
 │   │
-│   ├── eval/               # Quantized validation framework
+│   ├── eval/               # Artifact-backed evaluation framework
 │   │   ├── __init__.py
-│   │   ├── evaluator.py    # Orchestration logic for dataset evaluations
-│   │   ├── metrics.py      # Algorithms for structural, visual, and semantic SVG similarities
+│   │   ├── evaluator.py    # Evaluation interface; dataset execution remains in progress
+│   │   ├── metrics.py      # Current artifact metrics and placeholder alignment metric
 │   │   ├── report.py       # Report generators outputting markdown or json summaries
 │   │   └── schemas.py      # Structured evaluations definitions
 │   │
 │   ├── models/             # Abstractions for target machine learning models
 │   │   ├── __init__.py
 │   │   ├── base.py         # Abstract base classes for model backends
-│   │   ├── gemma_loader.py # Loader handling Hugging Face integrations for Gemma architecture
+│   │   ├── gemma_loader.py # Legacy Transformers backend
+│   │   ├── llama_cpp_backend.py # Pinned local GGUF inference backend
+│   │   ├── schemas.py      # Typed model response
 │   │   └── generation_config.py # Structured configurations passed down to model backends
 │   │
 │   ├── prompts/            # Isolated and versionable prompt templates
@@ -118,8 +139,9 @@ svg-agentic-slm/
 │   ├── rag/                # Retrieval augmented generation utilities
 │   │   ├── __init__.py
 │   │   ├── base.py         # Abstract retriever interface definitions
-│   │   ├── chroma_store.py # Client wrapper implementing ChromaDB interfaces
+│   │   ├── chroma_store.py # Placeholder ChromaDB implementation owned by RAG
 │   │   ├── document_loader.py # Text-to-SVG metadata and code embedding loader
+│   │   ├── metadata_policy.py # Shared-boundary metadata whitelist
 │   │   └── schemas.py      # Structured schemas for storage elements
 │   │
 │   ├── svg/                # SVG engine handling file manipulation and rendering
@@ -130,7 +152,7 @@ svg-agentic-slm/
 │   │   ├── renderer.py     # Interface implementations pointing to rendering libraries
 │   │   ├── schemas.py      # Structured representations of SVG files
 │   │   ├── utils.py        # XML string sanitization tools
-│   │   └── validator.py    # Validation algorithms checking XML syntax and safe tags lists
+│   │   └── validator.py    # Current lightweight structural validator
 │   │
 │   └── utils/              # Utility helpers
 │       ├── __init__.py
@@ -187,11 +209,33 @@ conda env create -f environment.yml
 conda activate svg-agentic-slm
 
 # Install the package in editable development mode
-pip install -e ".[dev]"
+python -m pip install -e ".[dev]"
 
 # Prepare your local configuration files
 cp .env.example .env
 ```
+
+### RTX 4080 Laptop Local GPU Profile
+
+The default Generator model is a pinned LM Studio Community Q4_0 compatibility
+quant derived from Google's Gemma 4 12B instruction-tuned QAT upstream. The
+previous Google-hosted GGUF is rejected because it aborts during vocabulary
+loading. Build the pinned llama.cpp Python binding with CUDA:
+
+```bash
+CUDACXX=/usr/local/cuda/bin/nvcc \
+CUDAHOSTCXX=/usr/bin/g++-11 \
+CMAKE_ARGS="-DGGML_CUDA=on \
+  -DCMAKE_CUDA_COMPILER=/usr/local/cuda/bin/nvcc \
+  -DCMAKE_CUDA_HOST_COMPILER=/usr/bin/g++-11" \
+FORCE_CMAKE=1 \
+python -m pip install -e ".[local-gpu,dev]"
+```
+
+The first real generation downloads the pinned checkpoint configured in
+`configs/model.yaml`. The local default requests full GPU offload and does not
+silently fall back to CPU. Set a lower `model.n_gpu_layers` explicitly if the
+measured workload exceeds available VRAM.
 
 ### Verifying Setup
 
@@ -202,7 +246,10 @@ Ensure your local installation and imports work correctly by running the validat
 python scripts/smoke_test.py
 
 # Run all unit tests
-pytest
+python -m pytest
+
+# Confirm that the native llama.cpp build supports CUDA offload
+python -c "from llama_cpp import llama_cpp; print(llama_cpp.llama_supports_gpu_offload())"
 ```
 
 ---
@@ -215,7 +262,7 @@ The package registers a unified CLI utility `svg-agentic-slm` to orchestrate pip
 # Generate SVG code based on description prompts
 svg-agentic-slm generate "A bright blue circle centered on a dark canvas"
 
-# Generate utilizing both RAG retrieval and multiple critique loops
+# Exercise optional RAG/Critic paths (the concrete RAG and LLM Critic remain in progress)
 svg-agentic-slm generate "An intricate golden star" --rag --critic
 
 # Run validations on an existing SVG file
@@ -224,10 +271,10 @@ svg-agentic-slm validate path/to/drawing.svg
 # Render an SVG document to a high-resolution PNG image
 svg-agentic-slm render path/to/drawing.svg --output outputs/renders/drawing.png
 
-# Execute Parameter-Efficient Fine-Tuning (PEFT) utilizing LoRA
+# Exercise the current LoRA training scaffold
 svg-agentic-slm train --config configs/train_lora.yaml
 
-# Run evaluations across a text-to-SVG benchmark dataset
+# Evaluate previously generated artifact bundles (not a dataset runner)
 svg-agentic-slm eval --config configs/eval.yaml
 ```
 
@@ -268,13 +315,13 @@ Execute tests utilizing the pytest framework. All tests run cleanly without GPU 
 
 ```bash
 # Run all unit tests
-pytest
+python -m pytest
 
 # Run tests and export code coverage statistics
-pytest --cov=svg_agentic_slm
+python -m pytest --cov=svg_agentic_slm
 
 # Target specific test files
-pytest tests/test_svg_validator.py
+python -m pytest tests/test_svg_validator.py
 ```
 
 ---

@@ -7,6 +7,13 @@ from pathlib import Path
 import pytest
 import yaml
 
+from svg_agentic_slm.factories.generation import _build_model_backend
+from svg_agentic_slm.models.generation_config import GenerationConfig
+from svg_agentic_slm.models.llama_cpp_backend import (
+    DEFAULT_MODEL_FILE,
+    DEFAULT_MODEL_ID,
+    DEFAULT_MODEL_REVISION,
+)
 from svg_agentic_slm.utils.config import load_yaml_config, merge_configs
 
 
@@ -52,3 +59,27 @@ def test_merge_configs() -> None:
 
     merged = merge_configs(a, b)
     assert merged == {"key1": "a", "key2": "b", "key3": "b"}
+
+
+def test_generation_config_rejects_unknown_option() -> None:
+    with pytest.raises(ValueError, match="unknown_option"):
+        GenerationConfig.from_dict({"unknown_option": True})
+
+
+def test_model_backend_factory_rejects_unknown_option() -> None:
+    with pytest.raises(ValueError, match="n_gpu_layer"):
+        _build_model_backend(
+            {"backend_type": "llama_cpp", "n_gpu_layer": -1},
+            GenerationConfig(),
+        )
+
+
+def test_model_backend_factory_uses_compatibility_checkpoint_defaults() -> None:
+    backend = _build_model_backend(
+        {"backend_type": "llama_cpp"},
+        GenerationConfig(),
+    )
+
+    assert backend.model_id == DEFAULT_MODEL_ID
+    assert backend.filename == DEFAULT_MODEL_FILE
+    assert backend.model_revision == DEFAULT_MODEL_REVISION

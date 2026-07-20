@@ -3,6 +3,12 @@
 This document defines the current ownership boundary and integration contract
 for the `svg-agentic-slm generate ...` path.
 
+For the proposed Cycle 0 contracts and research assumptions that affect other
+workstreams, see
+[Generator Cross-Team Contract and Research Assumptions](./generator-cross-team-contract.md).
+Cycle 0 completion gates and manual experiments are tracked in
+[Generator Cycle 0 Status and Experiment Runbook](./generator-cycle0-status-and-runbook.md).
+
 ## Why This Exists
 
 The project already had the architectural layers for generation, but the CLI
@@ -54,7 +60,9 @@ The generator is responsible for:
 
 - turning a `GenerationRequest` plus optional context into SVG text
 - respecting generation overrides from `request.config_overrides`
-- eventually extracting clean SVG from raw model output
+- rendering typed RAG context into the Generator-owned prompt
+- extracting and normalizing SVG from raw model output
+- returning attempt, model-call, prompt, and context provenance
 
 The generator should not:
 
@@ -82,14 +90,16 @@ The critic should not:
 The RAG layer is responsible for:
 
 - retrieval backend behavior
-- returning examples through `RAGAgent.retrieve(...)`
-- formatting retrievable content cleanly enough for prompt injection
+- returning typed, stable, provenance-preserving examples through
+  `RAGAgent.retrieve(...)`
+- projecting vector-store metadata through the shared whitelist
 
 The RAG layer should not:
 
 - own CLI flags
 - own output persistence
 - own render artifact rules
+- construct the Generator prompt
 
 ## Config Resolution Rules
 

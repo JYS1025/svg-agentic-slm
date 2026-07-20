@@ -14,12 +14,14 @@ generation:
     target_width: 256
     target_height: 256
     max_svg_length: 8192  # characters
+    max_context_characters: 12000
 
   # Orchestration settings
   orchestration:
     enable_rag: false
     enable_critic: false
     max_revision_rounds: 2
+    critic_acceptance_score: 8.0
     critic_type: "rule"  # Options: rule, llm, both
 
   # Render settings for generated SVG artifacts

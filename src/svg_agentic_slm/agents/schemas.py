@@ -8,7 +8,9 @@ and makes the data flow self-documenting.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, Literal
+
+from svg_agentic_slm.models.schemas import ModelResponse
 
 
 @dataclass
@@ -24,6 +26,37 @@ class GenerationRequest:
     instruction: str
     task: str = "text_to_svg"
     config_overrides: dict[str, Any] = field(default_factory=dict)
+    run_id: str | None = None
+
+
+@dataclass
+class ModelCallTrace:
+    """Trace for one model invocation within a Generator operation."""
+
+    model_call_id: str
+    response: ModelResponse
+    prompt: str = ""
+    system_prompt: str | None = None
+    generation_parameters: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass
+class GeneratorOutput:
+    """Typed output of one initial generation or revision operation."""
+
+    attempt_id: str
+    mode: Literal["initial", "revision"]
+    svg: str
+    raw_output: str
+    status: Literal["succeeded", "failed"]
+    prompt_version: str
+    model_calls: list[ModelCallTrace] = field(default_factory=list)
+    parent_attempt_id: str | None = None
+    trigger_feedback_id: str | None = None
+    error: str | None = None
+    context_item_ids: list[str] = field(default_factory=list)
+    truncated_context_item_ids: list[str] = field(default_factory=list)
+    metadata: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass
@@ -47,6 +80,9 @@ class GenerationResult:
     critic_feedback: list[CriticFeedback] = field(default_factory=list)
     revision_count: int = 0
     metadata: dict[str, Any] = field(default_factory=dict)
+    run_id: str | None = None
+    attempts: list[GeneratorOutput] = field(default_factory=list)
+    feedback_events: list[CriticFeedbackEvent] = field(default_factory=list)
 
 
 @dataclass
@@ -70,3 +106,16 @@ class CriticFeedback:
     suggestions: list[str] = field(default_factory=list)
     critic_type: str = "unknown"
     raw_response: str | None = None
+    critic_version: str | None = None
+    model_id: str | None = None
+    model_revision: str | None = None
+    prompt_version: str | None = None
+
+
+@dataclass
+class CriticFeedbackEvent:
+    """A Critic payload correlated to the exact SVG attempt it reviewed."""
+
+    feedback_id: str
+    target_attempt_id: str
+    feedback: CriticFeedback
