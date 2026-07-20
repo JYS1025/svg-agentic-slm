@@ -1143,9 +1143,9 @@ evaluation runner 구현이 아니다.
 - feedback memory를 논문 핵심 claim으로 둘 것인가, demo feature로 둘 것인가?
 
 위 질문에 답하고 dataset-specific adapter의 실제 output을 검토하기 전에는
-최종 benchmark를 선택하지 않는다. 현재 변경에서는 dataset이나 model을
-다운로드하지 않았으며, SVGenius 코드는 사용자가 명시적으로 실행할 수 있는
-candidate preparation path만 제공한다.
+최종 benchmark를 선택하지 않는다. 현재 local experiment에서는 model과
+SVGenius candidate snapshot을 다운로드·검증했지만, 이 결과만으로 SVGenius를
+최종 benchmark로 채택하거나 model accuracy를 보고하지 않는다.
 
 ## 7. 반복형 구현 계획
 
@@ -1156,14 +1156,14 @@ candidate preparation path만 제공한다.
 - 현재 `f1a88c3` 코드와 테스트를 기준선으로 고정
 - 실행할 hardware profile: **확인 완료** — RTX 4080 Laptop 12GB, system RAM 30GB
 - model 결정: **교체 완료** — Google QAT upstream 기반 LM Studio Community Q4_0 compatibility pin, immutable revision, CUDA llama.cpp local profile
-- benchmark 후보 조사: **진행 중** — SVGenius-specific candidate adapter는 구현했으나 최종 benchmark 선택은 Evaluation owner dependency
+- benchmark 후보 조사: **candidate preparation 완료** — SVGenius v2 299-record snapshot은 검증했으나 최종 benchmark/metric 선택은 Evaluation owner dependency
 - artifact 호환성 분석: **완료** — 기존 top-level을 유지하고 nested generator trace를 additive하게 제공
 - initial/revision API: **완료** — `generate()`와 `revise()` 분리
 - context item 상세 schema와 revision stop policy: **구현 후보 완료** — 관련 owner review 필요
 - RAG free-form metadata 정책: **구현 완료** — typed field만 공유하고 Cycle 0 whitelist는 빈 집합
 - CUDA-enabled llama.cpp runtime profile: **로컬 native build 검증 완료**
-- replacement 6.98 GB GGUF load, VRAM headroom, TTFT/tokens-per-second 실측:
-  **대기** — 이전 Google GGUF는 vocabulary assert로 reject되었고 replacement E2가 필요함
+- replacement 6.98 GB GGUF load와 real generation: **완료**
+- VRAM headroom, TTFT/tokens-per-second 실측: **대기**
 
 ### 무엇을 구현하는가
 
@@ -1224,7 +1224,8 @@ evaluation은 Evaluation owner가 검토한다.
 - local Q4_0 / CUDA full-offload 정책: **완료**
 - model license와 Hugging Face cache 위치 확인
 - CUDA-enabled `llama-cpp-python` native environment: **현재 장비에서 검증 완료**
-- 실제 weight load와 hardware acceptance measurement: **대기**
+- 실제 weight load와 non-placeholder generation: **완료**
+- hardware acceptance measurement: **대기**
 
 ### 무엇을 구현하는가
 

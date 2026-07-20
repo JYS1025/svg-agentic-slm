@@ -9,9 +9,10 @@ This is the operational handoff for Generator Cycle 0. It separates:
 3. external-owner reviews still required;
 4. experiments that the local hardware owner must run.
 
-The commands below are instructions for the experiment owner. Model weights
-and benchmark data were not downloaded, and hardware experiments were not run,
-while preparing this revision.
+The commands below are instructions for the experiment owner. Since the first
+draft, the selected model has been downloaded and used for real generation, and
+the SVGenius v2 candidate snapshot has been prepared locally. Full hardware
+measurements and benchmark-backed quality evaluation have not been completed.
 
 ## 2. Completion Verdict
 
@@ -34,16 +35,14 @@ closed.
 | Revision orchestration | Implemented baseline | Orchestration owner review |
 | Artifact schema version 1 | Implemented additively | Structure owner review |
 | Strict SVG safety validation | Current validator remains lightweight | SVG Validation owner |
-| SVGenius candidate preparation | Dataset-specific adapter v2 implements a revision-pinned known exclusion | Re-run E8 and complete license review |
-| SVGenius candidate files | E7 smoke snapshot passed with 9 records; first E8 exposed one upstream medium row without a caption | Re-run E8 with adapter v2 and verify the strict 299-record manifest |
+| SVGenius candidate preparation | Dataset-specific adapter v2 implements a revision-pinned known exclusion | Final benchmark/metric and license review remain |
+| SVGenius candidate files | E7 smoke and E8 strict snapshot passed; 299 records with one audited exclusion | Candidate inspection complete; this is not a model-accuracy result |
 | Dataset-backed batch evaluation | Not implemented | Evaluation owner; current evaluator scores existing artifacts only |
 | Local latency/VRAM acceptance | Not measured | User-run hardware spike |
 
-Cycle 0 should be marked closed only after:
+Remaining project-wide Cycle 0 closure gates are:
 
-- the pinned model loads and produces a non-placeholder SVG;
 - local VRAM and latency evidence is recorded;
-- fake-component and artifact contract tests pass;
 - RAG, Critic/Orchestration, and Structure owners review the shared fields;
 - remaining work is assigned to its actual owner rather than absorbed into the
   Generator module.

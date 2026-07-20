@@ -14,6 +14,12 @@ An agentic pipeline utilizing Small Language Models (SLMs) to generate, validate
 
 ## Project Documents
 
+- [Generator Development Cycle Roadmap](docs/generator-cycle-roadmap.md):
+  concise Cycle 0–8 goals, dependencies, ownership boundaries, experiments,
+  and exit criteria.
+- [Generator Cycle 0 Cross-Team Handoff](docs/generator-cycle0-team-handoff.md):
+  the must-read integration agreements for RAG, Critic, Orchestration,
+  Artifact, Validation, and Evaluation teammates.
 - [Generator Cross-Team Contract and Research Assumptions](docs/generator-cross-team-contract.md):
   shared Generator assumptions that affect RAG, Critic, Orchestration, Artifact,
   Validation, and Evaluation workstreams.

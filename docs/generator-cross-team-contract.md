@@ -19,7 +19,11 @@ implementation diary.
 
 The detailed execution plan remains in
 [Generator Implementation Plan](./generator-implementation-plan.md). The
-current CLI and artifact ownership boundary is described in
+Cycle summary is in
+[Generator Development Cycle Roadmap](./generator-cycle-roadmap.md), and the
+Cycle 0 teammate-facing implementation handoff is in
+[Generator Cycle 0 Cross-Team Handoff](./generator-cycle0-team-handoff.md).
+The current CLI and artifact ownership boundary is described in
 [Generate Command Workflow](./generate-command-workflow.md).
 
 ## 1. What Must Be Recorded Here
@@ -322,8 +326,9 @@ content-addressed cache, but loading aborted at vocabulary token 237922 before
 tensor placement. The same assertion is reported with current standalone
 llama.cpp, so this is an upstream file compatibility incident rather than an
 OOM or backend configuration failure. The replacement compatibility pin has
-not yet passed E2; TTFT, tokens/second, and peak-VRAM evidence remain C0-10
-work.
+loaded successfully and produced valid non-placeholder SVG output. E2 is still
+incomplete as a hardware-acceptance record because TTFT, tokens/second, and
+peak-VRAM/headroom evidence remain C0-10 work.
 
 The backend is selected by config and implements `BaseModelBackend`; future
 Transformers, vLLM, or remote cloud backends do not require Generator changes.
@@ -422,10 +427,10 @@ blocked, not on implementation difficulty.
 
 | ID | Required decision | Proposed default | Decision owner / required review | Status |
 |---|---|---|---|---|
-| C0-07 | Exact Gemma checkpoint and immutable revision | Compatibility QAT Q4_0 GGUF at the revision specified in section 4.7; preserve its Google upstream and conversion provenance | Model/Platform / Generator, Factory, Artifact | Replacement accepted and configured; E2 load pending |
-| C0-08 | Q4 format and inference engine | CUDA-enabled llama.cpp with full GPU offload; config-selectable backend | Model/Platform / Generator, Environment | Accepted; native CUDA and Gemma 4 support verified, replacement weight load pending |
+| C0-07 | Exact Gemma checkpoint and immutable revision | Compatibility QAT Q4_0 GGUF at the revision specified in section 4.7; preserve its Google upstream and conversion provenance | Model/Platform / Generator, Factory, Artifact | Accepted, configured, loaded, and used for real generation |
+| C0-08 | Q4 format and inference engine | CUDA-enabled llama.cpp with full GPU offload; config-selectable backend | Model/Platform / Generator, Environment | Accepted; native CUDA, weight load, and real generation verified |
 | C0-09 | Runtime lock | Pin CUDA-enabled llama.cpp Python binding, Hugging Face client, and tested CUDA build recipe | Model/Platform / CI, Generator | Local build verified; clean-environment/CI review required |
-| C0-10 | Local memory and latency acceptance budget | GPU-resident preferred; at least 1 GiB VRAM headroom; CPU offload is a measured fallback. Record TTFT, tokens/second, and end-to-end latency in the first hardware spike, then approve numeric thresholds. | Generator / Evaluation, future Cloud deployment | Open; previous distribution rejected at vocabulary load, replacement E2/hardware spike pending |
+| C0-10 | Local memory and latency acceptance budget | GPU-resident preferred; at least 1 GiB VRAM headroom; CPU offload is a measured fallback. Record TTFT, tokens/second, and end-to-end latency in the first hardware spike, then approve numeric thresholds. | Generator / Evaluation, future Cloud deployment | Open; replacement inference works, but the hardware measurement record is incomplete |
 | C0-11 | Chat template and thinking behavior | Backend uses the template stored in GGUF metadata; first SVG baseline does not request a reasoning mode | Generator / Model/Platform, Evaluation | Accepted and implemented |
 | C0-12 | Input/context/output length profile | Start with 8K model context, 12,000 context characters, and 2,048 completion tokens; deterministic context truncation is recorded | Generator / RAG, Critic, Evaluation | Accepted as tunable baseline |
 
