@@ -26,6 +26,7 @@ def test_run_evaluation_reads_generation_artifacts(tmp_path: Path) -> None:
         svg_content='<svg xmlns="http://www.w3.org/2000/svg"><circle r="10"/></svg>',
         render_success=True,
         latency=0.25,
+        outcome="accepted",
     )
     _write_artifact_bundle(
         artifact_dir,
@@ -34,6 +35,7 @@ def test_run_evaluation_reads_generation_artifacts(tmp_path: Path) -> None:
         svg_content="not svg",
         render_success=False,
         latency=0.75,
+        outcome="rejected",
     )
 
     config_path = tmp_path / "eval.yaml"
@@ -64,6 +66,7 @@ def test_run_evaluation_reads_generation_artifacts(tmp_path: Path) -> None:
     assert result.avg_instruction_alignment == 1.0
     assert result.metadata["evaluation_mode"] == "artifacts"
     assert result.metadata["artifact_source"] == str(artifact_dir)
+    assert result.metadata["outcome_counts"] == {"accepted": 1, "rejected": 1}
     assert len(result.per_sample_results) == 2
 
 
@@ -112,7 +115,10 @@ def test_eval_command_applies_cli_overrides(tmp_path: Path) -> None:
         artifact_dir,
         stem="sample_b",
         instruction="Draw a red triangle.",
-        svg_content='<svg xmlns="http://www.w3.org/2000/svg"><polygon points="0,0 10,0 5,10"/></svg>',
+        svg_content=(
+            '<svg xmlns="http://www.w3.org/2000/svg">'
+            '<polygon points="0,0 10,0 5,10"/></svg>'
+        ),
         render_success=True,
         latency=0.8,
     )
@@ -225,6 +231,7 @@ def _write_artifact_bundle(
     render_success: bool,
     latency: float,
     render_enabled: bool = True,
+    outcome: str | None = None,
 ) -> None:
     artifact_dir.mkdir(parents=True, exist_ok=True)
     svg_path = artifact_dir / f"{stem}.svg"
@@ -239,6 +246,8 @@ def _write_artifact_bundle(
         "svg_path": str(svg_path),
         "render_path": str(render_path) if render_success else None,
         "is_valid": render_success,
+        "outcome": outcome,
+        "stop_reason": "test_complete" if outcome else None,
         "revision_count": 0,
         "critic_feedback": [],
         "runtime": {"enable_render": render_enabled},

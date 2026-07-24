@@ -7,6 +7,7 @@ and makes the data flow self-documenting.
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass, field
 from typing import Any, Literal
 
@@ -119,3 +120,40 @@ class CriticFeedbackEvent:
     feedback_id: str
     target_attempt_id: str
     feedback: CriticFeedback
+
+
+def validate_critic_feedback(value: object) -> CriticFeedback:
+    """Validate a Critic response at every runtime composition boundary."""
+    if not isinstance(value, CriticFeedback):
+        raise TypeError("Critic must return CriticFeedback.")
+    if (
+        not isinstance(value.score, (int, float))
+        or isinstance(value.score, bool)
+        or not math.isfinite(float(value.score))
+        or not 0.0 <= float(value.score) <= 10.0
+    ):
+        raise ValueError("CriticFeedback.score must be a finite number between 0 and 10.")
+    if not isinstance(value.is_valid, bool):
+        raise TypeError("CriticFeedback.is_valid must be a boolean.")
+    if not isinstance(value.matches_instruction, bool):
+        raise TypeError("CriticFeedback.matches_instruction must be a boolean.")
+    _validate_string_list(value.issues, "CriticFeedback.issues")
+    _validate_string_list(value.suggestions, "CriticFeedback.suggestions")
+    if not isinstance(value.critic_type, str) or not value.critic_type.strip():
+        raise TypeError("CriticFeedback.critic_type must be a non-empty string.")
+    for field_name in (
+        "raw_response",
+        "critic_version",
+        "model_id",
+        "model_revision",
+        "prompt_version",
+    ):
+        field_value = getattr(value, field_name)
+        if field_value is not None and not isinstance(field_value, str):
+            raise TypeError(f"CriticFeedback.{field_name} must be a string or None.")
+    return value
+
+
+def _validate_string_list(value: object, field_name: str) -> None:
+    if not isinstance(value, list) or any(not isinstance(item, str) for item in value):
+        raise TypeError(f"{field_name} must be a list of strings.")

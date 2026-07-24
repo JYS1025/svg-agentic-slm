@@ -8,7 +8,7 @@ import time
 from collections.abc import Callable
 from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 from svg_agentic_slm.models.base import BaseModelBackend
 from svg_agentic_slm.models.generation_config import GenerationConfig
@@ -228,13 +228,13 @@ class LlamaCppModelBackend(BaseModelBackend):
     @staticmethod
     def _import_llama_client() -> Callable[..., Any]:
         try:
-            from llama_cpp import Llama
+            from llama_cpp import Llama  # type: ignore[import-not-found]
         except ImportError as exc:
             raise RuntimeError(
                 "llama-cpp-python with CUDA support is required for the local GGUF "
                 "backend. Install the project's local-gpu optional dependencies."
             ) from exc
-        return Llama
+        return cast(Callable[..., Any], Llama)
 
     def _resolve_generation_config(self, overrides: dict[str, Any]) -> dict[str, Any]:
         supported = set(self.generation_config.to_dict())

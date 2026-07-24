@@ -29,7 +29,8 @@ The `generate` command now follows this sequence:
 4. Build a `GenerationRequest`.
 5. Pre-compute planned artifact paths for SVG, metadata, and render output.
 6. Call `SVGGenerationOrchestrator.run(...)`.
-7. Persist the generated SVG and a JSON sidecar.
+7. Publish the immutable artifact bundle and JSON sidecar through
+   `src/svg_agentic_slm/artifacts/writer.py`.
 8. Print a user-facing summary in the CLI.
 
 Files involved:
@@ -37,8 +38,15 @@ Files involved:
 - `src/svg_agentic_slm/cli/commands_generate.py`
 - `src/svg_agentic_slm/cli/commands_render.py`
 - `src/svg_agentic_slm/artifacts/generation.py`
+- `src/svg_agentic_slm/artifacts/writer.py`
 - `src/svg_agentic_slm/factories/generation.py`
 - `src/svg_agentic_slm/agents/orchestrator.py`
+
+`factories/generation.py` owns configuration resolution, component assembly,
+and artifact path planning. `artifacts/writer.py` owns locking, immutable bundle
+creation, strict pre-publication validation, atomic sidecar publication, and
+the exported SVG alias. Existing imports of `GenerationArtifacts` and
+`persist_generation_artifacts` from the factory remain supported.
 
 ## Ownership Boundary
 
@@ -77,7 +85,8 @@ The critic is responsible for:
 
 - returning `CriticFeedback`
 - keeping critique logic inside the critic implementation
-- preserving the `CriticFeedback` contract
+- preserving the runtime `CriticFeedback` contract: finite `0..10` score,
+  concrete booleans, string issue/suggestion lists, and string provenance
 
 The critic should not:
 
@@ -123,8 +132,10 @@ experiments, or branches without rewriting the command.
 
 Each generate run writes:
 
-- one `.svg` file
-- one render artifact when rendering is enabled, currently `.png` by default
+- one exported `.svg` file for direct use
+- one immutable companion run bundle containing the canonical SVG, traces, and
+  successful render output
+- one external render artifact when rendering is enabled, currently `.png` by default
 - one `.json` sidecar with the same basename
 
 If `--output` is not provided, the command writes to:
@@ -140,17 +151,25 @@ If `--output` is provided, the command writes:
 
 - the SVG to the explicit path
 - the metadata sidecar next to the SVG
-- the render artifact next to the SVG with the same stem
+- the render artifact next to the SVG with a run-qualified stem
 
 An explicit generation output must either omit its extension or use `.svg`.
 Other extensions are rejected before generation so the SVG cannot collide with
 its JSON sidecar or be written under a misleading file type.
 
-The canonical top-level `svg_path` and `render_path` stored in the JSON sidecar
-are relative to the sidecar location. Artifact readers also retain compatibility
-with older absolute and working-directory-relative sidecars. This lets a
-complete artifact bundle be moved and evaluated from a different working
-directory.
+The canonical top-level `svg_path` and `render_path` point into the immutable
+`<sidecar-stem>.artifacts/<run-id>/` bundle and are relative to the sidecar
+location. Version 1 readers validate required scalar and nested record types,
+require references to remain inside the sidecar directory, and reject missing,
+absolute, or escaping references. Legacy version 0 readers retain compatibility
+with older absolute and working-directory-relative sidecars.
+The writer runs the same version 1 parser against the promoted bundle before
+publishing the sidecar. A malformed payload removes the unpublished bundle and
+cannot replace the previous commit marker or exported SVG alias.
+The canonical SVG must be byte-identical to the final successful attempt SVG.
+The sidecar replacement itself is the commit point: an error after replacement
+preserves the referenced bundle, while the non-canonical SVG alias remains
+unchanged because alias publication occurs only after durable completion.
 
 The standalone `render` command follows the same renderer backend and format
 rules, but it is strict:
@@ -266,7 +285,7 @@ When changing `Generator`, `Critic`, or `RAG`, keep these rules:
 
 ### Safe To Extend Now
 
-- `GemmaModelBackend.load_model()` and `.generate()`
+- `LlamaCppModelBackend.load_model()` and `.generate()`
 - `GeneratorAgent.generate()`
 - `RuleBasedCritic.critique()`
 - `LLMCritic.critique()`
@@ -288,10 +307,51 @@ When changing `Generator`, `Critic`, or `RAG`, keep these rules:
 Recommended next structural tasks:
 
 1. Split runtime assembly into per-component builders if model families multiply.
-2. Add explicit config override CLI flags for common generation params.
-3. Add regression tests for `critic_type=llm` and `critic_type=both`.
-4. Decide whether render failures should optionally become hard failures in strict CI modes.
-5. Decide whether dataset-backed evaluation should be restored alongside artifact-backed evaluation later.
+2. Add regression tests for `critic_type=llm` and `critic_type=both`.
+3. Decide whether render failures should optionally become hard failures in strict CI modes.
+4. Decide whether dataset-backed evaluation should be restored alongside artifact-backed evaluation later.
+
+## Acceptance And Artifact Rules
+
+- A Critic score cannot accept an attempt that failed SVG validation.
+- `accepted` requires a structurally safe SVG and, when enabled, Critic
+  `is_valid=true`, `matches_instruction=true`, and a score at or above the
+  configured threshold.
+- Critic output is validated both before each CompositeCritic aggregation and
+  at the orchestration boundary. Concrete booleans, finite `0..10` scores,
+  string issue/suggestion lists, and string provenance fields are required
+  before feedback can affect aggregation, revision, or acceptance.
+- The CLI prints the final `outcome` and `stop_reason`; evaluation reads the
+  same fields without deriving acceptance from SVG validity.
+- Schema version 1 readers validate and expose typed attempts and model-call
+  traces. Legacy sidecars without `schema_version` remain readable as version 0.
+- A complete immutable run bundle is promoted before the JSON sidecar is
+  validated with the version 1 reader and atomically published. The sidecar is
+  the commit marker; the exported SVG is updated only afterward and is not
+  used as the canonical evaluation input.
+- Writer and strict reader both require the canonical SVG to match the final
+  successful attempt. If an error occurs after the sidecar replacement, the
+  committed bundle is retained so the sidecar never references deleted files.
+- Strict readers reject `accepted` Critic runs unless the final feedback targets
+  the final attempt, satisfies both structural acceptance booleans, and meets
+  the configured score threshold.
+- Publication is serialized by sidecar path across threads and processes, so
+  concurrent runs targeting one explicit `--output` cannot interleave sidecar
+  and export-alias updates.
+
+## SVG Safety Boundary
+
+The validator accepts a reviewed allowlist of static SVG drawing, text,
+gradient, masking, and filter elements. Script, style blocks, animation,
+navigation, media, handlers, foreign namespaces, event attributes, DTDs,
+processing instructions, absolute/external references, and CSS obfuscation are
+rejected. Attribute namespaces are also deny-by-default; only reviewed
+`xml:lang`, `xml:space`, and local-fragment `xlink:href` use is allowed. New SVG
+elements or namespaced attributes must be reviewed before being added. Element
+names are matched with the exact SVG/XML casing; invalid variants such as
+`lineargradient` or `Rect` must not be normalized into allowed elements.
+URI checks remove URL-parser-ignored ASCII tab and newline characters before
+scheme detection, while ordinary multiline geometry attributes remain valid.
 
 ## Verification
 

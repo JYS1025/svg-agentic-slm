@@ -16,10 +16,12 @@ from typing import TYPE_CHECKING
 from uuid import uuid4
 
 from svg_agentic_slm.agents.schemas import (
+    CriticFeedback,
     CriticFeedbackEvent,
     GenerationRequest,
     GenerationResult,
     GeneratorOutput,
+    validate_critic_feedback,
 )
 
 if TYPE_CHECKING:
@@ -142,7 +144,9 @@ class SVGGenerationOrchestrator:
 
         # Step 3: Critique and revise
         while self._critic is not None and current.status == "succeeded":
-            feedback = self._critic.critique(request.instruction, current.svg)
+            feedback = validate_critic_feedback(
+                self._critic.critique(request.instruction, current.svg)
+            )
             latest_feedback_event = CriticFeedbackEvent(
                 feedback_id=f"feedback_{uuid4().hex}",
                 target_attempt_id=current.attempt_id,
@@ -153,7 +157,13 @@ class SVGGenerationOrchestrator:
             logger.info("Critic feedback: score=%.1f", feedback.score)
 
             if (
-                feedback.score >= self._critic_acceptance_score
+                (
+                    validation.is_valid
+                    and _feedback_meets_acceptance(
+                        latest_feedback_event,
+                        self._critic_acceptance_score,
+                    )
+                )
                 or result.revision_count >= self._max_revisions
             ):
                 break
@@ -219,7 +229,10 @@ class SVGGenerationOrchestrator:
             current.metadata["outcome"] = "failed"
         elif validation.is_valid and (
             latest_feedback_event is None
-            or latest_feedback_event.feedback.score >= self._critic_acceptance_score
+            or _feedback_meets_acceptance(
+                latest_feedback_event,
+                self._critic_acceptance_score,
+            )
         ):
             current.metadata["outcome"] = "accepted"
         else:
@@ -297,8 +310,24 @@ def _stop_reason(
         return "validation_failed"
     if feedback_event is None:
         return "generator_only_complete"
-    if feedback_event.feedback.score >= acceptance_score:
+    if _feedback_meets_acceptance(feedback_event, acceptance_score):
         return "critic_acceptance_threshold_met"
     if revision_count >= max_revisions:
         return "max_revisions_reached"
+    if not feedback_event.feedback.is_valid:
+        return "critic_marked_invalid"
+    if not feedback_event.feedback.matches_instruction:
+        return "critic_instruction_mismatch"
     return "revision_stopped"
+
+
+def _feedback_meets_acceptance(
+    feedback_event: CriticFeedbackEvent,
+    acceptance_score: float,
+) -> bool:
+    feedback = feedback_event.feedback
+    return (
+        feedback.is_valid
+        and feedback.matches_instruction
+        and feedback.score >= acceptance_score
+    )
