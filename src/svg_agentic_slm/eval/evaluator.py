@@ -82,6 +82,7 @@ class Evaluator:
         render_results: list[bool] = []
         latencies: list[float] = []
         per_sample_results: list[dict[str, object]] = []
+        outcome_counts: dict[str, int] = {}
 
         for artifact in artifacts:
             svg_content = artifact.svg_path.read_text(encoding="utf-8")
@@ -119,11 +120,18 @@ class Evaluator:
                 feedback.get("critic_type", "unknown")
                 for feedback in artifact.critic_feedback
             ]
+            outcome = artifact.outcome or "unknown"
+            outcome_counts[outcome] = outcome_counts.get(outcome, 0) + 1
             per_sample_results.append(
                 {
                     "instruction": artifact.instruction,
                     "svg_path": str(artifact.svg_path),
                     "metadata_path": str(artifact.metadata_path),
+                    "schema_version": artifact.schema_version,
+                    "run_id": artifact.run_id,
+                    "outcome": artifact.outcome,
+                    "stop_reason": artifact.stop_reason,
+                    "attempt_count": len(artifact.attempts),
                     "render_path": str(artifact.render_path) if artifact.render_path else None,
                     "is_valid": validation.is_valid,
                     "validation_errors": validation.errors,
@@ -163,6 +171,7 @@ class Evaluator:
                 "artifact_count": len(artifacts),
                 "computed_metrics": sorted(selected_metrics),
                 "render_attempt_count": len(render_results),
+                "outcome_counts": outcome_counts,
                 "latency_source": "artifact.metadata.timing.generation_latency_seconds",
             },
         )

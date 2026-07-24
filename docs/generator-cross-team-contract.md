@@ -57,7 +57,7 @@ The following direction is established for Cycle 0.
 | D-004 | Generator consumes RAG and Critic results through neutral typed contracts. | Accepted direction | Generator must not import a vector database client or depend on a concrete Critic implementation. |
 | D-005 | Generator preserves attempt-level provenance but does not own the complete revision policy or artifact store. | Accepted | Orchestration decides continuation and acceptance; Structure persists the trace. |
 | D-006 | Critic feedback and corrections may form an experience memory retrieved alongside static SVG examples. | Core research direction | RAG, Critic, Orchestration, Artifact, and Evaluation designs must retain the information needed to build and audit this memory. |
-| D-007 | Existing final SVG and sidecar consumers remain compatible through additive schema evolution. | Proposed contract | Structure owner review is required before `schema_version: 1` is treated as accepted. |
+| D-007 | Existing final SVG and sidecar consumers remain compatible through additive schema evolution. Version 1 sidecars reference an immutable run bundle; version 0 retains legacy path handling. | Accepted | Structure publishes the complete bundle before the sidecar and keeps the explicit SVG output as a non-canonical export alias. |
 | D-008 | RAG metadata crossing into Generator follows an explicit whitelist; the Cycle 0 free-form whitelist is empty. | Accepted | RAG projects vector-store metadata at its adapter boundary. New shared keys require documented semantics and retention ownership. |
 | D-009 | The previously pinned Google-hosted GGUF revision is rejected for Cycle 0 because it deterministically aborts in native vocabulary loading. | Accepted incident decision | Do not treat retries, CUDA placement changes, or a `llama-cpp-python` reinstall as a fix. A repaired upstream file requires a new immutable revision and a fresh compatibility check before readoption. |
 
@@ -164,6 +164,12 @@ Critic owns feedback quality and calibration. Orchestration wraps or correlates
 the returned payload with run and attempt identifiers. Generator only consumes
 the structured feedback passed to `revise()`.
 
+Every concrete Critic response must satisfy the shared runtime validator before
+it can affect a CompositeCritic aggregate or the orchestration loop. In
+particular, boolean-looking strings are invalid rather than truthy values;
+scores must be finite and within `0..10`; issue/suggestion collections and
+provenance fields must retain their declared string types.
+
 ### 4.3 Orchestration
 
 Orchestration owns:
@@ -228,6 +234,14 @@ The proposed version 1 extension must be additive and include:
 
 Generator produces its trace data. Structure owns file names, atomic writes,
 sidecar migration, reader compatibility, and intermediate artifact retention.
+Structure must validate a version 1 payload with the same parser used by readers
+after its immutable files are promoted but before the sidecar commit marker is
+published. Failed validation must remove the unpublished bundle and must not
+replace an existing sidecar or export alias.
+The canonical SVG must match the final successful attempt byte-for-byte.
+Sidecar replacement is the exact commit point: failures before it remove the
+new bundle, while failures after it retain that bundle and leave the
+non-canonical SVG export alias unchanged.
 
 Absence of `schema_version` is interpreted as legacy version 0. Version 1
 readers should distinguish a valid legacy omission from an incomplete version
@@ -420,7 +434,7 @@ blocked, not on implementation difficulty.
 | C0-02 | Identifier ownership and retry granularity | Producer-owned IDs: Factory `run_id`; Generator `attempt_id`/`model_call_id`; Orchestration `feedback_id`; RAG item/source ID | Orchestration / Generator, Critic, Artifact | Accepted and implemented |
 | C0-03 | Failure contract | Infrastructure failure raises explicitly; model-output/extraction failure returns a typed failed attempt; never substitute placeholder SVG | Generator / Factory, CLI, Orchestration, Evaluation | Accepted and implemented |
 | C0-04 | Validation versus acceptance semantics | Validator reports code/safety facts; Orchestration records accepted/rejected outcome | Orchestration / Generator, SVG Validation, Critic, Evaluation | Accepted and implemented |
-| C0-05 | Artifact schema version 1 and intermediate retention | Preserve current top-level fields; add versioned trace; retain raw/intermediate files for experiment runs | Structure / Generator, Evaluation, Memory | Implemented; Structure review required |
+| C0-05 | Artifact schema version 1 and intermediate retention | Preserve current top-level fields; add versioned trace; retain raw/intermediate files for experiment runs | Structure / Generator, Evaluation, Memory | Accepted and implemented; locked immutable-bundle publication plus typed field, unique-ID, and lineage-correlation validation verified |
 | C0-06 | RAG context budget, metadata, and conflict policy | Instruction has priority; kind-specific delimited items; empty free-form metadata whitelist; deterministic truncation recorded in trace | Generator / RAG, Evaluation | Accepted and implemented |
 
 ### 7.2 Must Be Decided Before the Real Model Backend PR

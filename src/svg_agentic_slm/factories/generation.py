@@ -1,14 +1,14 @@
 """Assembly helpers for the text-to-SVG generation runtime.
 
-This module centralizes config loading, component wiring, and artifact
-management so the CLI stays thin and collaborators can extend the
-pipeline without rewriting command code.
+This module centralizes config loading, component wiring, and artifact path
+planning so the CLI stays thin and collaborators can extend the pipeline
+without rewriting command code. Durable artifact publication is delegated to
+``svg_agentic_slm.artifacts.writer``.
 """
 
 from __future__ import annotations
 
-import json
-import os
+import logging
 import re
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -22,7 +22,16 @@ from svg_agentic_slm.agents.llm_critic import LLMCritic
 from svg_agentic_slm.agents.orchestrator import SVGGenerationOrchestrator
 from svg_agentic_slm.agents.rag_agent import RAGAgent
 from svg_agentic_slm.agents.rule_critic import RuleBasedCritic
-from svg_agentic_slm.agents.schemas import CriticFeedback, GenerationRequest, GenerationResult
+from svg_agentic_slm.agents.schemas import (
+    CriticFeedback,
+    GenerationRequest,
+    validate_critic_feedback,
+)
+from svg_agentic_slm.artifacts.writer import (
+    GenerationArtifacts,
+    build_bundle_token,
+    persist_generation_artifacts,
+)
 from svg_agentic_slm.cli.overrides import merge_nested_dicts
 from svg_agentic_slm.models.base import BaseModelBackend
 from svg_agentic_slm.models.gemma_loader import GemmaModelBackend
@@ -38,6 +47,8 @@ from svg_agentic_slm.svg.validator import SVGValidator
 from svg_agentic_slm.utils.config import load_yaml_config
 from svg_agentic_slm.utils.paths import get_config_dir
 from svg_agentic_slm.utils.seed import set_seed
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -64,15 +75,6 @@ class GenerationRuntime:
     run_id: str
 
 
-@dataclass
-class GenerationArtifacts:
-    """Paths to files produced by a generation run."""
-
-    svg_path: Path
-    metadata_path: Path
-    render_path: Path | None
-
-
 class CompositeCritic(BaseCritic):
     """Aggregate multiple critics behind the single-critic orchestrator contract."""
 
@@ -87,25 +89,36 @@ class CompositeCritic(BaseCritic):
         return f"CompositeCritic[{critic_names}]"
 
     def critique(self, instruction: str, svg_content: str) -> CriticFeedback:
-        feedback_items = [critic.critique(instruction, svg_content) for critic in self._critics]
+        feedback_items = [
+            validate_critic_feedback(critic.critique(instruction, svg_content))
+            for critic in self._critics
+        ]
         raw_sections = [
             f"[{item.critic_type}] score={item.score:.1f} valid={item.is_valid} "
             f"matches_instruction={item.matches_instruction} "
             f"issues={item.issues} suggestions={item.suggestions}"
             for item in feedback_items
         ]
-        return CriticFeedback(
-            score=sum(item.score for item in feedback_items) / len(feedback_items),
-            is_valid=all(item.is_valid for item in feedback_items),
-            matches_instruction=all(item.matches_instruction for item in feedback_items),
-            issues=_unique_strings(issue for item in feedback_items for issue in item.issues),
-            suggestions=_unique_strings(
-                suggestion for item in feedback_items for suggestion in item.suggestions
-            ),
-            critic_type="+".join(item.critic_type for item in feedback_items),
-            raw_response="\n".join(raw_sections),
-            critic_version="+".join(
-                item.critic_version or "unversioned" for item in feedback_items
+        return validate_critic_feedback(
+            CriticFeedback(
+                score=sum(item.score for item in feedback_items) / len(feedback_items),
+                is_valid=all(item.is_valid for item in feedback_items),
+                matches_instruction=all(
+                    item.matches_instruction for item in feedback_items
+                ),
+                issues=_unique_strings(
+                    issue for item in feedback_items for issue in item.issues
+                ),
+                suggestions=_unique_strings(
+                    suggestion
+                    for item in feedback_items
+                    for suggestion in item.suggestions
+                ),
+                critic_type="+".join(item.critic_type for item in feedback_items),
+                raw_response="\n".join(raw_sections),
+                critic_version="+".join(
+                    item.critic_version or "unversioned" for item in feedback_items
+                ),
             ),
         )
 
@@ -237,197 +250,6 @@ def build_generation_runtime(
     )
 
 
-def persist_generation_artifacts(
-    result: GenerationResult,
-    runtime: GenerationRuntime,
-) -> GenerationArtifacts:
-    """Save the generated SVG and a JSON sidecar with run metadata."""
-    runtime.svg_output_path.parent.mkdir(parents=True, exist_ok=True)
-    runtime.svg_output_path.write_text(result.generated_svg, encoding="utf-8")
-
-    metadata_dir = runtime.metadata_output_path.parent.resolve()
-    svg_reference = _relative_artifact_reference(runtime.svg_output_path, metadata_dir)
-    render_reference = (
-        _relative_artifact_reference(Path(result.render_path), metadata_dir)
-        if result.render_path
-        else None
-    )
-    attempt_records = _persist_attempt_artifacts(
-        result=result,
-        metadata_path=runtime.metadata_output_path,
-        metadata_dir=metadata_dir,
-    )
-    feedback_records = _serialize_feedback_events(result)
-    result_metadata = dict(result.metadata)
-    generator_metadata = dict(result_metadata.get("generator", {}))
-    generator_metadata["attempts"] = attempt_records
-    result_metadata["generator"] = generator_metadata
-    metadata_payload = {
-        "schema_version": 1,
-        "run_id": result.run_id or runtime.run_id,
-        "instruction": result.instruction,
-        "svg_path": svg_reference,
-        "is_valid": result.is_valid,
-        "render_path": render_reference,
-        "revision_count": result.revision_count,
-        "critic_feedback": feedback_records,
-        "runtime": {
-            "enable_rag": runtime.enable_rag,
-            "enable_critic": runtime.enable_critic,
-            "enable_render": runtime.enable_render,
-            "critic_type": runtime.critic_type,
-            "config_paths": runtime.config_paths,
-            "generation_config": runtime.generation_config,
-            "model_config": runtime.model_config,
-            "rag_config": runtime.rag_config if runtime.enable_rag else {},
-            "render_config": runtime.render_config,
-            "planned_artifacts": {
-                "svg_path": str(runtime.svg_output_path),
-                "metadata_path": str(runtime.metadata_output_path),
-                "render_path": (
-                    str(runtime.render_output_path) if runtime.render_output_path else None
-                ),
-            },
-        },
-        "metadata": result_metadata,
-        "generated_at_utc": datetime.now(UTC).isoformat(),
-    }
-
-    runtime.metadata_output_path.write_text(
-        json.dumps(metadata_payload, indent=2, ensure_ascii=False),
-        encoding="utf-8",
-    )
-
-    return GenerationArtifacts(
-        svg_path=runtime.svg_output_path,
-        metadata_path=runtime.metadata_output_path,
-        render_path=Path(result.render_path) if result.render_path else None,
-    )
-
-
-def _persist_attempt_artifacts(
-    *,
-    result: GenerationResult,
-    metadata_path: Path,
-    metadata_dir: Path,
-) -> list[dict[str, Any]]:
-    if not result.attempts:
-        return []
-
-    attempt_dir = metadata_path.with_suffix(".attempts")
-    attempt_dir.mkdir(parents=True, exist_ok=True)
-    records: list[dict[str, Any]] = []
-
-    for attempt_index, attempt in enumerate(result.attempts):
-        prefix = f"attempt-{attempt_index:03d}"
-        svg_ref: str | None = None
-        if attempt.svg:
-            svg_path = attempt_dir / f"{prefix}.svg"
-            svg_path.write_text(attempt.svg, encoding="utf-8")
-            svg_ref = _relative_artifact_reference(svg_path, metadata_dir)
-
-        model_calls: list[dict[str, Any]] = []
-        for call_index, call in enumerate(attempt.model_calls):
-            raw_path = attempt_dir / f"{prefix}.call-{call_index:03d}.raw.txt"
-            raw_path.write_text(call.response.text, encoding="utf-8")
-            prompt_ref = _write_optional_trace_text(
-                attempt_dir / f"{prefix}.call-{call_index:03d}.prompt.txt",
-                call.prompt,
-                metadata_dir,
-            )
-            system_prompt_ref = _write_optional_trace_text(
-                attempt_dir / f"{prefix}.call-{call_index:03d}.system.txt",
-                call.system_prompt,
-                metadata_dir,
-            )
-            model_calls.append(
-                {
-                    "model_call_id": call.model_call_id,
-                    "prompt_ref": prompt_ref,
-                    "system_prompt_ref": system_prompt_ref,
-                    "generation_parameters": call.generation_parameters,
-                    "raw_output_ref": _relative_artifact_reference(
-                        raw_path,
-                        metadata_dir,
-                    ),
-                    "model_id": call.response.model_id,
-                    "model_revision": call.response.model_revision,
-                    "finish_reason": call.response.finish_reason,
-                    "prompt_tokens": call.response.prompt_tokens,
-                    "completion_tokens": call.response.completion_tokens,
-                    "latency_seconds": call.response.latency_seconds,
-                    "metadata": call.response.metadata,
-                }
-            )
-
-        raw_output_ref = model_calls[-1]["raw_output_ref"] if model_calls else None
-        if raw_output_ref is None and attempt.raw_output:
-            raw_path = attempt_dir / f"{prefix}.raw.txt"
-            raw_path.write_text(attempt.raw_output, encoding="utf-8")
-            raw_output_ref = _relative_artifact_reference(raw_path, metadata_dir)
-
-        records.append(
-            {
-                "attempt_id": attempt.attempt_id,
-                "mode": attempt.mode,
-                "parent_attempt_id": attempt.parent_attempt_id,
-                "trigger_feedback_id": attempt.trigger_feedback_id,
-                "svg_ref": svg_ref,
-                "raw_output_ref": raw_output_ref,
-                "status": attempt.status,
-                "error": attempt.error,
-                "outcome": attempt.metadata.get("outcome"),
-                "stop_reason": attempt.metadata.get("stop_reason"),
-                "prompt_version": attempt.prompt_version,
-                "context_item_ids": attempt.context_item_ids,
-                "truncated_context_item_ids": attempt.truncated_context_item_ids,
-                "model_calls": model_calls,
-                "metadata": attempt.metadata,
-            }
-        )
-    return records
-
-
-def _serialize_feedback_events(result: GenerationResult) -> list[dict[str, Any]]:
-    if result.feedback_events:
-        return [
-            {
-                "feedback_id": event.feedback_id,
-                "target_attempt_id": event.target_attempt_id,
-                **_serialize_feedback(event.feedback),
-            }
-            for event in result.feedback_events
-        ]
-    return [_serialize_feedback(feedback) for feedback in result.critic_feedback]
-
-
-def _serialize_feedback(feedback: CriticFeedback) -> dict[str, Any]:
-    return {
-        "score": feedback.score,
-        "is_valid": feedback.is_valid,
-        "matches_instruction": feedback.matches_instruction,
-        "issues": feedback.issues,
-        "suggestions": feedback.suggestions,
-        "critic_type": feedback.critic_type,
-        "raw_response": feedback.raw_response,
-        "critic_version": feedback.critic_version,
-        "model_id": feedback.model_id,
-        "model_revision": feedback.model_revision,
-        "prompt_version": feedback.prompt_version,
-    }
-
-
-def _write_optional_trace_text(
-    path: Path,
-    content: str | None,
-    metadata_dir: Path,
-) -> str | None:
-    if not content:
-        return None
-    path.write_text(content, encoding="utf-8")
-    return _relative_artifact_reference(path, metadata_dir)
-
-
 def _resolve_related_config(config_path: Path, filename: str) -> Path:
     sibling = config_path.parent / filename
     if sibling.exists():
@@ -485,57 +307,29 @@ def _build_model_backend(
         raise ValueError(f"Unknown model config option(s): {names}")
 
     backend_type = model_config.get("backend_type", "llama_cpp")
-    if backend_type == "llama_cpp":
-        return LlamaCppModelBackend(
-            model_id=model_config.get(
-                "model_id",
-                DEFAULT_MODEL_ID,
-            ),
-            filename=model_config.get(
-                "filename",
-                DEFAULT_MODEL_FILE,
-            ),
-            model_revision=model_config.get("revision"),
-            model_path=model_config.get("model_path"),
-            upstream_model_id=model_config.get("upstream_model_id"),
-            quantization=model_config.get("quantization"),
-            quantization_provider=model_config.get("quantization_provider"),
-            conversion_runtime=model_config.get("conversion_runtime"),
-            n_ctx=model_config.get("n_ctx", 8192),
-            n_gpu_layers=model_config.get("n_gpu_layers", -1),
-            n_batch=model_config.get("n_batch", 512),
-            flash_attn=model_config.get("flash_attn", True),
-            use_mmap=model_config.get("use_mmap", True),
-            verbose=model_config.get("verbose", False),
-            chat_format=model_config.get("chat_format"),
-            generation_config=generation_config,
-        )
-    if backend_type == "gemma":
-        return GemmaModelBackend(
-            model_id=model_config.get(
-                "model_id",
-                DEFAULT_MODEL_ID,
-            ),
-            filename=model_config.get(
-                "filename",
-                DEFAULT_MODEL_FILE,
-            ),
-            model_revision=model_config.get("revision"),
-            model_path=model_config.get("model_path"),
-            upstream_model_id=model_config.get("upstream_model_id"),
-            quantization=model_config.get("quantization"),
-            quantization_provider=model_config.get("quantization_provider"),
-            conversion_runtime=model_config.get("conversion_runtime"),
-            n_ctx=model_config.get("n_ctx", 8192),
-            n_gpu_layers=model_config.get("n_gpu_layers", -1),
-            n_batch=model_config.get("n_batch", 512),
-            flash_attn=model_config.get("flash_attn", True),
-            use_mmap=model_config.get("use_mmap", True),
-            verbose=model_config.get("verbose", False),
-            chat_format=model_config.get("chat_format"),
-            generation_config=generation_config,
-        )
-    raise ValueError(f"Unsupported model backend_type: {backend_type}")
+    if backend_type not in ("llama_cpp", "gemma"):
+        raise ValueError(f"Unsupported model backend_type: {backend_type}")
+    backend_class = (
+        LlamaCppModelBackend if backend_type == "llama_cpp" else GemmaModelBackend
+    )
+    return backend_class(
+        model_id=model_config.get("model_id", DEFAULT_MODEL_ID),
+        filename=model_config.get("filename", DEFAULT_MODEL_FILE),
+        model_revision=model_config.get("revision"),
+        model_path=model_config.get("model_path"),
+        upstream_model_id=model_config.get("upstream_model_id"),
+        quantization=model_config.get("quantization"),
+        quantization_provider=model_config.get("quantization_provider"),
+        conversion_runtime=model_config.get("conversion_runtime"),
+        n_ctx=model_config.get("n_ctx", 8192),
+        n_gpu_layers=model_config.get("n_gpu_layers", -1),
+        n_batch=model_config.get("n_batch", 512),
+        flash_attn=model_config.get("flash_attn", True),
+        use_mmap=model_config.get("use_mmap", True),
+        verbose=model_config.get("verbose", False),
+        chat_format=model_config.get("chat_format"),
+        generation_config=generation_config,
+    )
 
 
 def _build_rag_agent(rag_config: dict[str, Any]) -> RAGAgent:
@@ -583,9 +377,10 @@ def _resolve_artifact_paths(
             raise ValueError("Generation output path must use the .svg extension.")
         svg_path = path.with_suffix(".svg")
         metadata_path = svg_path.with_suffix(".json")
+        run_suffix = build_bundle_token(run_id or f"run_{uuid4().hex}")[:12]
         render_path = (
             _build_render_output_path(
-                stem=svg_path.stem,
+                stem=f"{svg_path.stem}.{run_suffix}",
                 render_dir=svg_path.parent,
                 render_format=render_format,
                 svg_suffix=svg_path.suffix,
@@ -647,8 +442,3 @@ def _unique_strings(items: Any) -> list[str]:
             seen.add(item)
             unique_items.append(item)
     return unique_items
-
-
-def _relative_artifact_reference(path: Path, metadata_dir: Path) -> str:
-    """Return a sidecar-relative path so artifact bundles remain portable."""
-    return os.path.relpath(path.resolve(), start=metadata_dir)

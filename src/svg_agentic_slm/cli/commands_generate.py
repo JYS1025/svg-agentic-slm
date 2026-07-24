@@ -65,7 +65,10 @@ def generate(
     overrides: Optional[list[str]] = typer.Option(
         None,
         "--set",
-        help="Nested config override in dotted.path=value form. Example: --set generation.top_p=0.8",
+        help=(
+            "Nested config override in dotted.path=value form. "
+            "Example: --set generation.top_p=0.8"
+        ),
     ),
 ) -> None:
     """Generate an SVG from a text description.
@@ -107,6 +110,10 @@ def generate(
     console.print("\n[bold green]Generated SVG:[/bold green]")
     console.print(result.generated_svg)
     console.print(f"\nValid SVG: {result.is_valid}")
+    final_attempt = result.attempts[-1] if result.attempts else None
+    if final_attempt is not None:
+        console.print(f"Outcome: {final_attempt.metadata.get('outcome', 'unknown')}")
+        console.print(f"Stop reason: {final_attempt.metadata.get('stop_reason', 'unknown')}")
 
     if result.critic_feedback:
         latest_feedback = result.critic_feedback[-1]

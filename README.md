@@ -7,7 +7,7 @@ An agentic pipeline utilizing Small Language Models (SLMs) to generate, validate
 - **Agentic Generation & Refinement**: Implements an iterative feedback loop where generator agents produce SVG drafts, and rules-based or LLM-based critic agents analyze and refine the output to fix visual errors or syntax anomalies.
 - **Retrieval-Augmented Generation (RAG) Contract**: Defines typed, provenance-preserving retrieval inputs and a metadata whitelist; the concrete ChromaDB retrieval backend remains RAG-owned and in progress.
 - **Extensible LLM Backend**: Uses a backend interface with a pinned CUDA llama.cpp/Gemma 4 12B Q4_0 local profile and injectable fake backends for contract tests.
-- **SVG Processing Engine**: Provides lightweight structural validation, format normalization, and raster rendering; strict XML safety and element/reference policy remain in progress.
+- **SVG Processing Engine**: Provides secure XML parsing, active/external-content rejection, format normalization, and raster rendering.
 - **Artifact Evaluation Framework**: Reports validity, rendering, and latency from generated artifacts; dataset-backed semantic and visual evaluation remains in progress.
 
 ---
@@ -131,7 +131,7 @@ svg-agentic-slm/
 │   ├── models/             # Abstractions for target machine learning models
 │   │   ├── __init__.py
 │   │   ├── base.py         # Abstract base classes for model backends
-│   │   ├── gemma_loader.py # Legacy Transformers backend
+│   │   ├── gemma_loader.py # Compatibility alias for the llama.cpp Gemma backend
 │   │   ├── llama_cpp_backend.py # Pinned local GGUF inference backend
 │   │   ├── schemas.py      # Typed model response
 │   │   └── generation_config.py # Structured configurations passed down to model backends
@@ -332,20 +332,16 @@ python -m pytest tests/test_svg_validator.py
 
 ---
 
-## Future Implementation Roadmap
+## Remaining Implementation Roadmap
 
-The follow-up development sequence focuses on swapping mock placeholders with active implementations:
+The shared runtime, strict SVG validation, rendering, artifact-backed
+evaluation, and llama.cpp model path are implemented. Remaining owner work is:
 
-1. **SVG Parser Integration**: Wrap `lxml` inside `SVGValidator` for XML compliance and tag-attribute whitelisting.
-2. **Native Rendering**: Implement `CairoSVG` or alternative vector rendering backends within `CairoRenderer.render()`.
-3. **Model Infrastructure**: Wire Hugging Face `transformers` loader in `GemmaLoader` to initialize model weights and execute device allocation.
-4. **End-to-End Generation**: Integrate the orchestrator and local model pipeline for real text-to-SVG tasks.
-5. **RAG Vector Database**: Embed ChromaDB in `ChromaStore` using specialized sentence-transformer architectures.
-6. **Programmatic Critic**: Fully realize deterministic heuristic checks inside `RuleCritic`.
-7. **Agent Feedback Refinement**: Connect `LLMCritic` to guide generation loops with targeted text feedback.
-8. **Parameter Optimization**: Connect `PEFT` and Hugging Face `TRL` trainers to support LoRA/QLoRA pipelines.
-9. **Metric Scoring Engine**: Implement Chamfer Distance, structural similarity index (SSIM), and CLIP-based text-image score alignments in `eval/metrics.py`.
-10. **Experiment Pipelines**: Facilitate automated tracking runs comparing model performance with and without RAG/Critic configurations.
+1. **RAG retrieval**: complete the production Chroma corpus and retrieval policy.
+2. **Critic quality**: calibrate LLM/rule feedback and acceptance thresholds.
+3. **Evaluation**: freeze the benchmark and add real semantic quality metrics.
+4. **Hardware evidence**: record latency, throughput, and VRAM on the target GPU.
+5. **Training and research**: add PEFT/TRL experiments only after baseline gates close.
 
 ---
 

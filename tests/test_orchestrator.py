@@ -7,6 +7,8 @@ pattern works correctly.
 
 from __future__ import annotations
 
+import pytest
+
 from svg_agentic_slm.agents.base import BaseCritic, BaseGenerator
 from svg_agentic_slm.agents.orchestrator import SVGGenerationOrchestrator
 from svg_agentic_slm.agents.schemas import (
@@ -50,7 +52,12 @@ class StubCritic(BaseCritic):
         return "StubCritic"
 
     def critique(self, instruction: str, svg_content: str) -> CriticFeedback:
-        return CriticFeedback(score=8.0, is_valid=True, critic_type="stub")
+        return CriticFeedback(
+            score=8.0,
+            is_valid=True,
+            matches_instruction=True,
+            critic_type="stub",
+        )
 
 
 class RevisingGenerator(BaseGenerator):
@@ -116,6 +123,84 @@ class SequentialCritic(BaseCritic):
         )
 
 
+class SequentialValidator(BaseValidator):
+    """Reject the initial attempt, then accept the revision."""
+
+    def __init__(self) -> None:
+        self.results = iter([False, True])
+
+    def validate(self, svg_content: str) -> SVGValidationResult:
+        is_valid = next(self.results)
+        return SVGValidationResult(
+            is_valid=is_valid,
+            has_svg_tag=True,
+            has_closing_tag=True,
+            is_well_formed_xml=is_valid,
+            errors=[] if is_valid else ["invalid initial attempt"],
+        )
+
+
+class SequentialStructuredCritic(BaseCritic):
+    """Reject with structured fields despite a high score, then accept."""
+
+    def __init__(self) -> None:
+        self.feedback = iter(
+            [
+                CriticFeedback(
+                    score=9.0,
+                    is_valid=True,
+                    matches_instruction=False,
+                    critic_type="structured",
+                ),
+                CriticFeedback(
+                    score=9.0,
+                    is_valid=True,
+                    matches_instruction=True,
+                    critic_type="structured",
+                ),
+            ]
+        )
+
+    @property
+    def name(self) -> str:
+        return "SequentialStructuredCritic"
+
+    def critique(self, instruction: str, svg_content: str) -> CriticFeedback:
+        return next(self.feedback)
+
+
+class HighScoreInvalidCritic(BaseCritic):
+    """Return a score above threshold while explicitly marking output invalid."""
+
+    @property
+    def name(self) -> str:
+        return "HighScoreInvalidCritic"
+
+    def critique(self, instruction: str, svg_content: str) -> CriticFeedback:
+        return CriticFeedback(
+            score=9.0,
+            is_valid=False,
+            matches_instruction=True,
+            critic_type="structured",
+        )
+
+
+class MalformedBooleanCritic(BaseCritic):
+    """Violate the runtime contract despite matching the dataclass shape."""
+
+    @property
+    def name(self) -> str:
+        return "MalformedBooleanCritic"
+
+    def critique(self, instruction: str, svg_content: str) -> CriticFeedback:
+        return CriticFeedback(
+            score=9.0,
+            is_valid="false",  # type: ignore[arg-type]
+            matches_instruction="false",  # type: ignore[arg-type]
+            critic_type="malformed",
+        )
+
+
 def test_orchestrator_instantiation() -> None:
     """Test that the orchestrator can be created with stub components."""
     orchestrator = SVGGenerationOrchestrator(
@@ -170,3 +255,63 @@ def test_orchestrator_correlates_feedback_and_revision() -> None:
     assert result.feedback_events[0].target_attempt_id == "attempt-initial"
     assert result.attempts[1].parent_attempt_id == "attempt-initial"
     assert result.attempts[1].metadata["outcome"] == "accepted"
+
+
+def test_orchestrator_revises_invalid_svg_even_when_critic_score_is_high() -> None:
+    generator = RevisingGenerator()
+    orchestrator = SVGGenerationOrchestrator(
+        generator=generator,
+        validator=SequentialValidator(),
+        critic=StubCritic(),
+        max_revisions=1,
+    )
+
+    result = orchestrator.run(GenerationRequest(instruction="Draw a valid circle."))
+
+    assert result.revision_count == 1
+    assert result.is_valid is True
+    assert result.attempts[0].metadata["outcome"] == "rejected"
+    assert result.attempts[-1].metadata["outcome"] == "accepted"
+
+
+def test_orchestrator_honors_structured_critic_rejection() -> None:
+    generator = RevisingGenerator()
+    orchestrator = SVGGenerationOrchestrator(
+        generator=generator,
+        validator=StubValidator(),
+        critic=SequentialStructuredCritic(),
+        max_revisions=1,
+    )
+
+    result = orchestrator.run(GenerationRequest(instruction="Draw a circle."))
+
+    assert result.revision_count == 1
+    assert result.attempts[0].metadata["outcome"] == "rejected"
+    assert result.attempts[-1].metadata["outcome"] == "accepted"
+
+
+def test_orchestrator_does_not_accept_critic_marked_invalid() -> None:
+    orchestrator = SVGGenerationOrchestrator(
+        generator=StubGenerator(),
+        validator=StubValidator(),
+        critic=HighScoreInvalidCritic(),
+        max_revisions=0,
+    )
+
+    result = orchestrator.run(GenerationRequest(instruction="Draw a circle."))
+
+    assert result.revision_count == 0
+    assert result.is_valid is True
+    assert result.attempts[-1].metadata["outcome"] == "rejected"
+    assert result.attempts[-1].metadata["stop_reason"] == "max_revisions_reached"
+
+
+def test_orchestrator_rejects_malformed_critic_boolean_fields() -> None:
+    orchestrator = SVGGenerationOrchestrator(
+        generator=StubGenerator(),
+        validator=StubValidator(),
+        critic=MalformedBooleanCritic(),
+    )
+
+    with pytest.raises(TypeError, match="is_valid must be a boolean"):
+        orchestrator.run(GenerationRequest(instruction="Draw a circle."))

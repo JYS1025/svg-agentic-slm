@@ -8,11 +8,13 @@ import pytest
 import yaml
 
 from svg_agentic_slm.factories.generation import _build_model_backend
+from svg_agentic_slm.models.gemma_loader import GemmaModelBackend
 from svg_agentic_slm.models.generation_config import GenerationConfig
 from svg_agentic_slm.models.llama_cpp_backend import (
     DEFAULT_MODEL_FILE,
     DEFAULT_MODEL_ID,
     DEFAULT_MODEL_REVISION,
+    LlamaCppModelBackend,
 )
 from svg_agentic_slm.utils.config import load_yaml_config, merge_configs
 
@@ -83,3 +85,45 @@ def test_model_backend_factory_uses_compatibility_checkpoint_defaults() -> None:
     assert backend.model_id == DEFAULT_MODEL_ID
     assert backend.filename == DEFAULT_MODEL_FILE
     assert backend.model_revision == DEFAULT_MODEL_REVISION
+
+
+@pytest.mark.parametrize(
+    ("backend_type", "expected_class"),
+    [
+        ("llama_cpp", LlamaCppModelBackend),
+        ("gemma", GemmaModelBackend),
+    ],
+)
+def test_model_backend_factory_selects_class_and_forwards_common_options(
+    backend_type: str,
+    expected_class: type[LlamaCppModelBackend],
+) -> None:
+    generation_config = GenerationConfig(temperature=0.25)
+
+    backend = _build_model_backend(
+        {
+            "backend_type": backend_type,
+            "model_id": "example/model",
+            "filename": "model.gguf",
+            "n_ctx": 4096,
+            "n_gpu_layers": 24,
+            "n_batch": 128,
+            "flash_attn": False,
+            "use_mmap": False,
+            "verbose": True,
+            "chat_format": "gemma",
+        },
+        generation_config,
+    )
+
+    assert type(backend) is expected_class
+    assert backend.model_id == "example/model"
+    assert backend.filename == "model.gguf"
+    assert backend.n_ctx == 4096
+    assert backend.n_gpu_layers == 24
+    assert backend.n_batch == 128
+    assert backend.flash_attn is False
+    assert backend.use_mmap is False
+    assert backend.verbose is True
+    assert backend.chat_format == "gemma"
+    assert backend.generation_config is generation_config

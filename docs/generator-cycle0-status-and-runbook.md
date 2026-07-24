@@ -33,8 +33,8 @@ closed.
 | Actual RAG retrieval | Not Generator-owned | RAG owner implementation |
 | Actual LLM Critic | Not Generator-owned | Critic owner implementation |
 | Revision orchestration | Implemented baseline | Orchestration owner review |
-| Artifact schema version 1 | Implemented additively | Structure owner review |
-| Strict SVG safety validation | Current validator remains lightweight | SVG Validation owner |
+| Artifact schema version 1 | Implemented additively; typed reader and immutable-bundle publication verified | Intermediate retention policy can be revisited after Cycle 0 |
+| Strict SVG safety validation | Implemented with secure lxml parsing and active/external-content rejection | Semantic validation remains Critic/Evaluation-owned |
 | SVGenius candidate preparation | Dataset-specific adapter v2 implements a revision-pinned known exclusion | Final benchmark/metric and license review remain |
 | SVGenius candidate files | E7 smoke and E8 strict snapshot passed; 299 records with one audited exclusion | Candidate inspection complete; this is not a model-accuracy result |
 | Dataset-backed batch evaluation | Not implemented | Evaluation owner; current evaluator scores existing artifacts only |
@@ -56,8 +56,8 @@ These are decisions or reviews, not work for the Generator owner to absorb:
 | Local hardware owner | Approve measured VRAM, TTFT, throughput, and end-to-end latency; choose an explicit partial-offload fallback only if full offload fails |
 | RAG | Approve stable item/source ID construction, score semantics, corpus versioning, and the typed item contract |
 | Critic/Orchestration | Approve feedback fields, calibrated acceptance threshold, stop/no-improvement policy, and failure handling |
-| Structure/Artifact | Accept or revise schema version 1, file naming, atomic persistence, and intermediate retention |
-| SVG Validation | Define strict XML, unsafe element/external reference, structural validity, and render-failure semantics |
+| Structure/Artifact | Decide long-term intermediate retention/storage migration after the accepted schema v1 baseline |
+| SVG Validation | Decide whether render failures become hard failures in strict execution modes |
 | Evaluation | Select the final benchmark, freeze dataset-specific adapters/splits, choose metrics and success thresholds, and implement the batch runner |
 | Memory/Research | Define curation/retention, enforce benchmark isolation, and set the evidence threshold for a “self-evolving” claim |
 
@@ -204,6 +204,22 @@ Schema version 1 retains the legacy final artifact and additively records:
 - RAG provenance and whitelisted metadata.
 
 Absence of `schema_version` remains legacy version 0.
+The shared reader validates v1 scalar, collection, attempt, feedback, and
+model-call fields; enforces unique IDs and attempt-feedback-revision
+correlation; and rejects missing or escaping references. Writers promote a
+complete immutable run bundle, validate the exact payload with the shared v1
+parser, and only then atomically publish the JSON sidecar. Validation failure
+removes the unpublished bundle and leaves any prior sidecar and export alias
+unchanged.
+The canonical SVG and final successful attempt SVG must be byte-identical.
+Sidecar replacement is the publication commit point; a later durability error
+retains the referenced bundle and does not advance the SVG export alias.
+Publication uses a sidecar-path file lock, so reused or concurrent explicit
+outputs cannot mix sidecar, canonical bundle, and export-alias content.
+
+SVG element allowlisting follows XML case sensitivity. Canonical names such as
+`clipPath`, `linearGradient`, `textPath`, and `feGaussianBlur` are accepted;
+case-normalized variants are rejected rather than treated as equivalent.
 
 ### 3.7 Experience memory
 

@@ -435,11 +435,11 @@ accepted attempt
 
 ### Orchestration/Structure 담당자
 
-- [ ] producer-owned ID를 덮어쓰지 않는다.
-- [ ] feedback target과 revision lineage를 보존한다.
-- [ ] schema version 1 compatibility를 검토한다.
+- [x] producer-owned ID를 덮어쓰지 않는다.
+- [x] feedback target과 revision lineage를 보존한다.
+- [x] schema version 1 compatibility를 검토한다.
 - [ ] timeout/no-improvement/identical-output 정책을 결정한다.
-- [ ] raw/intermediate artifact retention과 atomic write를 결정한다.
+- [x] raw/intermediate artifact를 immutable run bundle로 보존하고 출력별 lock 안에서 sidecar를 마지막에 공개한다.
 
 ### Evaluation 담당자
 
