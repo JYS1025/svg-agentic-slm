@@ -11,12 +11,12 @@ from __future__ import annotations
 
 import logging
 import time
+from collections.abc import Callable
 from pathlib import Path
 from typing import TYPE_CHECKING
 from uuid import uuid4
 
 from svg_agentic_slm.agents.schemas import (
-    CriticFeedback,
     CriticFeedbackEvent,
     GenerationRequest,
     GenerationResult,
@@ -27,6 +27,7 @@ from svg_agentic_slm.agents.schemas import (
 if TYPE_CHECKING:
     from svg_agentic_slm.agents.base import BaseCritic, BaseGenerator
     from svg_agentic_slm.agents.rag_agent import RAGAgent
+    from svg_agentic_slm.rag.schemas import RetrievedExample
     from svg_agentic_slm.svg.base import BaseRenderer, BaseValidator
     from svg_agentic_slm.svg.schemas import SVGValidationResult
 
@@ -90,11 +91,19 @@ class SVGGenerationOrchestrator:
         self._render_format = render_format
         self._critic_acceptance_score = critic_acceptance_score
 
-    def run(self, request: GenerationRequest) -> GenerationResult:
+    def run(
+        self,
+        request: GenerationRequest,
+        *,
+        on_generator_input: Callable[[GenerationRequest, list[RetrievedExample]], None]
+        | None = None,
+    ) -> GenerationResult:
         """Run the full SVG generation pipeline.
 
         Args:
             request: The generation request.
+            on_generator_input: Optional observer called with the exact typed
+                request and retrieved context before the initial Generator call.
 
         Returns:
             The generation result with SVG, validation, and feedback.
@@ -135,6 +144,8 @@ class SVGGenerationOrchestrator:
         }
 
         # Step 2: Generate SVG
+        if on_generator_input is not None:
+            on_generator_input(request, context)
         current = self._generator.generate(request, context=context)
         current = _coerce_generator_output(current)
         result.attempts.append(current)
@@ -157,15 +168,12 @@ class SVGGenerationOrchestrator:
             logger.info("Critic feedback: score=%.1f", feedback.score)
 
             if (
-                (
-                    validation.is_valid
-                    and _feedback_meets_acceptance(
-                        latest_feedback_event,
-                        self._critic_acceptance_score,
-                    )
+                validation.is_valid
+                and _feedback_meets_acceptance(
+                    latest_feedback_event,
+                    self._critic_acceptance_score,
                 )
-                or result.revision_count >= self._max_revisions
-            ):
+            ) or result.revision_count >= self._max_revisions:
                 break
 
             current.metadata["outcome"] = "rejected"
@@ -326,8 +334,4 @@ def _feedback_meets_acceptance(
     acceptance_score: float,
 ) -> bool:
     feedback = feedback_event.feedback
-    return (
-        feedback.is_valid
-        and feedback.matches_instruction
-        and feedback.score >= acceptance_score
-    )
+    return feedback.is_valid and feedback.matches_instruction and feedback.score >= acceptance_score

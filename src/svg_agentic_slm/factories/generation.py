@@ -28,9 +28,13 @@ from svg_agentic_slm.agents.schemas import (
     validate_critic_feedback,
 )
 from svg_agentic_slm.artifacts.writer import (
-    GenerationArtifacts,
+    GenerationArtifacts as GenerationArtifacts,
+)
+from svg_agentic_slm.artifacts.writer import (
     build_bundle_token,
-    persist_generation_artifacts,
+)
+from svg_agentic_slm.artifacts.writer import (
+    persist_generation_artifacts as persist_generation_artifacts,
 )
 from svg_agentic_slm.cli.overrides import merge_nested_dicts
 from svg_agentic_slm.models.base import BaseModelBackend
@@ -41,7 +45,10 @@ from svg_agentic_slm.models.llama_cpp_backend import (
     DEFAULT_MODEL_ID,
     LlamaCppModelBackend,
 )
+from svg_agentic_slm.rag.base import BaseRetriever
 from svg_agentic_slm.rag.chroma_store import ChromaRetriever
+from svg_agentic_slm.rag.document_loader import load_svg_corpus
+from svg_agentic_slm.rag.qdrant_store import QdrantRetriever
 from svg_agentic_slm.svg.renderer import CairoSVGRenderer
 from svg_agentic_slm.svg.validator import SVGValidator
 from svg_agentic_slm.utils.config import load_yaml_config
@@ -103,16 +110,10 @@ class CompositeCritic(BaseCritic):
             CriticFeedback(
                 score=sum(item.score for item in feedback_items) / len(feedback_items),
                 is_valid=all(item.is_valid for item in feedback_items),
-                matches_instruction=all(
-                    item.matches_instruction for item in feedback_items
-                ),
-                issues=_unique_strings(
-                    issue for item in feedback_items for issue in item.issues
-                ),
+                matches_instruction=all(item.matches_instruction for item in feedback_items),
+                issues=_unique_strings(issue for item in feedback_items for issue in item.issues),
                 suggestions=_unique_strings(
-                    suggestion
-                    for item in feedback_items
-                    for suggestion in item.suggestions
+                    suggestion for item in feedback_items for suggestion in item.suggestions
                 ),
                 critic_type="+".join(item.critic_type for item in feedback_items),
                 raw_response="\n".join(raw_sections),
@@ -153,6 +154,7 @@ def build_generation_runtime(
 
     model_config = model_wrapper.get("model", {})
     rag_config = rag_wrapper.get("rag", {})
+    validate_rag_config_security(rag_config)
     paths_config = paths_wrapper.get("paths", {})
 
     generation_params = GenerationConfig.from_dict(generation_config)
@@ -183,6 +185,7 @@ def build_generation_runtime(
     if svg_output_path is None or metadata_output_path is None:
         raise RuntimeError("Generation artifact paths were not resolved.")
 
+    rag_agent = _build_rag_agent(rag_config) if rag_enabled else None
     model_backend = _build_model_backend(model_config, generation_params)
     model_backend.load_model()
 
@@ -196,7 +199,6 @@ def build_generation_runtime(
     )
     validator = SVGValidator()
     critic = _build_critic(critic_type, validator, model_backend) if critic_enabled else None
-    rag_agent = _build_rag_agent(rag_config) if rag_enabled else None
     renderer = _build_renderer(render_config) if render_config["enabled"] else None
 
     orchestrator = SVGGenerationOrchestrator(
@@ -233,7 +235,7 @@ def build_generation_runtime(
         render_output_path=artifact_paths["render"],
         generation_config=generation_config,
         model_config=model_config,
-        rag_config=rag_config,
+        rag_config=_redact_sensitive_config(rag_config),
         paths_config=paths_config,
         config_paths={
             "generation": str(config_path),
@@ -309,9 +311,7 @@ def _build_model_backend(
     backend_type = model_config.get("backend_type", "llama_cpp")
     if backend_type not in ("llama_cpp", "gemma"):
         raise ValueError(f"Unsupported model backend_type: {backend_type}")
-    backend_class = (
-        LlamaCppModelBackend if backend_type == "llama_cpp" else GemmaModelBackend
-    )
+    backend_class = LlamaCppModelBackend if backend_type == "llama_cpp" else GemmaModelBackend
     return backend_class(
         model_id=model_config.get("model_id", DEFAULT_MODEL_ID),
         filename=model_config.get("filename", DEFAULT_MODEL_FILE),
@@ -332,16 +332,144 @@ def _build_model_backend(
     )
 
 
+def build_rag_retriever(
+    rag_config: dict[str, Any],
+    *,
+    index_chroma_corpus: bool = True,
+) -> BaseRetriever:
+    """Build the configured retrieval backend without changing consumers."""
+    validate_rag_config_security(rag_config)
+    backend = str(rag_config.get("backend", "chromadb")).strip().lower()
+    if backend in {"chroma", "chromadb"}:
+        settings = _merge_backend_settings(rag_config, "chromadb")
+        retriever = ChromaRetriever(
+            collection_name=settings.get("collection_name", "svg_patterns"),
+            persist_directory=settings.get(
+                "persist_directory",
+                "./data/chroma_db",
+            ),
+            embedding_model=settings.get(
+                "embedding_model",
+                "all-MiniLM-L6-v2",
+            ),
+            similarity_threshold=settings.get("similarity_threshold", 0.0),
+        )
+        corpus_path = settings.get("corpus_path")
+        if index_chroma_corpus and corpus_path:
+            load_svg_corpus(corpus_path, retriever)
+        return retriever
+
+    if backend == "qdrant":
+        settings = _merge_backend_settings(rag_config, "qdrant")
+        return QdrantRetriever(
+            collection_name=settings.get(
+                "collection_name",
+                "svg_text2svg_stack_minilm384_v1",
+            ),
+            embedding_model=settings.get(
+                "embedding_model",
+                "sentence-transformers/all-MiniLM-L6-v2",
+            ),
+            similarity_threshold=settings.get("similarity_threshold", 0.0),
+            url_env=settings.get("url_env", "QDRANT_URL"),
+            api_key_env=settings.get("api_key_env", "QDRANT_API_KEY"),
+            timeout_seconds=settings.get("timeout_seconds", 120.0),
+            upload_batch_size=settings.get("upload_batch_size", 64),
+            compress_svg=settings.get("compress_svg", True),
+            on_disk_vectors=settings.get("on_disk_vectors", True),
+            on_disk_payload=settings.get("on_disk_payload", True),
+            on_disk_hnsw=settings.get("on_disk_hnsw", True),
+            scalar_quantization=settings.get("scalar_quantization", True),
+        )
+
+    raise ValueError(f"Unsupported RAG backend: {backend!r}. Choose 'chromadb' or 'qdrant'.")
+
+
 def _build_rag_agent(rag_config: dict[str, Any]) -> RAGAgent:
-    retriever = ChromaRetriever(
-        collection_name=rag_config.get("collection_name", "svg_patterns"),
-        persist_directory=rag_config.get("persist_directory", "./data/chroma_db"),
-        embedding_model=rag_config.get("embedding_model", "all-MiniLM-L6-v2"),
-    )
+    retriever = build_rag_retriever(rag_config)
+    if isinstance(retriever, QdrantRetriever):
+        retriever.preflight()
     return RAGAgent(
         retriever=retriever,
         top_k=rag_config.get("top_k", 3),
     )
+
+
+def _merge_backend_settings(
+    rag_config: dict[str, Any],
+    backend: str,
+) -> dict[str, Any]:
+    nested = rag_config.get(backend, {})
+    if not isinstance(nested, dict):
+        raise ValueError(f"rag.{backend} must be a mapping.")
+    return {**rag_config, **nested}
+
+
+def validate_rag_config_security(rag_config: dict[str, Any]) -> None:
+    """Reject inline credentials that could be persisted in run artifacts."""
+    sensitive_paths = list(_find_sensitive_config_paths(rag_config))
+    if sensitive_paths:
+        joined = ", ".join(sensitive_paths)
+        raise ValueError(
+            "RAG secrets must be supplied through environment variables, "
+            f"not config values: {joined}"
+        )
+
+
+def _find_sensitive_config_paths(
+    value: Any,
+    *,
+    prefix: str = "rag",
+) -> list[str]:
+    paths: list[str] = []
+    if isinstance(value, dict):
+        for key, nested in value.items():
+            key_text = str(key)
+            path = f"{prefix}.{key_text}"
+            if _is_sensitive_config_key(key_text):
+                paths.append(path)
+            else:
+                paths.extend(_find_sensitive_config_paths(nested, prefix=path))
+    elif isinstance(value, list):
+        for index, nested in enumerate(value):
+            paths.extend(
+                _find_sensitive_config_paths(
+                    nested,
+                    prefix=f"{prefix}[{index}]",
+                )
+            )
+    return paths
+
+
+def _redact_sensitive_config(value: Any) -> Any:
+    if isinstance(value, dict):
+        return {
+            str(key): (
+                "[REDACTED]"
+                if _is_sensitive_config_key(str(key))
+                else _redact_sensitive_config(nested)
+            )
+            for key, nested in value.items()
+        }
+    if isinstance(value, list):
+        return [_redact_sensitive_config(item) for item in value]
+    return value
+
+
+def _is_sensitive_config_key(key: str) -> bool:
+    normalized = key.strip().lower().replace("-", "_")
+    if normalized.endswith("_env"):
+        return False
+    exact_names = {
+        "api_key",
+        "apikey",
+        "token",
+        "password",
+        "secret",
+        "private_key",
+    }
+    suffixes = ("_api_key", "_token", "_password", "_secret", "_private_key")
+    return normalized in exact_names or normalized.endswith(suffixes)
 
 
 def _build_renderer(render_config: dict[str, Any]) -> CairoSVGRenderer:

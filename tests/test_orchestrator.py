@@ -315,3 +315,24 @@ def test_orchestrator_rejects_malformed_critic_boolean_fields() -> None:
 
     with pytest.raises(TypeError, match="is_valid must be a boolean"):
         orchestrator.run(GenerationRequest(instruction="Draw a circle."))
+
+
+def test_orchestrator_observer_receives_exact_initial_generator_input() -> None:
+    observed: list[tuple[GenerationRequest, list[object]]] = []
+    orchestrator = SVGGenerationOrchestrator(
+        generator=StubGenerator(),
+        validator=StubValidator(),
+    )
+    request = GenerationRequest(
+        instruction="Draw a blue circle.",
+        run_id="run-observer",
+    )
+
+    orchestrator.run(
+        request,
+        on_generator_input=lambda value, context: observed.append((value, context)),
+    )
+
+    assert len(observed) == 1
+    assert observed[0][0] is request
+    assert observed[0][1] == []

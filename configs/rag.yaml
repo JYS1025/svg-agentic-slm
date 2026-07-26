@@ -1,13 +1,47 @@
 # RAG configuration
 rag:
-  backend: "chromadb"  # Options: chromadb
-  collection_name: "svg_patterns"
-  persist_directory: "./data/chroma_db"
-  embedding_model: "all-MiniLM-L6-v2"  # Sentence-transformers model
+  # Default backend. CLI override: --rag-backend chromadb|qdrant
+  backend: "chromadb"
+  embedding_model: "sentence-transformers/all-MiniLM-L6-v2"
   top_k: 3
   similarity_threshold: 0.5
 
-  # Document loading
-  corpus_path: "./data/rag_corpus/svg_patterns_sample.jsonl"
-  chunk_size: 512
-  chunk_overlap: 50
+  chromadb:
+    collection_name: "svg_patterns"
+    persist_directory: "./data/chroma_db"
+    corpus_path: "./data/rag_corpus/svg_patterns_sample.jsonl"
+    # The four-record local corpus is a connectivity smoke test. Always return
+    # its nearest top-k examples even when the cross-language score is low.
+    similarity_threshold: 0.0
+
+  # Credentials are read only from these environment-variable names.
+  qdrant:
+    collection_name: "svg_text2svg_stack_minilm384_v1"
+    url_env: "QDRANT_URL"
+    api_key_env: "QDRANT_API_KEY"
+    timeout_seconds: 120
+    upload_batch_size: 64
+
+    # Storage-oriented settings for a small Qdrant Cloud/self-hosted cluster.
+    compress_svg: true
+    on_disk_vectors: true
+    on_disk_payload: true
+    on_disk_hnsw: true
+    scalar_quantization: true
+    optimize_existing_collection: true
+
+  # Used only by `svg-agentic-slm rag-index`.
+  indexing:
+    dataset_id: "starvector/text2svg-stack"
+    dataset_split: "train"
+    # Pinned for reproducible indexing; update deliberately when changing corpora.
+    dataset_revision: "c6f2bf0fffd8c1b69fcf748c97f4b0e7de6f2687"
+
+    # This is a safe starting target, not a universal Qdrant maximum.
+    # Increase with `rag-index --limit N` while monitoring cluster disk/RAM.
+    index_limit: 100000
+    batch_size: 64
+    max_svg_chars: 24000
+    max_caption_chars: 1200
+    shuffle_buffer: 2000
+    seed: 42

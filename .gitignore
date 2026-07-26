@@ -41,6 +41,8 @@ data/processed/*
 !data/processed/.gitkeep
 !data/examples/
 !data/rag_corpus/
+data/chroma_db/
+data/qdrant_storage/
 
 # Model artifacts
 *.bin
