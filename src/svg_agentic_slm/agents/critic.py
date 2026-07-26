@@ -9,3 +9,6 @@ from __future__ import annotations
 from svg_agentic_slm.agents.base import BaseCritic
 
 __all__ = ["BaseCritic"]
+
+
+'이ㅣ이이이이이잉'
