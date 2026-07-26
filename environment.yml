@@ -16,6 +16,8 @@ dependencies:
     - huggingface-hub==0.34.4
     # Install llama-cpp-python==0.3.34 separately with GGML_CUDA enabled.
     - chromadb>=0.4
+    - qdrant-client>=1.12,<2
+    - sentence-transformers>=3,<6
     - cairosvg>=2.7
     - typer>=0.12
     - rich>=13.0

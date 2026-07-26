@@ -44,6 +44,11 @@ dev = [
     "types-PyYAML>=6.0",
 ]
 
+qdrant = [
+    "qdrant-client>=1.12,<2",
+    "sentence-transformers>=3,<6",
+]
+
 [project.scripts]
 svg-agentic-slm = "svg_agentic_slm.cli.app:app"
 
