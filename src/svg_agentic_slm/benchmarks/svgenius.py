@@ -17,20 +17,19 @@ from pathlib import Path
 from typing import Any, Protocol, cast
 from urllib.request import urlopen
 
-from lxml import etree  # type: ignore[import-untyped]
-
 from svg_agentic_slm.benchmarks.schemas import (
     BenchmarkExample,
     BenchmarkPreparationResult,
 )
 from svg_agentic_slm.data.jsonl import write_jsonl
+from svg_agentic_slm.svg.validator import SVGValidator
 
 SVGENIUS_DATASET_ID = "xiaoooobai/SVGenius"
 SVGENIUS_HF_REVISION = "7d9cd059ee19ec86e12a87e67b82c168f0de65cb"
 SVGENIUS_TASK_REVISION = "18d56d738827304e74bb5037c9f9a3445dbbda93"
 SVGENIUS_DIFFICULTIES = ("easy", "medium", "hard")
-SVGENIUS_ADAPTER_VERSION = "svgenius-text-to-svg-v2"
-SVGENIUS_DATA_PARTITION = "candidate_unassigned"
+SVGENIUS_ADAPTER_VERSION = "svgenius-text-to-svg-v3"
+SVGENIUS_DATA_PARTITION = "held_out_test"
 _COMMIT_SHA_PATTERN = re.compile(r"^[0-9a-f]{40}$")
 
 CaptionLoader = Callable[[str, str], Sequence[Mapping[str, Any]]]
@@ -212,8 +211,8 @@ class SVGeniusAdapter:
         manifest_path = config.output_dir / "manifest.json"
         manifest = {
             "adapter": self.name,
-            "manifest_schema_version": 2,
-            "benchmark_status": "candidate_only",
+            "manifest_schema_version": 3,
+            "benchmark_status": "adopted",
             "dataset_id": SVGENIUS_DATASET_ID,
             "hf_revision": config.hf_revision,
             "task_repository": "ZJU-REAL/SVGenius",
@@ -234,12 +233,38 @@ class SVGeniusAdapter:
             "output_file": output_path.name,
             "output_sha256": _sha256_file(output_path),
             "memory_eligible": False,
-            "reference_validation": "well_formed_xml_and_svg_root_only",
-            "license_review_required": True,
-            "license_note": (
-                "The Hugging Face metadata header says Apache-2.0 while the "
-                "dataset card body says MIT; resolve before final adoption."
+            "reference_validation": "strict_xml_structure_and_no_external_resources",
+            "license": "Apache-2.0",
+            "license_evidence": (
+                "https://github.com/ZJU-REAL/SVGenius/blob/"
+                f"{config.task_revision}/LICENSE"
             ),
+            "license_review_required": False,
+            "license_note": (
+                "The pinned official repository LICENSE and Hugging Face metadata "
+                "declare Apache-2.0; the conflicting MIT prose in the card body is "
+                "not used as the governing license."
+            ),
+            "evaluation_metrics": [
+                "generation_success_rate",
+                "svg_validity_rate",
+                "render_success_rate",
+                "generation_latency",
+                "time_to_first_token",
+                "tokens_per_second",
+            ],
+            "acceptance_thresholds": {
+                "min_generation_success_rate": 1.0,
+                "min_svg_validity_rate": 1.0,
+                "min_render_success_rate": 1.0,
+                "max_avg_time_to_first_token": 1.0,
+                "min_avg_tokens_per_second": 20.0,
+                "max_avg_generation_latency": 30.0,
+            },
+            "memory_policy": {
+                "memory_eligible": False,
+                "memory_ingestion_allowed": False,
+            },
         }
         manifest_path.write_text(
             json.dumps(manifest, ensure_ascii=False, indent=2),
@@ -451,13 +476,10 @@ def _asset_key(value: str) -> str:
 
 
 def _validate_svg(svg: str, *, sample_key: str) -> None:
-    parser = etree.XMLParser(resolve_entities=False, no_network=True)
-    try:
-        root = etree.fromstring(svg.encode("utf-8"), parser=parser)
-    except etree.XMLSyntaxError as exc:
-        raise ValueError(f"SVGenius reference '{sample_key}' is not well-formed XML.") from exc
-    if etree.QName(root).localname != "svg":
-        raise ValueError(f"SVGenius reference '{sample_key}' does not have an SVG root.")
+    validation = SVGValidator().validate(svg)
+    if not validation.is_valid:
+        details = "; ".join(validation.errors)
+        raise ValueError(f"SVGenius reference '{sample_key}' failed strict validation: {details}")
 
 
 def _sha256_text(value: str) -> str:

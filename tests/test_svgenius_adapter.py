@@ -43,7 +43,7 @@ def _caption_loader(difficulty: str, task_revision: str):
     ]
 
 
-def test_svgenius_adapter_prepares_pinned_candidate_snapshot(tmp_path: Path) -> None:
+def test_svgenius_adapter_prepares_pinned_held_out_snapshot(tmp_path: Path) -> None:
     result = SVGeniusAdapter(
         dataset_loader=_dataset_loader,
         caption_loader=_caption_loader,
@@ -57,17 +57,19 @@ def test_svgenius_adapter_prepares_pinned_candidate_snapshot(tmp_path: Path) -> 
     assert result.num_records == len(SVGENIUS_DIFFICULTIES)
     assert records[0]["task"] == "text_to_svg"
     assert records[0]["metadata"]["memory_eligible"] is False
-    assert records[0]["metadata"]["data_partition"] == "candidate_unassigned"
-    assert manifest["benchmark_status"] == "candidate_only"
-    assert manifest["adapter"] == "svgenius-text-to-svg-v2"
-    assert manifest["manifest_schema_version"] == 2
+    assert records[0]["metadata"]["data_partition"] == "held_out_test"
+    assert manifest["benchmark_status"] == "adopted"
+    assert manifest["adapter"] == "svgenius-text-to-svg-v3"
+    assert manifest["manifest_schema_version"] == 3
     assert manifest["source_splits"] == ["easy", "medium", "hard"]
     assert manifest["excluded_source_splits"] == ["train"]
-    assert manifest["data_partition"] == "candidate_unassigned"
-    assert manifest["license_review_required"] is True
+    assert manifest["data_partition"] == "held_out_test"
+    assert manifest["license"] == "Apache-2.0"
+    assert manifest["license_review_required"] is False
     assert manifest["strict"] is True
     assert manifest["limit_per_difficulty"] is None
-    assert manifest["reference_validation"] == "well_formed_xml_and_svg_root_only"
+    assert manifest["reference_validation"] == "strict_xml_structure_and_no_external_resources"
+    assert manifest["memory_policy"]["memory_ingestion_allowed"] is False
     assert len(dataset) == len(SVGENIUS_DIFFICULTIES)
     assert dataset[0].output_svg.startswith("<svg")
     assert manifest["output_sha256"] == hashlib.sha256(result.output_path.read_bytes()).hexdigest()

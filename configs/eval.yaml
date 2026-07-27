@@ -5,10 +5,12 @@ eval:
   
   # Metrics to compute
   metrics:
+    - generation_success_rate
     - svg_validity_rate
     - render_success_rate
     - generation_latency
-    - simple_instruction_alignment
+    - time_to_first_token
+    - tokens_per_second
   
   # Evaluation settings
   batch_size: 8
@@ -18,3 +20,11 @@ eval:
   # Rendering for eval
   renderer_backend: "cairosvg"  # Options: cairosvg, playwright
   render_output_dir: "./outputs/renders"
+
+  acceptance_thresholds:
+    min_generation_success_rate: 1.0
+    min_svg_validity_rate: 1.0
+    min_render_success_rate: 1.0
+    max_avg_time_to_first_token: 1.0
+    min_avg_tokens_per_second: 20.0
+    max_avg_generation_latency: 30.0

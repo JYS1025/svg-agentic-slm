@@ -21,10 +21,13 @@ class EvaluationResult:
     """
 
     num_samples: int = 0
+    generation_success_rate: float = 0.0
     svg_validity_rate: float = 0.0
     render_success_rate: float = 0.0
     avg_generation_latency: float = 0.0
     avg_instruction_alignment: float = 0.0
+    avg_time_to_first_token: float = 0.0
+    avg_tokens_per_second: float = 0.0
     per_sample_results: list[dict[str, Any]] = field(default_factory=list)
     metadata: dict[str, Any] = field(default_factory=dict)
 
@@ -34,6 +37,10 @@ class EvaluationResult:
         selected = set(computed_metrics) if isinstance(computed_metrics, list) else None
         lines = [f"Evaluation Results ({self.num_samples} samples):"]
         metric_lines = [
+            (
+                "generation_success_rate",
+                f"  Generation Success Rate: {self.generation_success_rate:.1%}",
+            ),
             ("svg_validity_rate", f"  SVG Validity Rate:        {self.svg_validity_rate:.1%}"),
             ("render_success_rate", f"  Render Success Rate:      {self.render_success_rate:.1%}"),
             (
@@ -43,6 +50,14 @@ class EvaluationResult:
             (
                 "simple_instruction_alignment",
                 f"  Avg Instruction Alignment: {self.avg_instruction_alignment:.1%}",
+            ),
+            (
+                "time_to_first_token",
+                f"  Avg Time to First Token:  {self.avg_time_to_first_token:.3f}s",
+            ),
+            (
+                "tokens_per_second",
+                f"  Avg Decode Throughput:    {self.avg_tokens_per_second:.2f} tok/s",
             ),
         ]
         lines.extend(line for name, line in metric_lines if selected is None or name in selected)

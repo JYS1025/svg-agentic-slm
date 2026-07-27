@@ -12,7 +12,7 @@ from pathlib import Path
 
 from svg_agentic_slm.svg.base import BaseRenderer
 from svg_agentic_slm.svg.schemas import SVGRenderResult
-from svg_agentic_slm.svg.validator import SVGValidator
+from svg_agentic_slm.utils.atomic import atomic_output_path
 
 logger = logging.getLogger(__name__)
 
@@ -78,7 +78,7 @@ class CairoSVGRenderer(BaseRenderer):
             )
 
         try:
-            import cairosvg  # type: ignore[import-not-found]
+            import cairosvg  # type: ignore[import-not-found,import-untyped]
         except ImportError as exc:
             logger.warning("CairoSVG is not available: %s", exc)
             return SVGRenderResult(
@@ -99,13 +99,13 @@ class CairoSVGRenderer(BaseRenderer):
         renderer = renderers[output_format]
 
         try:
-            output_path.parent.mkdir(parents=True, exist_ok=True)
-            renderer(
-                bytestring=svg_content.encode("utf-8"),
-                write_to=str(output_path),
-                output_width=width,
-                output_height=height,
-            )
+            with atomic_output_path(output_path) as temporary_path:
+                renderer(
+                    bytestring=svg_content.encode("utf-8"),
+                    write_to=str(temporary_path),
+                    output_width=width,
+                    output_height=height,
+                )
         except Exception as exc:
             logger.exception("SVG rendering failed for %s", output_path)
             return SVGRenderResult(

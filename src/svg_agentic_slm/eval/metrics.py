@@ -9,7 +9,6 @@ from __future__ import annotations
 import logging
 
 from svg_agentic_slm.svg.base import BaseValidator
-from svg_agentic_slm.svg.schemas import SVGValidationResult
 
 logger = logging.getLogger(__name__)
 

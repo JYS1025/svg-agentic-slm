@@ -5,8 +5,6 @@ from __future__ import annotations
 import logging
 import re
 
-from lxml import etree
-
 from svg_agentic_slm.svg.base import BaseValidator
 from svg_agentic_slm.svg.schemas import SVGValidationResult
 
@@ -147,6 +145,17 @@ class SVGValidator(BaseValidator):
         if "<!DOCTYPE" in svg_content.upper():
             errors.append("DOCTYPE declarations are not allowed.")
 
+        # Keep lxml lazy so llama.cpp can initialize its CUDA runtime before
+        # Conda's lxml dependency selects a process-wide C++ runtime.
+        from lxml import etree  # type: ignore[import-untyped]
+
+        parser = etree.XMLParser(
+            resolve_entities=False,
+            no_network=True,
+            load_dtd=False,
+            huge_tree=False,
+            recover=False,
+        )
         try:
             root = _parse_svg_xml(svg_content)
             result.is_well_formed_xml = True

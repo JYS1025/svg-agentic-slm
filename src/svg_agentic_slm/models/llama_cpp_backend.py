@@ -5,7 +5,7 @@ from __future__ import annotations
 import gc
 import logging
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Iterable, Mapping
 from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
 from typing import Any, cast
@@ -51,6 +51,7 @@ class LlamaCppModelBackend(BaseModelBackend):
         use_mmap: bool = True,
         verbose: bool = False,
         chat_format: str | None = None,
+        measure_streaming_metrics: bool = False,
         generation_config: GenerationConfig | None = None,
         client_factory: Callable[..., Any] | None = None,
         download_resolver: Callable[..., str] | None = None,
@@ -86,6 +87,7 @@ class LlamaCppModelBackend(BaseModelBackend):
         self.use_mmap = use_mmap
         self.verbose = verbose
         self.chat_format = chat_format
+        self.measure_streaming_metrics = measure_streaming_metrics
         self.generation_config = generation_config or GenerationConfig()
         self._client_factory = client_factory
         self._download_resolver = download_resolver
@@ -97,8 +99,11 @@ class LlamaCppModelBackend(BaseModelBackend):
         if self.is_loaded():
             return
 
-        model_path = self.model_path or self._download_model()
         client_factory = self._client_factory or self._import_llama_client()
+        # Load llama.cpp's native runtime before huggingface_hub. In some Conda
+        # environments the downloader imports NumPy, whose bundled libstdc++ is
+        # older than the CUDA-enabled llama.cpp build requires.
+        model_path = self.model_path or self._download_model()
         client_kwargs: dict[str, Any] = {
             "model_path": str(model_path),
             "n_ctx": self.n_ctx,
@@ -151,29 +156,21 @@ class LlamaCppModelBackend(BaseModelBackend):
         if stop is not None:
             call_kwargs["stop"] = stop
 
-        started_at = time.perf_counter()
-        try:
-            payload = self._model.create_chat_completion(**call_kwargs)
-        except Exception as exc:
-            raise RuntimeError(f"Generation failed for model '{self.model_id}'.") from exc
-        latency_seconds = time.perf_counter() - started_at
+        if self.measure_streaming_metrics:
+            completion = self._generate_streaming(call_kwargs)
+        else:
+            completion = self._generate_buffered(call_kwargs)
 
-        try:
-            choice = payload["choices"][0]
-            message = choice["message"]
-            text = str(message["content"])
-        except (KeyError, IndexError, TypeError) as exc:
-            raise RuntimeError("llama.cpp returned an unexpected completion payload.") from exc
-
-        usage = payload.get("usage", {})
         return ModelResponse(
-            text=text,
+            text=completion["text"],
             model_id=self.model_id,
             model_revision=self.model_revision,
-            finish_reason=choice.get("finish_reason"),
-            prompt_tokens=_optional_int(usage.get("prompt_tokens")),
-            completion_tokens=_optional_int(usage.get("completion_tokens")),
-            latency_seconds=latency_seconds,
+            finish_reason=completion["finish_reason"],
+            prompt_tokens=completion["prompt_tokens"],
+            completion_tokens=completion["completion_tokens"],
+            latency_seconds=completion["latency_seconds"],
+            time_to_first_token_seconds=completion["time_to_first_token_seconds"],
+            tokens_per_second=completion["tokens_per_second"],
             metadata={
                 "backend": "llama_cpp",
                 "backend_version": _package_version("llama-cpp-python"),
@@ -187,8 +184,75 @@ class LlamaCppModelBackend(BaseModelBackend):
                 "n_gpu_layers": self.n_gpu_layers,
                 "n_batch": self.n_batch,
                 "flash_attn": self.flash_attn,
+                "streaming_metrics_enabled": self.measure_streaming_metrics,
             },
         )
+
+    def _generate_buffered(self, call_kwargs: dict[str, Any]) -> dict[str, Any]:
+        started_at = time.perf_counter()
+        try:
+            payload = self._model.create_chat_completion(**call_kwargs)
+        except Exception as exc:
+            raise RuntimeError(f"Generation failed for model '{self.model_id}'.") from exc
+        latency_seconds = time.perf_counter() - started_at
+
+        try:
+            choice = payload["choices"][0]
+            text = str(choice["message"]["content"])
+        except (KeyError, IndexError, TypeError) as exc:
+            raise RuntimeError("llama.cpp returned an unexpected completion payload.") from exc
+
+        usage = payload.get("usage", {})
+        completion_tokens = _optional_int(usage.get("completion_tokens"))
+        return {
+            "text": text,
+            "finish_reason": choice.get("finish_reason"),
+            "prompt_tokens": _optional_int(usage.get("prompt_tokens")),
+            "completion_tokens": completion_tokens,
+            "latency_seconds": latency_seconds,
+            "time_to_first_token_seconds": None,
+            "tokens_per_second": (
+                completion_tokens / latency_seconds
+                if completion_tokens is not None and latency_seconds > 0
+                else None
+            ),
+        }
+
+    def _generate_streaming(self, call_kwargs: dict[str, Any]) -> dict[str, Any]:
+        started_at = time.perf_counter()
+        try:
+            payload = self._model.create_chat_completion(**call_kwargs, stream=True)
+            if isinstance(payload, Mapping):
+                raise TypeError("llama.cpp returned a buffered payload for a streaming request.")
+            chunks = _consume_chat_chunks(payload, started_at=started_at)
+        except Exception as exc:
+            raise RuntimeError(f"Generation failed for model '{self.model_id}'.") from exc
+
+        completion_tokens = self._count_tokens(chunks["text"])
+        total_tokens = getattr(self._model, "n_tokens", None)
+        prompt_tokens = (
+            max(0, int(total_tokens) - completion_tokens)
+            if isinstance(total_tokens, int)
+            else None
+        )
+        generation_seconds = chunks["latency_seconds"] - (
+            chunks["time_to_first_token_seconds"] or 0.0
+        )
+        return {
+            **chunks,
+            "prompt_tokens": prompt_tokens,
+            "completion_tokens": completion_tokens,
+            "tokens_per_second": (
+                completion_tokens / generation_seconds if generation_seconds > 0 else None
+            ),
+        }
+
+    def _count_tokens(self, text: str) -> int:
+        tokenize = getattr(self._model, "tokenize", None)
+        if not callable(tokenize):
+            return 0
+        tokens = tokenize(text.encode("utf-8"), add_bos=False, special=True)
+        return len(tokens)
 
     def is_loaded(self) -> bool:
         """Return whether the llama.cpp client is ready."""
@@ -196,6 +260,10 @@ class LlamaCppModelBackend(BaseModelBackend):
 
     def unload_model(self) -> None:
         """Release the llama.cpp client and its CPU/GPU allocations."""
+        if self._model is not None:
+            close = getattr(self._model, "close", None)
+            if callable(close):
+                close()
         self._model = None
         self._resolved_model_path = None
         gc.collect()
@@ -256,3 +324,39 @@ def _package_version(package: str) -> str | None:
         return version(package)
     except PackageNotFoundError:
         return None
+
+
+def _consume_chat_chunks(
+    payload: Iterable[Mapping[str, Any]],
+    *,
+    started_at: float,
+) -> dict[str, Any]:
+    text_parts: list[str] = []
+    finish_reason: str | None = None
+    first_token_at: float | None = None
+    for chunk in payload:
+        try:
+            choice = chunk["choices"][0]
+        except (KeyError, IndexError, TypeError) as exc:
+            raise RuntimeError("llama.cpp returned an unexpected streaming payload.") from exc
+        delta = choice.get("delta", {})
+        content = delta.get("content") if isinstance(delta, Mapping) else None
+        if content:
+            if first_token_at is None:
+                first_token_at = time.perf_counter()
+            text_parts.append(str(content))
+        if choice.get("finish_reason") is not None:
+            finish_reason = str(choice["finish_reason"])
+
+    finished_at = time.perf_counter()
+    text = "".join(text_parts)
+    if not text:
+        raise RuntimeError("llama.cpp streaming completion did not contain text.")
+    return {
+        "text": text,
+        "finish_reason": finish_reason,
+        "latency_seconds": finished_at - started_at,
+        "time_to_first_token_seconds": (
+            first_token_at - started_at if first_token_at is not None else None
+        ),
+    }

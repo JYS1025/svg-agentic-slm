@@ -64,6 +64,7 @@ class GenerationRuntime:
     """Assembled runtime dependencies and resolved settings for generation."""
 
     orchestrator: SVGGenerationOrchestrator
+    model_backend: BaseModelBackend
     request: GenerationRequest
     output_dir: Path
     render_output_dir: Path
@@ -210,9 +211,11 @@ def build_generation_runtime(
     if svg_output_path is None or metadata_output_path is None:
         raise RuntimeError("Generation artifact paths were not resolved.")
 
-    rag_agent = _build_rag_agent(rag_config) if rag_enabled else None
     model_backend = _build_model_backend(model_config, generation_params)
+    # Load the native llama.cpp/CUDA runtime before RAG corpus validation can
+    # import Conda's lxml and pin an older libstdc++ into this process.
     model_backend.load_model()
+    rag_agent = _build_rag_agent(rag_config) if rag_enabled else None
 
     critic_model_backend = model_backend
     if (
@@ -280,6 +283,7 @@ def build_generation_runtime(
 
     return GenerationRuntime(
         orchestrator=orchestrator,
+        model_backend=model_backend,
         request=request,
         output_dir=output_dir,
         render_output_dir=render_output_dir,
@@ -304,6 +308,13 @@ def build_generation_runtime(
         render_config=render_config,
         run_id=run_id,
     )
+
+
+def close_generation_runtime(runtime: GenerationRuntime) -> None:
+    """Release model resources owned by an assembled generation runtime."""
+    unload = getattr(runtime.model_backend, "unload_model", None)
+    if callable(unload):
+        unload()
 
 
 def _resolve_related_config(config_path: Path, filename: str) -> Path:
@@ -350,6 +361,7 @@ def _build_model_backend(
         "flash_attn",
         "model_id",
         "model_path",
+        "measure_streaming_metrics",
         "n_batch",
         "n_ctx",
         "n_gpu_layers",
@@ -413,6 +425,7 @@ def _build_model_backend(
         use_mmap=model_config.get("use_mmap", True),
         verbose=model_config.get("verbose", False),
         chat_format=model_config.get("chat_format"),
+        measure_streaming_metrics=model_config.get("measure_streaming_metrics", False),
         generation_config=generation_config,
     )
 

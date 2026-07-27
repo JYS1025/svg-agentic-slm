@@ -18,3 +18,4 @@ model:
   use_mmap: true
   verbose: false
   chat_format: null  # Use the chat template stored in GGUF metadata.
+  measure_streaming_metrics: true  # Record TTFT and decode throughput.

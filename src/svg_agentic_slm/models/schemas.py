@@ -17,4 +17,6 @@ class ModelResponse:
     prompt_tokens: int | None = None
     completion_tokens: int | None = None
     latency_seconds: float | None = None
+    time_to_first_token_seconds: float | None = None
+    tokens_per_second: float | None = None
     metadata: dict[str, Any] = field(default_factory=dict)
