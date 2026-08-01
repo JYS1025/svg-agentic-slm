@@ -5,6 +5,10 @@ channels:
 dependencies:
   - python=3.11
   - pip
+  - cairo
+  - libffi
+  - cairosvg>=2.7
+  - cairocffi
   - pip:
     - torch>=2.0
     - transformers>=4.40
@@ -18,7 +22,6 @@ dependencies:
     - chromadb>=0.4
     - qdrant-client>=1.12,<2
     - sentence-transformers>=3,<6
-    - cairosvg>=2.7
     - typer>=0.12
     - rich>=13.0
     - pydantic>=2.0
