@@ -119,6 +119,23 @@ def test_validate_svg_rejects_malformed_or_active_content(svg: str) -> None:
     assert validate_svg_for_reference(svg) is None
 
 
+@pytest.mark.parametrize(
+    "svg",
+    [
+        '<svg xmlns="http://www.w3.org/2000/svg"><animate attributeName="x"/></svg>',
+        '<svg xmlns="http://www.w3.org/2000/svg" xmlns:x="urn:x"><x:item/></svg>',
+        '<svg xmlns="http://www.w3.org/2000/svg"><Rect/></svg>',
+        (
+            '<svg xmlns="http://www.w3.org/2000/svg">'
+            '<rect fill="url(ht&#10;tps://example.com/x)"/>'
+            "</svg>"
+        ),
+    ],
+)
+def test_validate_svg_uses_shared_strict_safety_policy(svg: str) -> None:
+    assert validate_svg_for_reference(svg) is None
+
+
 def test_prepare_document_rejects_missing_caption_and_oversized_svg() -> None:
     assert _prepare({"svg": "<svg><circle/></svg>"}) is None
     assert (

@@ -12,6 +12,7 @@ from typing import Any
 
 from svg_agentic_slm.data.jsonl import read_jsonl
 from svg_agentic_slm.rag.base import BaseRetriever
+from svg_agentic_slm.svg.validator import safe_svg_element_names
 
 logger = logging.getLogger(__name__)
 
@@ -36,8 +37,15 @@ def load_svg_corpus(
 
     documents: list[dict[str, Any]] = []
     for record in records:
+        content = str(record.get("svg_snippet", "")).strip()
+        if safe_svg_element_names(content, allow_fragment=True) is None:
+            logger.warning(
+                "Skipping unsafe or malformed SVG corpus fragment: %s",
+                record.get("pattern_name", "<unnamed>"),
+            )
+            continue
         documents.append({
-            "content": record.get("svg_snippet", ""),
+            "content": content,
             "metadata": {
                 "pattern_name": record.get("pattern_name", ""),
                 "description": record.get("description", ""),
@@ -48,5 +56,5 @@ def load_svg_corpus(
     if documents:
         retriever.add_documents(documents)
 
-    logger.info("Loaded %d documents from %s", len(documents), corpus_path)
+    logger.info("Loaded %d safe documents from %s", len(documents), corpus_path)
     return len(documents)

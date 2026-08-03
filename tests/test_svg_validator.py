@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from svg_agentic_slm.svg.validator import SVGValidator
+from svg_agentic_slm.svg.validator import SVGValidator, safe_svg_element_names
 
 
 def test_valid_svg() -> None:
@@ -317,3 +317,35 @@ def test_allows_multiline_geometry_attributes() -> None:
     """
 
     assert SVGValidator().validate(svg).is_valid
+
+
+def test_safe_element_names_supports_documents_and_fragments() -> None:
+    document = (
+        '<svg xmlns="http://www.w3.org/2000/svg">'
+        "<defs><linearGradient/></defs><rect/>"
+        "</svg>"
+    )
+
+    assert safe_svg_element_names(document) == ["defs", "lineargradient", "rect"]
+    assert safe_svg_element_names("<circle/><path/>", allow_fragment=True) == [
+        "circle",
+        "path",
+    ]
+    assert safe_svg_element_names("plain text", allow_fragment=True) is None
+
+
+@pytest.mark.parametrize(
+    "unsafe_svg",
+    [
+        '<svg xmlns="http://www.w3.org/2000/svg"><animate attributeName="x"/></svg>',
+        '<svg xmlns="http://www.w3.org/2000/svg" xmlns:x="urn:x"><x:item/></svg>',
+        '<svg xmlns="http://www.w3.org/2000/svg"><Rect/></svg>',
+        (
+            '<svg xmlns="http://www.w3.org/2000/svg">'
+            '<rect fill="url(ht&#10;tps://example.com/x)"/>'
+            "</svg>"
+        ),
+    ],
+)
+def test_safe_element_names_uses_the_shared_strict_policy(unsafe_svg: str) -> None:
+    assert safe_svg_element_names(unsafe_svg) is None

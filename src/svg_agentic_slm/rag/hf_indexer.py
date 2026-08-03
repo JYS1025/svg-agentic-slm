@@ -3,14 +3,13 @@
 from __future__ import annotations
 
 import logging
-import re
 import uuid
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
-from typing import Any
-from xml.etree import ElementTree
+from typing import Any, cast
 
 from svg_agentic_slm.rag.qdrant_store import QdrantRetriever
+from svg_agentic_slm.svg.validator import safe_svg_element_names
 
 logger = logging.getLogger(__name__)
 
@@ -26,18 +25,6 @@ _CAPTION_FIELDS = (
     "caption",
     "description",
 )
-_FORBIDDEN_ELEMENTS = {"script", "foreignobject", "iframe", "object", "embed"}
-_UNSAFE_REFERENCE_MARKERS = (
-    "http:",
-    "https:",
-    "file:",
-    "ftp:",
-    "data:",
-    "javascript:",
-)
-_CSS_URL_PATTERN = re.compile(r"url\(\s*(['\"]?)(.*?)\1\s*\)", re.IGNORECASE)
-
-
 @dataclass(frozen=True)
 class IndexingResult:
     """Summary of a bounded, idempotent dataset indexing run."""
@@ -279,59 +266,8 @@ def prepare_svg_document(
 
 
 def validate_svg_for_reference(svg_code: str) -> list[str] | None:
-    """Reject malformed or active/external-content SVG references."""
-    lowered = svg_code.lower()
-    if "<!doctype" in lowered or "<!entity" in lowered:
-        return None
-
-    try:
-        root = ElementTree.fromstring(svg_code)
-    except ElementTree.ParseError:
-        return None
-    if _local_name(root.tag).lower() != "svg":
-        return None
-
-    names: list[str] = []
-    for element in root.iter():
-        if not isinstance(element.tag, str):
-            continue
-        name = _local_name(element.tag).lower()
-        if name in _FORBIDDEN_ELEMENTS:
-            return None
-        if name != "svg" and name not in names:
-            names.append(name)
-
-        for raw_name, raw_value in element.attrib.items():
-            attribute_name = _local_name(raw_name).lower()
-            attribute_value = str(raw_value).strip().lower()
-            if attribute_name.startswith("on"):
-                return None
-            if (
-                attribute_name in {"href", "src"}
-                and attribute_value
-                and not attribute_value.startswith("#")
-            ):
-                return None
-            if _contains_external_reference(attribute_value):
-                return None
-
-        if name == "style" and _contains_external_reference(element.text or ""):
-            return None
-
-    return names[:32]
-
-
-def _contains_external_reference(value: str) -> bool:
-    lowered = value.strip().lower()
-    if any(marker in lowered for marker in _UNSAFE_REFERENCE_MARKERS):
-        return True
-    if lowered.startswith("//"):
-        return True
-    for match in _CSS_URL_PATTERN.finditer(lowered):
-        target = match.group(2).strip().strip("'\"")
-        if target and not target.startswith("#"):
-            return True
-    return False
+    """Validate a complete corpus SVG using the shared safety policy."""
+    return safe_svg_element_names(svg_code)
 
 
 def _load_streaming_dataset(
@@ -358,7 +294,7 @@ def _load_streaming_dataset(
     )
     if shuffle_buffer > 1:
         dataset = dataset.shuffle(seed=seed, buffer_size=shuffle_buffer)
-    return dataset
+    return cast(Iterable[Mapping[str, Any]], dataset)
 
 
 def _validate_index_settings(
@@ -407,7 +343,3 @@ def _normalize_tags(value: Any) -> list[str]:
         return []
     separator = "|" if "|" in text else ","
     return [part.strip() for part in text.split(separator) if part.strip()]
-
-
-def _local_name(value: Any) -> str:
-    return str(value).rsplit("}", 1)[-1]

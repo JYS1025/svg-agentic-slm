@@ -147,15 +147,8 @@ class SVGValidator(BaseValidator):
         if "<!DOCTYPE" in svg_content.upper():
             errors.append("DOCTYPE declarations are not allowed.")
 
-        parser = etree.XMLParser(
-            resolve_entities=False,
-            no_network=True,
-            load_dtd=False,
-            huge_tree=False,
-            recover=False,
-        )
         try:
-            root = etree.fromstring(svg_content.encode("utf-8"), parser=parser)
+            root = _parse_svg_xml(svg_content)
             result.is_well_formed_xml = True
         except (etree.XMLSyntaxError, ValueError) as exc:
             errors.append(f"XML parsing error: {exc}")
@@ -217,6 +210,64 @@ class SVGValidator(BaseValidator):
         result.warnings = warnings
         result.is_valid = not errors
         return result
+
+
+def safe_svg_element_names(
+    svg_content: str,
+    *,
+    allow_fragment: bool = False,
+    max_names: int = 32,
+) -> list[str] | None:
+    """Return normalized element names only when shared SVG safety checks pass.
+
+    RAG corpora contain both complete SVG documents and local SVG fragments.
+    Fragments are validated inside a temporary SVG root, while complete
+    documents retain the exact ``SVGValidator`` behavior used by generation.
+    """
+    if max_names <= 0:
+        raise ValueError("max_names must be positive.")
+
+    candidate = svg_content
+    wrapped_fragment = False
+    validation = SVGValidator().validate(candidate)
+    if not validation.is_valid and allow_fragment:
+        if not svg_content.lstrip().startswith("<"):
+            return None
+        candidate = f'<svg xmlns="{SVG_NAMESPACE}">{svg_content}</svg>'
+        wrapped_fragment = True
+        validation = SVGValidator().validate(candidate)
+    if not validation.is_valid:
+        return None
+
+    try:
+        root = _parse_svg_xml(candidate)
+    except (etree.XMLSyntaxError, ValueError):
+        return None
+
+    names: list[str] = []
+    for element in root.iter():
+        if not isinstance(element.tag, str):
+            continue
+        name = etree.QName(element).localname.lower()
+        if name != "svg" and name not in names:
+            names.append(name)
+            if len(names) >= max_names:
+                break
+    if wrapped_fragment and not names:
+        return None
+    return names
+
+
+def _parse_svg_xml(svg_content: str) -> etree._Element:
+    """Parse XML with the single hardened configuration used by SVG safety checks."""
+    parser = etree.XMLParser(
+        resolve_entities=False,
+        no_network=True,
+        load_dtd=False,
+        huge_tree=False,
+        recover=False,
+    )
+    return etree.fromstring(svg_content.encode("utf-8"), parser=parser)
 
 
 def _check_url_references(value: str, errors: list[str]) -> None:

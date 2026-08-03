@@ -41,3 +41,15 @@ def test_cairosvg_renderer_rejects_unknown_format(tmp_path: Path) -> None:
     assert result.success is False
     assert result.error is not None
     assert "Unsupported render format" in result.error
+
+
+def test_cairosvg_renderer_rejects_unsafe_svg_before_rendering(tmp_path: Path) -> None:
+    output_path = tmp_path / "unsafe.png"
+    svg = '<svg xmlns="http://www.w3.org/2000/svg"><script>alert(1)</script></svg>'
+
+    result = CairoSVGRenderer().render(svg, output_path)
+
+    assert result.success is False
+    assert result.error is not None
+    assert "Unsafe or invalid SVG" in result.error
+    assert not output_path.exists()

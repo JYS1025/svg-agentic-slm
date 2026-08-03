@@ -196,25 +196,30 @@ class SVGGenerationOrchestrator:
         # Step 4: Render (optional)
         render_success = False
         render_error: str | None = None
-        if self._renderer is not None and current.status == "succeeded":
-            render_path = self._render_output_path or (self._output_dir / "render.png")
-            render_result = self._renderer.render(
-                current.svg,
-                render_path,
-                width=self._render_width,
-                height=self._render_height,
-                output_format=self._render_format,
-            )
-            render_success = render_result.success
-            render_error = render_result.error
-            if render_result.success and render_result.output_path is not None:
-                result.render_path = str(render_result.output_path)
-            logger.info(
-                "Render result: success=%s, path=%s, error=%s",
-                render_result.success,
-                render_result.output_path,
-                render_result.error,
-            )
+        if self._renderer is not None:
+            if current.status != "succeeded":
+                render_error = "Render skipped because SVG generation failed."
+            elif not validation.is_valid:
+                render_error = "Render skipped because SVG validation failed."
+            else:
+                render_path = self._render_output_path or (self._output_dir / "render.png")
+                render_result = self._renderer.render(
+                    current.svg,
+                    render_path,
+                    width=self._render_width,
+                    height=self._render_height,
+                    output_format=self._render_format,
+                )
+                render_success = render_result.success
+                render_error = render_result.error
+                if render_result.success and render_result.output_path is not None:
+                    result.render_path = str(render_result.output_path)
+                logger.info(
+                    "Render result: success=%s, path=%s, error=%s",
+                    render_result.success,
+                    render_result.output_path,
+                    render_result.error,
+                )
         result.metadata["render"] = {
             "enabled": self._renderer is not None,
             "render_path": result.render_path,

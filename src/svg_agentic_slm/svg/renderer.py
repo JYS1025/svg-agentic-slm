@@ -12,6 +12,7 @@ from pathlib import Path
 
 from svg_agentic_slm.svg.base import BaseRenderer
 from svg_agentic_slm.svg.schemas import SVGRenderResult
+from svg_agentic_slm.svg.validator import SVGValidator
 
 logger = logging.getLogger(__name__)
 
@@ -63,6 +64,18 @@ class CairoSVGRenderer(BaseRenderer):
                 height=height,
                 error=f"Unsupported render format: {output_format}",
         )
+
+        validation = SVGValidator().validate(svg_content)
+        if not validation.is_valid:
+            details = "; ".join(validation.errors) or "unknown validation error"
+            return SVGRenderResult(
+                success=False,
+                output_path=output_path,
+                format=output_format,
+                width=width,
+                height=height,
+                error=f"Unsafe or invalid SVG: {details}",
+            )
 
         try:
             import cairosvg  # type: ignore[import-not-found]
