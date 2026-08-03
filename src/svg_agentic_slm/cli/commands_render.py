@@ -9,6 +9,7 @@ import typer
 from rich.console import Console
 
 from svg_agentic_slm.svg.renderer import CairoSVGRenderer
+from svg_agentic_slm.svg.validator import SVGValidator
 
 console = Console()
 
@@ -67,6 +68,13 @@ def render(
     console.print(f"Format: {resolved_format}")
 
     svg_content = input_file.read_text(encoding="utf-8")
+
+    validation = SVGValidator().validate(svg_content)
+    if not validation.is_valid:
+        console.print("[bold red]SVG validation failed; rendering was skipped.[/bold red]")
+        for error in validation.errors:
+            console.print(f"  - {error}")
+        raise typer.Exit(code=1)
 
     if backend != "cairosvg":
         console.print(f"[bold red]Unsupported backend: {backend}[/bold red]")

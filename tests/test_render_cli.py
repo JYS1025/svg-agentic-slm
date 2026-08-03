@@ -88,6 +88,26 @@ def test_render_command_rejects_mismatched_format_and_extension(tmp_path: Path) 
     assert "does not match --format" in result.stdout
 
 
+def test_render_command_rejects_unsafe_svg_before_backend_call(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    svg_path = tmp_path / "unsafe.svg"
+    svg_path.write_text(
+        '<svg xmlns="http://www.w3.org/2000/svg"><script/></svg>',
+        encoding="utf-8",
+    )
+
+    def fail_if_called(*args, **kwargs):
+        raise AssertionError("renderer must not receive unsafe SVG")
+
+    monkeypatch.setattr("svg_agentic_slm.svg.renderer.CairoSVGRenderer.render", fail_if_called)
+    result = runner.invoke(app, ["render", str(svg_path)])
+
+    assert result.exit_code == 1
+    assert "validation failed" in result.stdout
+
+
 def test_render_command_uses_format_for_default_output(tmp_path: Path, monkeypatch) -> None:
     """A format override should also determine the default output suffix."""
     svg_path = tmp_path / "sample.svg"

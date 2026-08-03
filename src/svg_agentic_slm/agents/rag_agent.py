@@ -15,6 +15,7 @@ from svg_agentic_slm.rag.metadata_policy import (
     MINIMAL_RETRIEVAL_METADATA_POLICY,
     RetrievalMetadataPolicy,
 )
+from svg_agentic_slm.svg.validator import safe_svg_element_names
 
 if TYPE_CHECKING:
     from svg_agentic_slm.rag.base import BaseRetriever
@@ -59,6 +60,15 @@ class RAGAgent:
         examples = self._retriever.retrieve(query, top_k=self._top_k)
         sanitized_examples: list[RetrievedExample] = []
         for index, example in enumerate(examples, 1):
+            if (
+                example.kind == "reference_svg"
+                and safe_svg_element_names(example.content, allow_fragment=True) is None
+            ):
+                logger.warning(
+                    "Dropped unsafe or malformed RAG SVG reference '%s'.",
+                    example.item_id,
+                )
+                continue
             metadata, dropped_keys = self._metadata_policy.apply(example.metadata)
             if dropped_keys:
                 logger.info(

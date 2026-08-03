@@ -274,6 +274,31 @@ def test_orchestrator_revises_invalid_svg_even_when_critic_score_is_high() -> No
     assert result.attempts[-1].metadata["outcome"] == "accepted"
 
 
+def test_orchestrator_does_not_render_an_invalid_svg() -> None:
+    class FailIfCalledRenderer:
+        called = False
+
+        def render(self, *args, **kwargs):
+            self.called = True
+            raise AssertionError("renderer must not receive an invalid SVG")
+
+    renderer = FailIfCalledRenderer()
+    orchestrator = SVGGenerationOrchestrator(
+        generator=StubGenerator(),
+        validator=SequentialValidator(),
+        renderer=renderer,
+    )
+
+    result = orchestrator.run(GenerationRequest(instruction="Draw a valid circle."))
+
+    assert result.is_valid is False
+    assert renderer.called is False
+    assert result.metadata["render"]["success"] is False
+    assert result.metadata["render"]["error"] == (
+        "Render skipped because SVG validation failed."
+    )
+
+
 def test_orchestrator_honors_structured_critic_rejection() -> None:
     generator = RevisingGenerator()
     orchestrator = SVGGenerationOrchestrator(
