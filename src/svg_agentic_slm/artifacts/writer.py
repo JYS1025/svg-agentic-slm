@@ -11,7 +11,7 @@ import shutil
 import time
 from collections.abc import Iterator
 from contextlib import contextmanager
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from datetime import UTC, datetime
 from importlib import import_module
 from pathlib import Path
@@ -50,6 +50,8 @@ class GenerationArtifacts:
     svg_path: Path
     metadata_path: Path
     render_path: Path | None
+    report_path: Path | None = None
+    events_path: Path | None = None
 
 
 def persist_generation_artifacts(
@@ -115,6 +117,12 @@ def _persist_generation_artifacts_locked(
             metadata_dir=metadata_dir,
         )
         feedback_records = _serialize_feedback_events(result)
+        metrics = _build_metrics(result)
+        timeline = _build_timeline(result)
+        events_path = staging_dir / "events.jsonl"
+        report_path = staging_dir / "report.md"
+        _atomic_write_text(events_path, "".join(json.dumps(event, ensure_ascii=False) + "\n" for event in timeline))
+        _atomic_write_text(report_path, _build_report(result, attempt_records, metrics))
         result_metadata = dict(result.metadata)
         generator_metadata = dict(result_metadata.get("generator", {}))
         generator_metadata["attempts"] = attempt_records
@@ -135,6 +143,9 @@ def _persist_generation_artifacts_locked(
             "render_path": render_reference,
             "revision_count": result.revision_count,
             "critic_feedback": feedback_records,
+            "metrics": metrics,
+            "events_ref": _relative_artifact_reference(bundle_dir / "events.jsonl", metadata_dir),
+            "report_ref": _relative_artifact_reference(bundle_dir / "report.md", metadata_dir),
             "runtime": {
                 "enable_rag": runtime.enable_rag,
                 "enable_critic": runtime.enable_critic,
@@ -143,6 +154,7 @@ def _persist_generation_artifacts_locked(
                 "config_paths": runtime.config_paths,
                 "generation_config": runtime.generation_config,
                 "model_config": runtime.model_config,
+                "critic_model_config": getattr(runtime, "critic_model_config", {}),
                 "rag_config": runtime.rag_config if runtime.enable_rag else {},
                 "render_config": runtime.render_config,
                 "planned_artifacts": {
@@ -204,6 +216,8 @@ def _persist_generation_artifacts_locked(
         svg_path=exported_svg_path,
         metadata_path=runtime.metadata_output_path,
         render_path=published_render_path,
+        report_path=bundle_dir / "report.md",
+        events_path=bundle_dir / "events.jsonl",
     )
 
 
@@ -276,6 +290,63 @@ def _persist_attempt_artifacts(
                 metadata_dir,
             )
 
+        evidence_record: dict[str, Any] | None = None
+        if attempt.critic_evidence is not None:
+            evidence = attempt.critic_evidence
+            if evidence.attempt_id != attempt.attempt_id:
+                raise ValueError("Critic evidence attempt_id does not match attempt.")
+            png_path = attempt_dir / f"{prefix}.critic.png"
+            labeled_path = attempt_dir / f"{prefix}.labeled.svg"
+            manifest_path = attempt_dir / f"{prefix}.manifest.json"
+            _atomic_write_bytes(png_path, evidence.png)
+            _atomic_write_text(labeled_path, evidence.labeling.labeled_svg)
+            _atomic_write_text(manifest_path, json.dumps(
+                {key: asdict(value) for key, value in evidence.labeling.elements.items()},
+                indent=2, ensure_ascii=False,
+            ))
+            evidence_record = {
+                "attempt_id": evidence.attempt_id,
+                "png_ref": _relative_artifact_reference(published_attempt_dir / png_path.name, metadata_dir),
+                "labeled_svg_ref": _relative_artifact_reference(published_attempt_dir / labeled_path.name, metadata_dir),
+                "manifest_ref": _relative_artifact_reference(published_attempt_dir / manifest_path.name, metadata_dir),
+                "renderer": evidence.renderer, "renderer_version": evidence.renderer_version,
+                "width": evidence.width, "height": evidence.height,
+            }
+
+        critic_calls: list[dict[str, Any]] = []
+        matching_events = [event for event in result.feedback_events if event.target_attempt_id == attempt.attempt_id]
+        call_number = 0
+        traced_calls = [
+            (event.feedback_id, call)
+            for event in matching_events for call in event.feedback.model_calls
+        ] + [(None, call) for call in attempt.critic_error_calls]
+        for feedback_id, call in traced_calls:
+            call_prefix = f"{prefix}.critic-call-{call_number:03d}"
+            prompt_ref = _write_optional_trace_text(attempt_dir / f"{call_prefix}.prompt.txt", call.prompt, metadata_dir, published_attempt_dir)
+            system_ref = _write_optional_trace_text(attempt_dir / f"{call_prefix}.system.txt", call.system_prompt, metadata_dir, published_attempt_dir)
+            raw_ref = _write_optional_trace_text(attempt_dir / f"{call_prefix}.raw.txt", call.response.text, metadata_dir, published_attempt_dir)
+            schema_path = attempt_dir / f"{call_prefix}.response-format.json"
+            validation_path = attempt_dir / f"{call_prefix}.validation.json"
+            _atomic_write_text(schema_path, json.dumps(call.response_format, indent=2, ensure_ascii=False))
+            _atomic_write_text(validation_path, json.dumps({"success": call.validation_success, "error": call.validation_error}, indent=2, ensure_ascii=False))
+            critic_calls.append({
+                "critic_call_id": call.critic_call_id, "feedback_id": feedback_id,
+                "retry_index": call.retry_index, "prompt_ref": prompt_ref,
+                "system_prompt_ref": system_ref, "raw_output_ref": raw_ref,
+                "response_format_ref": _relative_artifact_reference(published_attempt_dir / schema_path.name, metadata_dir),
+                "validation_ref": _relative_artifact_reference(published_attempt_dir / validation_path.name, metadata_dir),
+                "validation_success": call.validation_success,
+                "validation_error": call.validation_error,
+                "generation_parameters": call.generation_parameters,
+                "model_id": call.response.model_id, "model_revision": call.response.model_revision,
+                "finish_reason": call.response.finish_reason,
+                "prompt_tokens": call.response.prompt_tokens,
+                "completion_tokens": call.response.completion_tokens,
+                "latency_seconds": call.response.latency_seconds,
+                "metadata": call.response.metadata,
+            })
+            call_number += 1
+
         records.append(
             {
                 "attempt_id": attempt.attempt_id,
@@ -293,6 +364,8 @@ def _persist_attempt_artifacts(
                 "truncated_context_item_ids": attempt.truncated_context_item_ids,
                 "model_calls": model_calls,
                 "metadata": attempt.metadata,
+                "critic_evidence": evidence_record,
+                "critic_calls": critic_calls,
             }
         )
     return records
@@ -324,7 +397,69 @@ def _serialize_feedback(feedback: CriticFeedback) -> dict[str, Any]:
         "model_id": feedback.model_id,
         "model_revision": feedback.model_revision,
         "prompt_version": feedback.prompt_version,
+        "status": feedback.status,
+        "structured_issues": [asdict(item) for item in feedback.structured_issues],
+        "preserve": feedback.preserve,
+        "critic_schema_version": feedback.schema_version,
+        "metadata": feedback.metadata,
+        "model_call_ids": [call.critic_call_id for call in feedback.model_calls],
     }
+
+
+def _build_metrics(result: GenerationResult) -> dict[str, Any]:
+    generator_calls = [call for attempt in result.attempts for call in attempt.model_calls]
+    critic_calls = [call for feedback in result.critic_feedback for call in feedback.model_calls]
+    critic_calls.extend(call for attempt in result.attempts for call in attempt.critic_error_calls)
+    def total(values: list[int | None]) -> int:
+        return sum(value or 0 for value in values)
+    return {
+        "total_latency_seconds": result.metadata.get("timing", {}).get("generation_latency_seconds"),
+        "generator_call_count": len(generator_calls),
+        "generator_prompt_tokens": total([call.response.prompt_tokens for call in generator_calls]),
+        "generator_completion_tokens": total([call.response.completion_tokens for call in generator_calls]),
+        "generator_latency_seconds": round(sum(call.response.latency_seconds or 0.0 for call in generator_calls), 6),
+        "critic_call_count": len(critic_calls),
+        "critic_retry_count": sum(call.retry_index > 0 for call in critic_calls),
+        "critic_prompt_tokens": total([call.response.prompt_tokens for call in critic_calls]),
+        "critic_completion_tokens": total([call.response.completion_tokens for call in critic_calls]),
+        "critic_latency_seconds": round(sum(call.response.latency_seconds or 0.0 for call in critic_calls), 6),
+        "revision_count": result.revision_count,
+        "final_status": result.critic_feedback[-1].status if result.critic_feedback else None,
+        "final_score": result.critic_feedback[-1].score if result.critic_feedback else None,
+    }
+
+
+def _build_timeline(result: GenerationResult) -> list[dict[str, Any]]:
+    elapsed = 0.0
+    events: list[dict[str, Any]] = [{"sequence": 0, "event": "run_started", "run_id": result.run_id, "elapsed_seconds": elapsed}]
+    for attempt in result.attempts:
+        elapsed += sum(call.response.latency_seconds or 0.0 for call in attempt.model_calls)
+        events.append({"sequence": len(events), "event": "generator_completed", "attempt_id": attempt.attempt_id, "mode": attempt.mode, "status": attempt.status, "elapsed_seconds": round(elapsed, 6)})
+        validation = attempt.metadata.get("validation", {})
+        events.append({"sequence": len(events), "event": "validation_completed", "attempt_id": attempt.attempt_id, "valid": validation.get("is_valid"), "elapsed_seconds": round(elapsed, 6)})
+        for feedback_event in [item for item in result.feedback_events if item.target_attempt_id == attempt.attempt_id]:
+            for call in feedback_event.feedback.model_calls:
+                elapsed += call.response.latency_seconds or 0.0
+                events.append({"sequence": len(events), "event": "critic_call_completed", "attempt_id": attempt.attempt_id, "feedback_id": feedback_event.feedback_id, "critic_call_id": call.critic_call_id, "retry_index": call.retry_index, "validation_success": call.validation_success, "validation_error": call.validation_error, "latency_seconds": call.response.latency_seconds, "elapsed_seconds": round(elapsed, 6)})
+            events.append({"sequence": len(events), "event": "critic_feedback_completed", "attempt_id": attempt.attempt_id, "feedback_id": feedback_event.feedback_id, "status": feedback_event.feedback.status, "score": feedback_event.feedback.score, "elapsed_seconds": round(elapsed, 6)})
+        for call in attempt.critic_error_calls:
+            elapsed += call.response.latency_seconds or 0.0
+            events.append({"sequence": len(events), "event": "critic_call_failed", "attempt_id": attempt.attempt_id, "critic_call_id": call.critic_call_id, "retry_index": call.retry_index, "validation_error": call.validation_error, "latency_seconds": call.response.latency_seconds, "elapsed_seconds": round(elapsed, 6)})
+    final = result.attempts[-1]
+    events.append({"sequence": len(events), "event": "run_completed", "run_id": result.run_id, "outcome": final.metadata.get("outcome"), "stop_reason": final.metadata.get("stop_reason"), "elapsed_seconds": result.metadata.get("timing", {}).get("generation_latency_seconds", round(elapsed, 6))})
+    return events
+
+
+def _build_report(result: GenerationResult, attempts: list[dict[str, Any]], metrics: dict[str, Any]) -> str:
+    final = result.attempts[-1]
+    lines = ["# SVG generation report", "", f"- Run: `{result.run_id}`", f"- Instruction: {result.instruction}", f"- Outcome: `{final.metadata.get('outcome')}`", f"- Stop reason: `{final.metadata.get('stop_reason')}`", f"- Revisions: {result.revision_count}", "", "## Metrics", "", "```json", json.dumps(metrics, indent=2, ensure_ascii=False), "```"]
+    for index, (attempt, record) in enumerate(zip(result.attempts, attempts, strict=True)):
+        lines.extend(["", f"## Attempt {index}: `{attempt.attempt_id}`", "", f"- Mode: `{attempt.mode}`", f"- Status: `{attempt.status}`", f"- SVG: `{record.get('svg_ref')}`", f"- Generator calls: {len(attempt.model_calls)}", f"- Critic calls: {len(record.get('critic_calls', []))}"])
+        feedback = next((event.feedback for event in result.feedback_events if event.target_attempt_id == attempt.attempt_id), None)
+        if feedback:
+            lines.extend([f"- Critic: `{feedback.status}` / {feedback.score}", "", "### Critic issues", ""])
+            lines.extend([f"- **{issue.severity}** `{','.join(issue.target_ids) or 'global'}`: {issue.observed} → {issue.fix}" for issue in feedback.structured_issues] or ["- None"])
+    return "\n".join(lines) + "\n"
 
 
 def _write_optional_trace_text(
@@ -358,6 +493,17 @@ def _atomic_write_text(
         if on_replace is not None:
             on_replace()
         _fsync_directory(path.parent)
+    finally:
+        temporary_path.unlink(missing_ok=True)
+
+
+def _atomic_write_bytes(path: Path, content: bytes) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary_path = path.with_name(f".{path.name}.{uuid4().hex}.tmp")
+    try:
+        with temporary_path.open("wb") as handle:
+            handle.write(content); handle.flush(); os.fsync(handle.fileno())
+        os.replace(temporary_path, path); _fsync_directory(path.parent)
     finally:
         temporary_path.unlink(missing_ok=True)
 

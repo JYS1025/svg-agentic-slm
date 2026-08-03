@@ -25,6 +25,7 @@ from svg_agentic_slm.prompts.text_to_svg import (
     build_text_to_svg_prompt,
 )
 from svg_agentic_slm.svg.normalizer import extract_svg_from_text, normalize_svg
+from svg_agentic_slm.svg.labeler import strip_reserved_labels
 
 if TYPE_CHECKING:
     from svg_agentic_slm.models.base import BaseModelBackend
@@ -93,7 +94,8 @@ class GeneratorAgent(BaseGenerator):
         selected_context, truncated_ids = self._select_context(context or [])
         revision = build_revision_prompt(
             instruction=request.instruction,
-            previous_svg=previous.svg,
+            previous_svg=(previous.critic_evidence.labeling.labeled_svg
+                          if previous.critic_evidence is not None else previous.svg),
             feedback=_format_feedback(feedback.feedback),
         )
         context_prefix = build_retrieval_context(selected_context)
@@ -141,7 +143,10 @@ class GeneratorAgent(BaseGenerator):
         if extracted is None:
             error = "svg_extraction_failed"
         else:
-            svg = normalize_svg(extracted)
+            try:
+                svg = normalize_svg(strip_reserved_labels(extracted))
+            except Exception:
+                svg = normalize_svg(extracted)
             if len(svg) > self._max_svg_length:
                 error = "max_svg_length_exceeded"
                 svg = ""
@@ -204,6 +209,21 @@ class GeneratorAgent(BaseGenerator):
 
 
 def _format_feedback(feedback: CriticFeedback) -> str:
+    if feedback.structured_issues:
+        lines = []
+        for index, issue in enumerate(feedback.structured_issues[:3], 1):
+            targets = ", ".join(issue.target_ids) or "NEW_NODE_OR_GLOBAL"
+            lines.append(
+                f"{index}. [{issue.severity}/{issue.category}/{issue.type}] targets={targets}\n"
+                f"   Observed: {issue.observed}\n   Expected: {issue.expected}\n   Fix: {issue.fix}"
+            )
+        preserve = "\n".join(f"- {item}" for item in feedback.preserve) or "- None"
+        return (
+            f"Status: {feedback.status}\nScore: {feedback.score}\nIssues:\n"
+            + "\n".join(lines)
+            + f"\nPreserve:\n{preserve}\nTarget IDs are attempt-local. Modify requested targets and necessary adjacent nodes only. "
+              "Do not emit data-agent-id attributes."
+        )
     issues = "\n".join(f"- {issue}" for issue in feedback.issues) or "- None"
     suggestions = "\n".join(f"- {suggestion}" for suggestion in feedback.suggestions) or "- None"
     return (

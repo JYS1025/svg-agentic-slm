@@ -1,0 +1,14 @@
+critic_model:
+  backend_type: "llama_cpp_multimodal"
+  model_id: "ggml-org/gemma-4-12B-it-GGUF"
+  filename: "gemma-4-12B-it-Q4_0.gguf"
+  revision: "7e0fbb8205d1f4857f4606a38a65023aaeb5f544"
+  model_path: "/hdd1/yishin/models/gemma-4-12B-it-multimodal/gemma-4-12B-it-Q4_0.gguf"
+  mmproj_filename: "mmproj-gemma-4-12B-it-Q8_0.gguf"
+  mmproj_path: "/hdd1/yishin/models/gemma-4-12B-it-multimodal/mmproj-gemma-4-12B-it-Q8_0.gguf"
+  n_gpu_layers: -1
+  n_ctx: 16384
+  n_batch: 512
+  flash_attn: true
+  use_mmap: true
+  verbose: false

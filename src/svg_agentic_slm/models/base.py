@@ -10,7 +10,7 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from typing import Any
 
-from svg_agentic_slm.models.schemas import ModelResponse
+from svg_agentic_slm.models.schemas import ImageInput, ModelResponse
 
 
 class BaseModelBackend(ABC):
@@ -58,3 +58,17 @@ class BaseModelBackend(ABC):
         Default implementation is a no-op. Override if cleanup is needed.
         """
         pass
+
+
+class BaseMultimodalModelBackend(BaseModelBackend):
+    """Model backend that fails explicitly unless image input is supported."""
+
+    @abstractmethod
+    def generate_multimodal(
+        self,
+        prompt: str,
+        images: list[ImageInput],
+        **kwargs: Any,
+    ) -> ModelResponse:
+        """Generate a response from interleaved text and image evidence."""
+        ...

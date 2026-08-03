@@ -24,6 +24,7 @@ from svg_agentic_slm.agents.rag_agent import RAGAgent
 from svg_agentic_slm.agents.rule_critic import RuleBasedCritic
 from svg_agentic_slm.agents.schemas import (
     CriticFeedback,
+    CriticInput,
     GenerationRequest,
     validate_critic_feedback,
 )
@@ -44,6 +45,7 @@ from svg_agentic_slm.models.llama_cpp_backend import (
     DEFAULT_MODEL_FILE,
     DEFAULT_MODEL_ID,
     LlamaCppModelBackend,
+    LlamaCppMultimodalBackend,
 )
 from svg_agentic_slm.rag.base import BaseRetriever
 from svg_agentic_slm.rag.chroma_store import ChromaRetriever
@@ -71,6 +73,7 @@ class GenerationRuntime:
     render_output_path: Path | None
     generation_config: dict[str, Any]
     model_config: dict[str, Any]
+    critic_model_config: dict[str, Any]
     rag_config: dict[str, Any]
     paths_config: dict[str, Any]
     config_paths: dict[str, str]
@@ -96,18 +99,30 @@ class CompositeCritic(BaseCritic):
         return f"CompositeCritic[{critic_names}]"
 
     def critique(self, instruction: str, svg_content: str) -> CriticFeedback:
-        feedback_items = [
+        return self._combine([
             validate_critic_feedback(critic.critique(instruction, svg_content))
             for critic in self._critics
-        ]
+        ])
+
+    def critique_attempt(self, value: CriticInput) -> CriticFeedback:
+        return self._combine([
+            validate_critic_feedback(critic.critique_attempt(value))
+            for critic in self._critics
+        ])
+
+    def _combine(self, feedback_items: list[CriticFeedback]) -> CriticFeedback:
         raw_sections = [
             f"[{item.critic_type}] score={item.score:.1f} valid={item.is_valid} "
             f"matches_instruction={item.matches_instruction} "
             f"issues={item.issues} suggestions={item.suggestions}"
             for item in feedback_items
         ]
-        return validate_critic_feedback(
-            CriticFeedback(
+        statuses = [item.status for item in feedback_items if item.status is not None]
+        status = ("invalid" if "invalid" in statuses else "revise" if "revise" in statuses
+                  else "pass" if statuses and all(item == "pass" for item in statuses) else None)
+        structured = [issue for item in feedback_items for issue in item.structured_issues][:3]
+        preserve = _unique_strings(item for feedback in feedback_items for item in feedback.preserve)[:3]
+        return validate_critic_feedback(CriticFeedback(
                 score=sum(item.score for item in feedback_items) / len(feedback_items),
                 is_valid=all(item.is_valid for item in feedback_items),
                 matches_instruction=all(item.matches_instruction for item in feedback_items),
@@ -120,8 +135,10 @@ class CompositeCritic(BaseCritic):
                 critic_version="+".join(
                     item.critic_version or "unversioned" for item in feedback_items
                 ),
-            ),
-        )
+                status=status, structured_issues=structured, preserve=preserve,
+                schema_version=max(item.schema_version for item in feedback_items),
+                model_calls=[call for item in feedback_items for call in item.model_calls],
+            ))
 
 
 def build_generation_runtime(
@@ -141,10 +158,12 @@ def build_generation_runtime(
     generation_config = generation_wrapper.get("generation", {})
 
     model_path = _resolve_related_config(config_path, "model.yaml")
+    critic_model_path = _resolve_related_config(config_path, "critic_model.yaml")
     rag_path = _resolve_related_config(config_path, "rag.yaml")
     paths_path = _resolve_related_config(config_path, "paths.yaml")
 
     model_wrapper = load_yaml_config(model_path)
+    critic_model_wrapper = load_yaml_config(critic_model_path)
     rag_wrapper = load_yaml_config(rag_path)
     paths_wrapper = load_yaml_config(paths_path)
     if overrides:
@@ -153,6 +172,7 @@ def build_generation_runtime(
         paths_wrapper = merge_nested_dicts(paths_wrapper, {"paths": overrides.get("paths", {})})
 
     model_config = model_wrapper.get("model", {})
+    critic_model_config = critic_model_wrapper.get("critic_model", {})
     rag_config = rag_wrapper.get("rag", {})
     validate_rag_config_security(rag_config)
     paths_config = paths_wrapper.get("paths", {})
@@ -198,7 +218,11 @@ def build_generation_runtime(
         ),
     )
     validator = SVGValidator()
-    critic = _build_critic(critic_type, validator, model_backend) if critic_enabled else None
+    critic_backend = None
+    if critic_enabled and critic_type in {"llm", "both"}:
+        critic_backend = _build_multimodal_backend(critic_model_config, generation_params)
+        critic_backend.load_model()
+    critic = _build_critic(critic_type, validator, critic_backend or model_backend) if critic_enabled else None
     renderer = _build_renderer(render_config) if render_config["enabled"] else None
 
     orchestrator = SVGGenerationOrchestrator(
@@ -217,6 +241,7 @@ def build_generation_runtime(
             "critic_acceptance_score",
             8.0,
         ),
+        critic_error_policy=orchestration_config.get("critic_error_policy", "fail_closed"),
     )
 
     request = GenerationRequest(
@@ -235,11 +260,13 @@ def build_generation_runtime(
         render_output_path=artifact_paths["render"],
         generation_config=generation_config,
         model_config=model_config,
+        critic_model_config=critic_model_config if critic_enabled else {},
         rag_config=_redact_sensitive_config(rag_config),
         paths_config=paths_config,
         config_paths={
             "generation": str(config_path),
             "model": str(model_path),
+            "critic_model": str(critic_model_path),
             "rag": str(rag_path),
             "paths": str(paths_path),
         },
@@ -329,6 +356,25 @@ def _build_model_backend(
         verbose=model_config.get("verbose", False),
         chat_format=model_config.get("chat_format"),
         generation_config=generation_config,
+    )
+
+
+def _build_multimodal_backend(model_config: dict[str, Any],
+                              generation_config: GenerationConfig) -> LlamaCppMultimodalBackend:
+    required = {"model_path", "mmproj_path"}
+    missing = sorted(key for key in required if not model_config.get(key))
+    if missing:
+        raise ValueError("Missing multimodal critic model option(s): " + ", ".join(missing))
+    return LlamaCppMultimodalBackend(
+        model_id=model_config.get("model_id", "ggml-org/gemma-4-12B-it-GGUF"),
+        filename=model_config.get("filename", "gemma-4-12B-it-Q4_0.gguf"),
+        model_revision=model_config.get("revision"), model_path=model_config["model_path"],
+        mmproj_path=model_config["mmproj_path"],
+        mmproj_filename=model_config.get("mmproj_filename"),
+        mmproj_revision=model_config.get("revision"), n_ctx=model_config.get("n_ctx", 16384),
+        n_gpu_layers=model_config.get("n_gpu_layers", -1), n_batch=model_config.get("n_batch", 512),
+        flash_attn=model_config.get("flash_attn", True), use_mmap=model_config.get("use_mmap", True),
+        verbose=model_config.get("verbose", False), generation_config=generation_config,
     )
 
 

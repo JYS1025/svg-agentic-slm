@@ -15,6 +15,7 @@ from svg_agentic_slm.factories.generation import (
     persist_generation_artifacts,
 )
 from svg_agentic_slm.rag.schemas import RetrievedExample
+from svg_agentic_slm.utils.logging import setup_logging
 
 console = Console()
 
@@ -96,12 +97,22 @@ def generate(
             "Nested config override in dotted.path=value form. Example: --set generation.top_p=0.8"
         ),
     ),
+    log_level: str = typer.Option(
+        "INFO", "--log-level", help="Python log level: DEBUG, INFO, WARNING, ERROR, CRITICAL.",
+    ),
+    log_file: Path | None = typer.Option(
+        None, "--log-file", help="Also write pipeline logs to this file.",
+    ),
 ) -> None:
     """Generate an SVG from a text description.
 
     This command loads the generation config, builds the pipeline
     components, and runs the orchestrator.
     """
+    normalized_log_level = log_level.upper()
+    if normalized_log_level not in {"DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"}:
+        raise typer.BadParameter("--log-level must be DEBUG, INFO, WARNING, ERROR, or CRITICAL.")
+    setup_logging(normalized_log_level, log_file)
     console.print("[bold blue]SVG Generation[/bold blue]")
     effective_rag = enable_rag or rag_backend is not None
     console.print(f"Prompt: {prompt}")
@@ -170,3 +181,9 @@ def generate(
         render_error = result.metadata.get("render", {}).get("error")
         console.print(f"[yellow]Render not produced: {render_error}[/yellow]")
     console.print(f"Metadata saved to: {artifacts.metadata_path}")
+    report_path = getattr(artifacts, "report_path", None)
+    events_path = getattr(artifacts, "events_path", None)
+    if report_path is not None:
+        console.print(f"Run report saved to: {report_path}")
+    if events_path is not None:
+        console.print(f"Event timeline saved to: {events_path}")

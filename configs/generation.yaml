@@ -22,7 +22,8 @@ generation:
     enable_critic: false
     max_revision_rounds: 2
     critic_acceptance_score: 8.0
-    critic_type: "rule"  # Options: rule, llm, both
+    critic_type: "llm"  # Options: rule, llm, both
+    critic_error_policy: "fail_closed"
 
   # Render settings for generated SVG artifacts
   render:

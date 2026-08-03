@@ -17,12 +17,19 @@ from typing import TYPE_CHECKING
 from uuid import uuid4
 
 from svg_agentic_slm.agents.schemas import (
+    CriticEvidence,
+    CriticFeedback,
     CriticFeedbackEvent,
+    CriticInput,
+    CriticIssue,
     GenerationRequest,
     GenerationResult,
     GeneratorOutput,
     validate_critic_feedback,
 )
+from svg_agentic_slm.models.schemas import ImageInput
+from svg_agentic_slm.svg.gates import SmokeRenderGate
+from svg_agentic_slm.svg.labeler import CriticLabeler
 
 if TYPE_CHECKING:
     from svg_agentic_slm.agents.base import BaseCritic, BaseGenerator
@@ -73,6 +80,9 @@ class SVGGenerationOrchestrator:
         render_height: int = 256,
         render_format: str = "png",
         critic_acceptance_score: float = 8.0,
+        smoke_render_gate: SmokeRenderGate | None = None,
+        critic_labeler: CriticLabeler | None = None,
+        critic_error_policy: str = "fail_closed",
     ) -> None:
         if max_revisions < 0:
             raise ValueError("max_revisions must be non-negative.")
@@ -90,6 +100,11 @@ class SVGGenerationOrchestrator:
         self._render_height = render_height
         self._render_format = render_format
         self._critic_acceptance_score = critic_acceptance_score
+        self._smoke_render_gate = smoke_render_gate or SmokeRenderGate(render_width, render_height)
+        self._critic_labeler = critic_labeler or CriticLabeler()
+        if critic_error_policy not in {"fail_closed", "fail_open"}:
+            raise ValueError("critic_error_policy must be fail_closed or fail_open.")
+        self._critic_error_policy = critic_error_policy
 
     def run(
         self,
@@ -155,9 +170,36 @@ class SVGGenerationOrchestrator:
 
         # Step 3: Critique and revise
         while self._critic is not None and current.status == "succeeded":
-            feedback = validate_critic_feedback(
-                self._critic.critique(request.instruction, current.svg)
-            )
+            if not validation.is_valid:
+                feedback = _deterministic_feedback(validation.diagnostics)
+            else:
+                smoke = self._smoke_render_gate.evaluate(current.svg)
+                if not smoke.success:
+                    feedback = _deterministic_feedback(smoke.diagnostics)
+                else:
+                    labeling = self._critic_labeler.label(current.svg, current.attempt_id)
+                    current.critic_evidence = CriticEvidence(
+                        attempt_id=current.attempt_id, png=smoke.png, labeling=labeling,
+                        diagnostics=smoke.diagnostics, renderer_version=smoke.renderer_version,
+                        width=self._render_width, height=self._render_height,
+                    )
+                    critic_input = CriticInput(
+                        attempt_id=current.attempt_id, instruction=request.instruction,
+                        canonical_svg=current.svg, render_png=ImageInput("image/png", smoke.png),
+                        labeling=labeling, render_width=self._render_width,
+                        render_height=self._render_height,
+                    )
+                    try:
+                        feedback = validate_critic_feedback(self._critic.critique_attempt(critic_input))
+                    except RuntimeError as exc:
+                        current.critic_error_calls = list(getattr(exc, "model_calls", []))
+                        result.metadata["critic_error"] = {"type": type(exc).__name__, "message": str(exc),
+                                                           "policy": self._critic_error_policy, "score": 0.0}
+                        if self._critic_error_policy == "fail_open":
+                            break
+                        current.metadata["outcome"] = "rejected"
+                        current.metadata["stop_reason"] = "critic_error"
+                        break
             latest_feedback_event = CriticFeedbackEvent(
                 feedback_id=f"feedback_{uuid4().hex}",
                 target_attempt_id=current.attempt_id,
@@ -233,7 +275,10 @@ class SVGGenerationOrchestrator:
             "feedback_count": len(result.critic_feedback),
             "acceptance_score": self._critic_acceptance_score,
         }
-        if current.status == "failed":
+        critic_failed_closed = "critic_error" in result.metadata and self._critic_error_policy == "fail_closed"
+        if critic_failed_closed:
+            current.metadata["outcome"] = "rejected"
+        elif current.status == "failed":
             current.metadata["outcome"] = "failed"
         elif validation.is_valid and (
             latest_feedback_event is None
@@ -245,13 +290,13 @@ class SVGGenerationOrchestrator:
             current.metadata["outcome"] = "accepted"
         else:
             current.metadata["outcome"] = "rejected"
-        current.metadata["stop_reason"] = _stop_reason(
-            current=current,
-            validation_is_valid=validation.is_valid,
-            feedback_event=latest_feedback_event,
-            acceptance_score=self._critic_acceptance_score,
-            revision_count=result.revision_count,
-            max_revisions=self._max_revisions,
+        current.metadata["stop_reason"] = (
+            "critic_error" if critic_failed_closed else _stop_reason(
+                current=current, validation_is_valid=validation.is_valid,
+                feedback_event=latest_feedback_event,
+                acceptance_score=self._critic_acceptance_score,
+                revision_count=result.revision_count, max_revisions=self._max_revisions,
+            )
         )
 
         result.metadata["timing"] = {
@@ -284,6 +329,11 @@ def _validation_metadata(validation: SVGValidationResult) -> dict:
         "has_svg_tag": validation.has_svg_tag,
         "has_closing_tag": validation.has_closing_tag,
         "is_well_formed_xml": validation.is_well_formed_xml,
+        "diagnostics": [
+            {"code": item.code, "message": item.message, "severity": item.severity,
+             "line": item.line, "column": item.column}
+            for item in validation.diagnostics
+        ],
     }
 
 
@@ -318,6 +368,8 @@ def _stop_reason(
         return "validation_failed"
     if feedback_event is None:
         return "generator_only_complete"
+    if feedback_event.feedback.status == "pass":
+        return "critic_passed"
     if _feedback_meets_acceptance(feedback_event, acceptance_score):
         return "critic_acceptance_threshold_met"
     if revision_count >= max_revisions:
@@ -334,4 +386,22 @@ def _feedback_meets_acceptance(
     acceptance_score: float,
 ) -> bool:
     feedback = feedback_event.feedback
+    if feedback.status is not None:
+        return feedback.status == "pass" and feedback.is_valid
     return feedback.is_valid and feedback.matches_instruction and feedback.score >= acceptance_score
+
+
+def _deterministic_feedback(diagnostics: list[object]) -> CriticFeedback:
+    messages = [str(getattr(item, "message", item)) for item in diagnostics] or ["Unknown validity failure."]
+    issue = CriticIssue(
+        category="validity", type="xml_or_security_validation", severity="critical",
+        scope="global", target_ids=[], observed="; ".join(messages),
+        expected="A well-formed, static, self-contained and renderable SVG.",
+        fix="Repair the reported validity error before visual revision.",
+    )
+    return validate_critic_feedback(CriticFeedback(
+        score=0.0, is_valid=False, matches_instruction=False, issues=messages,
+        suggestions=[issue.fix], critic_type="deterministic_gate",
+        critic_version="deterministic-gate-v2", status="invalid",
+        structured_issues=[issue], schema_version=2,
+    ))

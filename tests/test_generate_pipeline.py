@@ -14,7 +14,7 @@ import yaml
 from typer.testing import CliRunner
 
 from svg_agentic_slm.agents.base import BaseCritic
-from svg_agentic_slm.agents.schemas import CriticFeedback
+from svg_agentic_slm.agents.schemas import CriticCallTrace, CriticFeedback
 from svg_agentic_slm.artifacts.generation import load_generation_artifact
 from svg_agentic_slm.cli.app import app
 from svg_agentic_slm.factories.generation import (
@@ -162,10 +162,45 @@ def test_generate_command_persists_svg_and_metadata(tmp_path: Path) -> None:
     assert (json_files[0].parent / model_call["system_prompt_ref"]).exists()
     assert model_call["generation_parameters"]["max_new_tokens"] == 128
     assert metadata["critic_feedback"][0]["target_attempt_id"] == attempt["attempt_id"]
+    assert (json_files[0].parent / metadata["events_ref"]).is_file()
+    assert (json_files[0].parent / metadata["report_ref"]).is_file()
+    assert metadata["metrics"]["generator_call_count"] == 1
+    assert metadata["metrics"]["revision_count"] == 0
     assert not list(output_dir.rglob("*.tmp"))
     record = load_generation_artifact(json_files[0])
     assert record.outcome == "accepted"
     assert len(record.attempts) == 1
+
+
+def test_artifacts_persist_complete_critic_call_trace(tmp_path: Path) -> None:
+    output_dir = tmp_path / "outputs" / "generations"
+    _write_generation_config_bundle(tmp_path, output_dir)
+    runtime = build_generation_runtime(
+        config_path=tmp_path / "generation.yaml", prompt="Draw a circle.",
+        enable_critic=True,
+    )
+    result = runtime.orchestrator.run(runtime.request)
+    feedback = result.critic_feedback[0]
+    feedback.model_calls = [CriticCallTrace(
+        critic_call_id="critic-call-1", retry_index=0,
+        response=ModelResponse(
+            text='{"status":"pass"}', model_id="critic-model",
+            prompt_tokens=30, completion_tokens=5, latency_seconds=0.25,
+        ),
+        prompt="critic user prompt", system_prompt="critic system prompt",
+        response_format={"type": "json_object"}, validation_success=True,
+    )]
+    artifacts = persist_generation_artifacts(result, runtime)
+    payload = json.loads(artifacts.metadata_path.read_text(encoding="utf-8"))
+    attempt = payload["metadata"]["generator"]["attempts"][0]
+    call = attempt["critic_calls"][0]
+    assert (artifacts.metadata_path.parent / call["prompt_ref"]).read_text() == "critic user prompt"
+    assert (artifacts.metadata_path.parent / call["system_prompt_ref"]).read_text() == "critic system prompt"
+    assert (artifacts.metadata_path.parent / call["raw_output_ref"]).read_text() == '{"status":"pass"}'
+    assert call["validation_success"] is True
+    assert payload["metrics"]["critic_call_count"] == 1
+    assert artifacts.report_path and artifacts.report_path.is_file()
+    assert artifacts.events_path and artifacts.events_path.is_file()
 
 
 def test_generate_command_persists_render_output(tmp_path: Path) -> None:

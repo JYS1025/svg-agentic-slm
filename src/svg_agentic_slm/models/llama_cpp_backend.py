@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import gc
+import base64
 import logging
 import time
 from collections.abc import Callable
@@ -10,9 +11,9 @@ from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
 from typing import Any, cast
 
-from svg_agentic_slm.models.base import BaseModelBackend
+from svg_agentic_slm.models.base import BaseModelBackend, BaseMultimodalModelBackend
 from svg_agentic_slm.models.generation_config import GenerationConfig
-from svg_agentic_slm.models.schemas import ModelResponse
+from svg_agentic_slm.models.schemas import ImageInput, ModelResponse
 
 logger = logging.getLogger(__name__)
 
@@ -245,6 +246,88 @@ class LlamaCppModelBackend(BaseModelBackend):
 
         merged = {**self.generation_config.to_dict(), **overrides}
         return GenerationConfig.from_dict(merged).to_dict()
+
+
+class LlamaCppMultimodalBackend(LlamaCppModelBackend, BaseMultimodalModelBackend):
+    """Gemma 4 image+text backend using llama.cpp's MTMD chat handler."""
+
+    def __init__(self, *args: Any, mmproj_path: str | Path, mmproj_revision: str | None = None,
+                 mmproj_filename: str | None = None, **kwargs: Any) -> None:
+        super().__init__(*args, **kwargs)
+        self.mmproj_path = Path(mmproj_path)
+        self.mmproj_revision = mmproj_revision
+        self.mmproj_filename = mmproj_filename or self.mmproj_path.name
+        self._chat_handler: Any = None
+
+    def load_model(self) -> None:
+        if self.is_loaded():
+            return
+        if not self.mmproj_path.is_file():
+            raise FileNotFoundError(f"Multimodal projector not found: {self.mmproj_path}")
+        model_path = self.model_path or self._download_model()
+        try:
+            from llama_cpp import Llama
+            from llama_cpp.llama_chat_format import Gemma4ChatHandler
+            self._chat_handler = Gemma4ChatHandler(
+                clip_model_path=str(self.mmproj_path), verbose=self.verbose, use_gpu=True
+            )
+            self._model = Llama(
+                model_path=str(model_path), n_ctx=self.n_ctx, n_gpu_layers=self.n_gpu_layers,
+                n_batch=self.n_batch, flash_attn=self.flash_attn, use_mmap=self.use_mmap,
+                verbose=self.verbose, chat_handler=self._chat_handler,
+            )
+        except Exception as exc:
+            raise RuntimeError(f"Failed to load multimodal Gemma 4 model from '{model_path}'.") from exc
+        self._resolved_model_path = Path(model_path)
+
+    def generate_multimodal(self, prompt: str, images: list[ImageInput], **kwargs: Any) -> ModelResponse:
+        if not self.is_loaded():
+            raise RuntimeError("Model is not loaded. Call load_model() before generate_multimodal().")
+        if not images:
+            raise ValueError("Multimodal generation requires at least one PNG image.")
+        system_prompt = kwargs.pop("system_prompt", None)
+        response_format = kwargs.pop("response_format", None)
+        config = self._resolve_generation_config(kwargs)
+        content: list[dict[str, Any]] = [{"type": "text", "text": prompt}]
+        for item in images:
+            encoded = base64.b64encode(item.data).decode("ascii")
+            content.append({"type": "image_url", "image_url": {"url": f"data:{item.mime_type};base64,{encoded}"}})
+        messages: list[dict[str, Any]] = []
+        if system_prompt:
+            messages.append({"role": "system", "content": str(system_prompt)})
+        messages.append({"role": "user", "content": content})
+        call_kwargs: dict[str, Any] = {
+            "messages": messages, "max_tokens": config["max_new_tokens"],
+            "temperature": config["temperature"] if config["do_sample"] else 0.0,
+            "top_p": config["top_p"] if config["do_sample"] else 1.0,
+            "top_k": config["top_k"], "repeat_penalty": config["repetition_penalty"],
+            "seed": config.get("seed"),
+        }
+        if response_format is not None:
+            call_kwargs["response_format"] = response_format
+        started_at = time.perf_counter()
+        payload = self._model.create_chat_completion(**call_kwargs)
+        latency = time.perf_counter() - started_at
+        choice = payload["choices"][0]
+        usage = payload.get("usage", {})
+        return ModelResponse(
+            text=str(choice["message"]["content"]), model_id=self.model_id,
+            model_revision=self.model_revision, finish_reason=choice.get("finish_reason"),
+            prompt_tokens=_optional_int(usage.get("prompt_tokens")),
+            completion_tokens=_optional_int(usage.get("completion_tokens")),
+            latency_seconds=latency,
+            metadata={"backend": "llama_cpp_multimodal", "backend_version": _package_version("llama-cpp-python"),
+                      "model_file": self.filename, "mmproj_file": self.mmproj_filename,
+                      "mmproj_path": str(self.mmproj_path), "mmproj_revision": self.mmproj_revision,
+                      "resolved_model_path": str(self._resolved_model_path),
+                      "n_ctx": self.n_ctx, "n_gpu_layers": self.n_gpu_layers,
+                      "n_batch": self.n_batch, "flash_attn": self.flash_attn,
+                      "generation_parameters": config},
+        )
+
+    def unload_model(self) -> None:
+        super().unload_model()
+        self._chat_handler = None
 
 
 def _optional_int(value: Any) -> int | None:

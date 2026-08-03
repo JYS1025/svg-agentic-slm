@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from typing import Literal
 from typing import Any
 
 
@@ -18,3 +19,11 @@ class ModelResponse:
     completion_tokens: int | None = None
     latency_seconds: float | None = None
     metadata: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass(frozen=True)
+class ImageInput:
+    """One immutable image supplied to a multimodal model call."""
+
+    mime_type: Literal["image/png"]
+    data: bytes

@@ -8,7 +8,7 @@ import re
 from lxml import etree
 
 from svg_agentic_slm.svg.base import BaseValidator
-from svg_agentic_slm.svg.schemas import SVGValidationResult
+from svg_agentic_slm.svg.schemas import SVGDiagnostic, SVGValidationResult
 
 logger = logging.getLogger(__name__)
 
@@ -136,6 +136,7 @@ class SVGValidator(BaseValidator):
 
         if not svg_content or not svg_content.strip():
             result.errors = ["SVG content is empty."]
+            result.diagnostics = [SVGDiagnostic("empty_svg", result.errors[0])]
             return result
 
         result.has_svg_tag = bool(re.search(r"<(?:[\w.-]+:)?svg\b", svg_content))
@@ -161,6 +162,7 @@ class SVGValidator(BaseValidator):
             errors.append(f"XML parsing error: {exc}")
             result.errors = errors
             result.warnings = warnings
+            result.diagnostics = _build_diagnostics(errors, warnings)
             return result
 
         root_name = etree.QName(root).localname
@@ -216,7 +218,36 @@ class SVGValidator(BaseValidator):
         result.errors = errors
         result.warnings = warnings
         result.is_valid = not errors
+        result.diagnostics = _build_diagnostics(errors, warnings)
         return result
+
+
+def _build_diagnostics(errors: list[str], warnings: list[str]) -> list[SVGDiagnostic]:
+    def code(message: str) -> str:
+        lowered = message.lower()
+        if "xml parsing" in lowered:
+            return "xml_parse_error"
+        if "missing <svg>" in lowered:
+            return "missing_svg_root"
+        if "root element" in lowered:
+            return "invalid_root"
+        if "namespace" in lowered:
+            return "invalid_namespace"
+        if "doctype" in lowered:
+            return "unsafe_doctype"
+        if "element is not allowed" in lowered:
+            return "unsafe_element"
+        if "reference" in lowered or "uri" in lowered or "url" in lowered:
+            return "external_reference"
+        if "css" in lowered or "style" in lowered:
+            return "unsafe_css"
+        return "unsafe_attribute"
+
+    return [
+        SVGDiagnostic(code(message), message, "error") for message in errors
+    ] + [
+        SVGDiagnostic(code(message), message, "warning") for message in warnings
+    ]
 
 
 def _check_url_references(value: str, errors: list[str]) -> None:

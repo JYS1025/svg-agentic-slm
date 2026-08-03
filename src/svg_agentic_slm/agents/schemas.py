@@ -12,6 +12,48 @@ from dataclasses import dataclass, field
 from typing import Any, Literal
 
 from svg_agentic_slm.models.schemas import ModelResponse
+from svg_agentic_slm.models.schemas import ImageInput
+from svg_agentic_slm.svg.schemas import SVGDiagnostic, SVGLabelingResult
+
+CriticStatus = Literal["pass", "revise", "invalid"]
+CriticCategory = Literal["validity", "content", "layout", "shape", "style"]
+CriticSeverity = Literal["critical", "major", "minor"]
+CriticScope = Literal["global", "object", "part"]
+
+
+@dataclass(frozen=True)
+class CriticIssue:
+    category: CriticCategory
+    type: str
+    severity: CriticSeverity
+    scope: CriticScope
+    target_ids: list[str]
+    observed: str
+    expected: str
+    fix: str
+
+
+@dataclass(frozen=True)
+class CriticInput:
+    attempt_id: str
+    instruction: str
+    canonical_svg: str
+    render_png: ImageInput
+    labeling: SVGLabelingResult
+    render_width: int = 256
+    render_height: int = 256
+
+
+@dataclass
+class CriticEvidence:
+    attempt_id: str
+    png: bytes
+    labeling: SVGLabelingResult
+    diagnostics: list[SVGDiagnostic] = field(default_factory=list)
+    renderer: str = "cairosvg"
+    renderer_version: str | None = None
+    width: int = 256
+    height: int = 256
 
 
 @dataclass
@@ -42,6 +84,29 @@ class ModelCallTrace:
 
 
 @dataclass
+class CriticCallTrace:
+    """Complete trace of one Critic model invocation, including failed retries."""
+
+    critic_call_id: str
+    retry_index: int
+    response: ModelResponse
+    prompt: str
+    system_prompt: str
+    response_format: dict[str, Any]
+    generation_parameters: dict[str, Any] = field(default_factory=dict)
+    validation_success: bool = False
+    validation_error: str | None = None
+
+
+class CriticTraceError(RuntimeError):
+    """Critic failure that retains model-call traces for durable diagnostics."""
+
+    def __init__(self, message: str, model_calls: list[CriticCallTrace]) -> None:
+        super().__init__(message)
+        self.model_calls = model_calls
+
+
+@dataclass
 class GeneratorOutput:
     """Typed output of one initial generation or revision operation."""
 
@@ -58,6 +123,8 @@ class GeneratorOutput:
     context_item_ids: list[str] = field(default_factory=list)
     truncated_context_item_ids: list[str] = field(default_factory=list)
     metadata: dict[str, Any] = field(default_factory=dict)
+    critic_evidence: CriticEvidence | None = None
+    critic_error_calls: list[CriticCallTrace] = field(default_factory=list)
 
 
 @dataclass
@@ -111,6 +178,12 @@ class CriticFeedback:
     model_id: str | None = None
     model_revision: str | None = None
     prompt_version: str | None = None
+    status: CriticStatus | None = None
+    structured_issues: list[CriticIssue] = field(default_factory=list)
+    preserve: list[str] = field(default_factory=list)
+    schema_version: int = 1
+    metadata: dict[str, Any] = field(default_factory=dict)
+    model_calls: list[CriticCallTrace] = field(default_factory=list)
 
 
 @dataclass
@@ -139,6 +212,19 @@ def validate_critic_feedback(value: object) -> CriticFeedback:
         raise TypeError("CriticFeedback.matches_instruction must be a boolean.")
     _validate_string_list(value.issues, "CriticFeedback.issues")
     _validate_string_list(value.suggestions, "CriticFeedback.suggestions")
+    _validate_string_list(value.preserve, "CriticFeedback.preserve")
+    if value.status not in (None, "pass", "revise", "invalid"):
+        raise ValueError("CriticFeedback.status must be pass, revise, invalid, or None.")
+    if not isinstance(value.schema_version, int) or value.schema_version < 1:
+        raise ValueError("CriticFeedback.schema_version must be a positive integer.")
+    if any(not isinstance(item, CriticIssue) for item in value.structured_issues):
+        raise TypeError("CriticFeedback.structured_issues must contain CriticIssue values.")
+    if value.status == "pass" and (value.structured_issues or value.preserve):
+        raise ValueError("pass feedback cannot contain issues or preserve entries.")
+    if value.status == "revise" and not value.structured_issues:
+        raise ValueError("revise feedback must contain at least one structured issue.")
+    if not isinstance(value.metadata, dict):
+        raise TypeError("CriticFeedback.metadata must be a dictionary.")
     if not isinstance(value.critic_type, str) or not value.critic_type.strip():
         raise TypeError("CriticFeedback.critic_type must be a non-empty string.")
     for field_name in (
