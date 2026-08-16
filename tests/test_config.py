@@ -8,6 +8,7 @@ import pytest
 import yaml
 
 from svg_agentic_slm.factories.generation import _build_model_backend
+from svg_agentic_slm.factories.generation import validate_model_config_security
 from svg_agentic_slm.models.gemma_loader import GemmaModelBackend
 from svg_agentic_slm.models.generation_config import GenerationConfig
 from svg_agentic_slm.models.llama_cpp_backend import (
@@ -16,6 +17,7 @@ from svg_agentic_slm.models.llama_cpp_backend import (
     DEFAULT_MODEL_REVISION,
     LlamaCppModelBackend,
 )
+from svg_agentic_slm.models.openai_compatible_backend import OpenAICompatibleBackend
 from svg_agentic_slm.utils.config import load_yaml_config, merge_configs
 
 
@@ -85,6 +87,45 @@ def test_model_backend_factory_uses_compatibility_checkpoint_defaults() -> None:
     assert backend.model_id == DEFAULT_MODEL_ID
     assert backend.filename == DEFAULT_MODEL_FILE
     assert backend.model_revision == DEFAULT_MODEL_REVISION
+
+
+def test_model_backend_factory_builds_openai_compatible_backend() -> None:
+    generation_config = GenerationConfig(temperature=0.2)
+
+    backend = _build_model_backend(
+        {
+            "backend_type": "openai_compatible",
+            "base_url": "http://localhost:8000/v1",
+            "model_id": "svg-model@revision",
+            "revision": "revision",
+            "engine": "vllm",
+            "api_key_env": "MODEL_API_KEY",
+            "timeout_seconds": 30,
+            "max_retries": 0,
+        },
+        generation_config,
+    )
+
+    assert isinstance(backend, OpenAICompatibleBackend)
+    assert backend.model_id == "svg-model@revision"
+    assert backend.model_revision == "revision"
+    assert backend.engine == "vllm"
+    assert backend.generation_config is generation_config
+
+
+def test_model_config_rejects_inline_credentials() -> None:
+    with pytest.raises(ValueError, match="api_key_env"):
+        validate_model_config_security({"api_key": "must-not-be-persisted"})
+
+    with pytest.raises(ValueError, match="model.metadata.access_token"):
+        validate_model_config_security(
+            {"metadata": {"access_token": "must-not-be-persisted"}}
+        )
+
+    with pytest.raises(ValueError, match="model.headers.Authorization"):
+        validate_model_config_security(
+            {"headers": {"Authorization": "Bearer must-not-be-persisted"}}
+        )
 
 
 @pytest.mark.parametrize(

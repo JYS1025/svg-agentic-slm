@@ -143,6 +143,11 @@ def _persist_generation_artifacts_locked(
                 "config_paths": runtime.config_paths,
                 "generation_config": runtime.generation_config,
                 "model_config": runtime.model_config,
+                "critic_model_config": (
+                    getattr(runtime, "critic_model_config", None)
+                    if runtime.enable_critic and runtime.critic_type in {"llm", "both"}
+                    else None
+                ),
                 "rag_config": runtime.rag_config if runtime.enable_rag else {},
                 "render_config": runtime.render_config,
                 "planned_artifacts": {

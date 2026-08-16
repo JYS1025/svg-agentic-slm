@@ -98,6 +98,102 @@ def test_build_generation_runtime_from_sibling_configs(tmp_path: Path) -> None:
     assert runtime.config_paths["paths"].endswith("paths.yaml")
 
 
+def test_build_generation_runtime_uses_explicit_model_profile(tmp_path: Path) -> None:
+    output_dir = tmp_path / "outputs" / "generations"
+    _write_generation_config_bundle(tmp_path, output_dir)
+    profile_path = tmp_path / "profiles" / "alternate.yaml"
+    profile_path.parent.mkdir()
+    profile_path.write_text(
+        "model:\n  backend_type: llama_cpp\n  model_id: alternate-model\n",
+        encoding="utf-8",
+    )
+
+    runtime = build_generation_runtime(
+        config_path=tmp_path / "generation.yaml",
+        model_config_path=profile_path,
+        prompt="Draw a circle.",
+    )
+
+    assert runtime.model_config["model_id"] == "alternate-model"
+    assert runtime.config_paths["model"] == str(profile_path)
+
+
+def test_generate_switches_model_profiles_without_source_changes(tmp_path: Path) -> None:
+    output_dir = tmp_path / "outputs" / "generations"
+    _write_generation_config_bundle(tmp_path, output_dir)
+    profiles = []
+    for model_id in ("model-a@revision", "model-b@revision"):
+        profile_path = tmp_path / f"{model_id.split('@', 1)[0]}.yaml"
+        profile_path.write_text(
+            yaml.safe_dump({"model": {"model_id": model_id}}),
+            encoding="utf-8",
+        )
+        profiles.append(profile_path)
+
+    for profile_path in profiles:
+        result = runner.invoke(
+            app,
+            [
+                "generate",
+                "Draw a circle.",
+                "--config",
+                str(tmp_path / "generation.yaml"),
+                "--model-config",
+                str(profile_path),
+                "--no-render",
+            ],
+        )
+        assert result.exit_code == 0
+
+    metadata = [
+        json.loads(path.read_text(encoding="utf-8"))
+        for path in sorted(output_dir.glob("*.json"))
+    ]
+    assert {item["runtime"]["model_config"]["model_id"] for item in metadata} == {
+        "model-a@revision",
+        "model-b@revision",
+    }
+
+
+def test_runtime_loads_separate_model_only_for_llm_critic(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    output_dir = tmp_path / "outputs" / "generations"
+    _write_generation_config_bundle(tmp_path, output_dir)
+    model_path = tmp_path / "model.yaml"
+    model_path.write_text(
+        yaml.safe_dump(
+            {
+                "model": {"model_id": "generator-model"},
+                "critic_model": {"model_id": "critic-model"},
+            }
+        ),
+        encoding="utf-8",
+    )
+    built: list[tuple[str, _FakeModelBackend]] = []
+
+    def build_backend(model_config: dict, generation_config: object) -> _FakeModelBackend:
+        backend = _FakeModelBackend()
+        built.append((model_config["model_id"], backend))
+        return backend
+
+    monkeypatch.setattr(
+        "svg_agentic_slm.factories.generation._build_model_backend",
+        build_backend,
+    )
+
+    runtime = build_generation_runtime(
+        config_path=tmp_path / "generation.yaml",
+        prompt="Draw a circle.",
+        enable_critic=True,
+        overrides={"generation": {"orchestration": {"critic_type": "llm"}}},
+    )
+
+    assert [model_id for model_id, _ in built] == ["generator-model", "critic-model"]
+    assert runtime.critic_model_config == {"model_id": "critic-model"}
+
+
 def test_composite_critic_validates_each_child_before_aggregation() -> None:
     critic = CompositeCritic([_MalformedBooleanCritic()])
 
