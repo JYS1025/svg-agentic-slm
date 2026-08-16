@@ -45,6 +45,7 @@ from svg_agentic_slm.models.llama_cpp_backend import (
     DEFAULT_MODEL_ID,
     LlamaCppModelBackend,
 )
+from svg_agentic_slm.models.openai_compatible_backend import OpenAICompatibleBackend
 from svg_agentic_slm.rag.base import BaseRetriever
 from svg_agentic_slm.rag.chroma_store import ChromaRetriever
 from svg_agentic_slm.rag.document_loader import load_svg_corpus
@@ -80,6 +81,7 @@ class GenerationRuntime:
     critic_type: str | None
     render_config: dict[str, Any]
     run_id: str
+    critic_model_config: dict[str, Any] | None = None
 
 
 class CompositeCritic(BaseCritic):
@@ -131,6 +133,7 @@ def build_generation_runtime(
     enable_rag: bool = False,
     enable_critic: bool = False,
     output_path: str | Path | None = None,
+    model_config_path: str | Path | None = None,
     overrides: dict[str, Any] | None = None,
 ) -> GenerationRuntime:
     """Build the config-driven runtime for the generate command."""
@@ -140,7 +143,11 @@ def build_generation_runtime(
         generation_wrapper = merge_nested_dicts(generation_wrapper, overrides)
     generation_config = generation_wrapper.get("generation", {})
 
-    model_path = _resolve_related_config(config_path, "model.yaml")
+    model_path = (
+        Path(model_config_path)
+        if model_config_path is not None
+        else _resolve_related_config(config_path, "model.yaml")
+    )
     rag_path = _resolve_related_config(config_path, "rag.yaml")
     paths_path = _resolve_related_config(config_path, "paths.yaml")
 
@@ -148,11 +155,27 @@ def build_generation_runtime(
     rag_wrapper = load_yaml_config(rag_path)
     paths_wrapper = load_yaml_config(paths_path)
     if overrides:
-        model_wrapper = merge_nested_dicts(model_wrapper, {"model": overrides.get("model", {})})
+        model_overrides = {
+            key: overrides[key]
+            for key in ("model", "critic_model")
+            if key in overrides
+        }
+        if model_overrides:
+            model_wrapper = merge_nested_dicts(model_wrapper, model_overrides)
         rag_wrapper = merge_nested_dicts(rag_wrapper, {"rag": overrides.get("rag", {})})
         paths_wrapper = merge_nested_dicts(paths_wrapper, {"paths": overrides.get("paths", {})})
 
     model_config = model_wrapper.get("model", {})
+    critic_model_config = model_wrapper.get("critic_model")
+    if not isinstance(model_config, dict):
+        raise ValueError("model must be a mapping.")
+    if critic_model_config is not None and not isinstance(critic_model_config, dict):
+        raise ValueError("critic_model must be a mapping when provided.")
+    if critic_model_config == {}:
+        raise ValueError("critic_model must not be empty when provided.")
+    validate_model_config_security(model_config)
+    if critic_model_config is not None:
+        validate_model_config_security(critic_model_config)
     rag_config = rag_wrapper.get("rag", {})
     validate_rag_config_security(rag_config)
     paths_config = paths_wrapper.get("paths", {})
@@ -165,6 +188,8 @@ def build_generation_runtime(
     rag_enabled = enable_rag or orchestration_config.get("enable_rag", False)
     critic_enabled = enable_critic or orchestration_config.get("enable_critic", False)
     critic_type = orchestration_config.get("critic_type", "rule") if critic_enabled else None
+    if critic_type not in {None, "rule", "llm", "both"}:
+        raise ValueError(f"Unsupported critic_type: {critic_type}")
 
     output_dir = Path(paths_config.get("outputs", {}).get("generations", "./outputs/generations"))
     render_output_dir = Path(paths_config.get("outputs", {}).get("renders", "./outputs/renders"))
@@ -189,6 +214,30 @@ def build_generation_runtime(
     model_backend = _build_model_backend(model_config, generation_params)
     model_backend.load_model()
 
+    critic_model_backend = model_backend
+    if (
+        critic_enabled
+        and critic_type in {"llm", "both"}
+        and critic_model_config is not None
+    ):
+        separate_critic_backend: BaseModelBackend | None = None
+        try:
+            separate_critic_backend = _build_model_backend(
+                critic_model_config,
+                generation_params,
+            )
+            separate_critic_backend.load_model()
+        except Exception:
+            for backend in (separate_critic_backend, model_backend):
+                if backend is None:
+                    continue
+                try:
+                    backend.unload_model()
+                except Exception:
+                    logger.exception("Failed to unload a model after runtime setup failure.")
+            raise
+        critic_model_backend = separate_critic_backend
+
     generator = GeneratorAgent(
         model_backend,
         max_svg_length=svg_settings.get("max_svg_length", 8192),
@@ -198,7 +247,11 @@ def build_generation_runtime(
         ),
     )
     validator = SVGValidator()
-    critic = _build_critic(critic_type, validator, model_backend) if critic_enabled else None
+    critic = (
+        _build_critic(critic_type, validator, critic_model_backend)
+        if critic_enabled
+        else None
+    )
     renderer = _build_renderer(render_config) if render_config["enabled"] else None
 
     orchestrator = SVGGenerationOrchestrator(
@@ -235,6 +288,7 @@ def build_generation_runtime(
         render_output_path=artifact_paths["render"],
         generation_config=generation_config,
         model_config=model_config,
+        critic_model_config=critic_model_config,
         rag_config=_redact_sensitive_config(rag_config),
         paths_config=paths_config,
         config_paths={
@@ -285,7 +339,10 @@ def _build_model_backend(
     model_config: dict[str, Any],
     generation_config: GenerationConfig,
 ) -> BaseModelBackend:
-    supported_keys = {
+    if not all(isinstance(key, str) for key in model_config):
+        raise ValueError("Model config keys must be strings.")
+    backend_type = str(model_config.get("backend_type", "llama_cpp")).strip().lower()
+    llama_cpp_keys = {
         "backend_type",
         "chat_format",
         "conversion_runtime",
@@ -303,14 +360,42 @@ def _build_model_backend(
         "use_mmap",
         "verbose",
     }
+    openai_compatible_keys = {
+        "allow_insecure_http",
+        "api_key_env",
+        "backend_type",
+        "base_url",
+        "engine",
+        "max_retries",
+        "model_id",
+        "revision",
+        "timeout_seconds",
+    }
+    if backend_type in {"llama_cpp", "gemma"}:
+        supported_keys = llama_cpp_keys
+    elif backend_type == "openai_compatible":
+        supported_keys = openai_compatible_keys
+    else:
+        raise ValueError(f"Unsupported model backend_type: {backend_type}")
+
     unknown_keys = set(model_config) - supported_keys
     if unknown_keys:
         names = ", ".join(sorted(unknown_keys))
         raise ValueError(f"Unknown model config option(s): {names}")
 
-    backend_type = model_config.get("backend_type", "llama_cpp")
-    if backend_type not in ("llama_cpp", "gemma"):
-        raise ValueError(f"Unsupported model backend_type: {backend_type}")
+    if backend_type == "openai_compatible":
+        return OpenAICompatibleBackend(
+            base_url=model_config.get("base_url", ""),
+            model_id=model_config.get("model_id", ""),
+            api_key_env=model_config.get("api_key_env"),
+            model_revision=model_config.get("revision"),
+            engine=model_config.get("engine", ""),
+            timeout_seconds=model_config.get("timeout_seconds", 120.0),
+            max_retries=model_config.get("max_retries", 0),
+            allow_insecure_http=model_config.get("allow_insecure_http", False),
+            generation_config=generation_config,
+        )
+
     backend_class = LlamaCppModelBackend if backend_type == "llama_cpp" else GemmaModelBackend
     return backend_class(
         model_id=model_config.get("model_id", DEFAULT_MODEL_ID),
@@ -330,6 +415,18 @@ def _build_model_backend(
         chat_format=model_config.get("chat_format"),
         generation_config=generation_config,
     )
+
+
+def validate_model_config_security(model_config: dict[str, Any]) -> None:
+    """Reject inline credentials before config is logged or persisted."""
+    if not all(isinstance(key, str) for key in model_config):
+        raise ValueError("Model config keys must be strings.")
+    sensitive_paths = _find_sensitive_config_paths(model_config, prefix="model")
+    if sensitive_paths:
+        names = ", ".join(sensitive_paths)
+        raise ValueError(
+            f"Inline model credentials are not allowed ({names}); use api_key_env."
+        )
 
 
 def build_rag_retriever(
@@ -463,12 +560,23 @@ def _is_sensitive_config_key(key: str) -> bool:
     exact_names = {
         "api_key",
         "apikey",
+        "authorization",
+        "credential",
+        "credentials",
         "token",
         "password",
         "secret",
         "private_key",
     }
-    suffixes = ("_api_key", "_token", "_password", "_secret", "_private_key")
+    suffixes = (
+        "_api_key",
+        "_credential",
+        "_credentials",
+        "_token",
+        "_password",
+        "_secret",
+        "_private_key",
+    )
     return normalized in exact_names or normalized.endswith(suffixes)
 
 

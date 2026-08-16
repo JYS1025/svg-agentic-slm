@@ -43,6 +43,11 @@ def generate(
         "-c",
         help="Path to generation config file.",
     ),
+    model_config: Path | None = typer.Option(
+        None,
+        "--model-config",
+        help="Optional model profile. Defaults to model.yaml next to --config.",
+    ),
     output: Path | None = typer.Option(
         None,
         "--output",
@@ -135,6 +140,7 @@ def generate(
             enable_rag=effective_rag,
             enable_critic=enable_critic,
             output_path=output,
+            model_config_path=model_config,
             overrides=cli_overrides,
         )
         if print_generator_parameters:

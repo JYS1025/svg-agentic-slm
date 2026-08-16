@@ -6,7 +6,7 @@ An agentic pipeline utilizing Small Language Models (SLMs) to generate, validate
 
 - **Agentic Generation & Refinement**: Implements an iterative feedback loop where generator agents produce SVG drafts, and rules-based or LLM-based critic agents analyze and refine the output to fix visual errors or syntax anomalies.
 - **Retrieval-Augmented Generation (RAG) Contract**: Defines typed, provenance-preserving retrieval inputs and a metadata whitelist; the concrete ChromaDB retrieval backend remains RAG-owned and in progress.
-- **Extensible LLM Backend**: Uses a backend interface with a pinned CUDA llama.cpp/Gemma 4 12B Q4_0 local profile and injectable fake backends for contract tests.
+- **Extensible LLM Backend**: Uses a backend interface with a pinned CUDA llama.cpp/Gemma 4 12B Q4_0 local profile, optional vLLM or llama-server OpenAI-compatible profiles, and injectable fake backends for contract tests.
 - **SVG Processing Engine**: Provides secure XML parsing, active/external-content rejection, format normalization, and raster rendering.
 - **Artifact Evaluation Framework**: Reports validity, rendering, and latency from generated artifacts; dataset-backed semantic and visual evaluation remains in progress.
 
@@ -23,6 +23,9 @@ An agentic pipeline utilizing Small Language Models (SLMs) to generate, validate
 - [SVG Safety Boundaries](docs/svg-safety-boundaries.md):
   shared validation policy, enforcement points, compatibility rules, and
   vector-collection migration guidance.
+- [Model Backend Profiles](docs/model-backend-profiles.md):
+  source-compatible model switching through validated OpenAI-compatible
+  endpoints, including Generator and Critic profile rules.
 - [Generator Cross-Team Contract and Research Assumptions](docs/generator-cross-team-contract.md):
   shared Generator assumptions that affect RAG, Critic, Orchestration, Artifact,
   Validation, and Evaluation workstreams.
@@ -136,6 +139,7 @@ svg-agentic-slm/
 │   │   ├── base.py         # Abstract base classes for model backends
 │   │   ├── gemma_loader.py # Compatibility alias for the llama.cpp Gemma backend
 │   │   ├── llama_cpp_backend.py # Pinned local GGUF inference backend
+│   │   ├── openai_compatible_backend.py # Validated external model-server backend
 │   │   ├── schemas.py      # Typed model response
 │   │   └── generation_config.py # Structured configurations passed down to model backends
 │   │
