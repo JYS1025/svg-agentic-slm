@@ -33,6 +33,7 @@ class GenerationArtifactRuntime(Protocol):
     render_output_path: Path | None
     generation_config: dict[str, Any]
     model_config: dict[str, Any]
+    critic_model_config: dict[str, Any] | None
     rag_config: dict[str, Any]
     config_paths: dict[str, str]
     enable_rag: bool
@@ -144,8 +145,11 @@ def _persist_generation_artifacts_locked(
                 "generation_config": runtime.generation_config,
                 "model_config": runtime.model_config,
                 "critic_model_config": (
-                    getattr(runtime, "critic_model_config", None)
-                    if runtime.enable_critic and runtime.critic_type in {"llm", "both"}
+                    _redact_sensitive_config(
+                        getattr(runtime, "critic_model_config", None)
+                    )
+                    if runtime.enable_critic
+                    and runtime.critic_type in {"llm", "both", "vlm", "rule_vlm"}
                     else None
                 ),
                 "rag_config": runtime.rag_config if runtime.enable_rag else {},
@@ -330,6 +334,49 @@ def _serialize_feedback(feedback: CriticFeedback) -> dict[str, Any]:
         "model_revision": feedback.model_revision,
         "prompt_version": feedback.prompt_version,
     }
+
+
+def _redact_sensitive_config(value: Any) -> Any:
+    """Redact inline secrets while preserving environment-variable names."""
+    if isinstance(value, dict):
+        return {
+            str(key): (
+                "[REDACTED]"
+                if _is_sensitive_config_key(str(key))
+                else _redact_sensitive_config(nested)
+            )
+            for key, nested in value.items()
+        }
+    if isinstance(value, list):
+        return [_redact_sensitive_config(item) for item in value]
+    return value
+
+
+def _is_sensitive_config_key(key: str) -> bool:
+    normalized = key.strip().lower().replace("-", "_")
+    if normalized.endswith("_env"):
+        return False
+    exact_names = {
+        "api_key",
+        "apikey",
+        "authorization",
+        "credential",
+        "credentials",
+        "token",
+        "password",
+        "secret",
+        "private_key",
+    }
+    suffixes = (
+        "_api_key",
+        "_credential",
+        "_credentials",
+        "_token",
+        "_password",
+        "_secret",
+        "_private_key",
+    )
+    return normalized in exact_names or normalized.endswith(suffixes)
 
 
 def _write_optional_trace_text(

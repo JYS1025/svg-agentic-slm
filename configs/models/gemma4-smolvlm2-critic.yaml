@@ -1,0 +1,33 @@
+# Gemma 4 text-to-SVG Generator with a dedicated SmolVLM2 visual Critic.
+model:
+  backend_type: "llama_cpp"
+  model_id: "lmstudio-community/gemma-4-12B-it-QAT-GGUF"
+  filename: "gemma-4-12B-it-QAT-Q4_0.gguf"
+  revision: "291406f49e16eff811c85ad8884d375f34138663"
+  upstream_model_id: "google/gemma-4-12B-it-qat-q4_0-unquantized"
+  quantization: "Q4_0"
+  quantization_provider: "LM Studio Community"
+  conversion_runtime: "llama.cpp b9518"
+  n_gpu_layers: -1
+  n_ctx: 8192
+  n_batch: 512
+  flash_attn: true
+  use_mmap: true
+  verbose: false
+  chat_format: null
+  measure_streaming_metrics: true
+
+critic_model:
+  backend_type: "transformers_vlm"
+  model_id: "HuggingFaceTB/SmolVLM2-2.2B-Instruct"
+  revision: "482adb537c021c86670beed01cd58990d01e72e4"
+  device: "cuda:1"
+  dtype: "bfloat16"
+  attn_implementation: "sdpa"
+  max_new_tokens: 384
+  do_sample: false
+  local_files_only: false
+  trust_remote_code: false
+  render_width: 512
+  render_height: 512
+  background_color: "#ffffff"

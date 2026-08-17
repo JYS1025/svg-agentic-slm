@@ -22,6 +22,7 @@ from svg_agentic_slm.agents.llm_critic import LLMCritic
 from svg_agentic_slm.agents.orchestrator import SVGGenerationOrchestrator
 from svg_agentic_slm.agents.rag_agent import RAGAgent
 from svg_agentic_slm.agents.rule_critic import RuleBasedCritic
+from svg_agentic_slm.agents.vlm_critic import VLMCritic
 from svg_agentic_slm.agents.schemas import (
     CriticFeedback,
     GenerationRequest,
@@ -46,6 +47,7 @@ from svg_agentic_slm.models.llama_cpp_backend import (
     LlamaCppModelBackend,
 )
 from svg_agentic_slm.models.openai_compatible_backend import OpenAICompatibleBackend
+from svg_agentic_slm.models.transformers_vlm_backend import TransformersVLMBackend
 from svg_agentic_slm.rag.base import BaseRetriever
 from svg_agentic_slm.rag.chroma_store import ChromaRetriever
 from svg_agentic_slm.rag.document_loader import load_svg_corpus
@@ -83,6 +85,7 @@ class GenerationRuntime:
     render_config: dict[str, Any]
     run_id: str
     critic_model_config: dict[str, Any] | None = None
+    critic_model_backend: BaseModelBackend | None = None
 
 
 class CompositeCritic(BaseCritic):
@@ -103,12 +106,16 @@ class CompositeCritic(BaseCritic):
             validate_critic_feedback(critic.critique(instruction, svg_content))
             for critic in self._critics
         ]
-        raw_sections = [
-            f"[{item.critic_type}] score={item.score:.1f} valid={item.is_valid} "
-            f"matches_instruction={item.matches_instruction} "
-            f"issues={item.issues} suggestions={item.suggestions}"
-            for item in feedback_items
-        ]
+        raw_sections: list[str] = []
+        for item in feedback_items:
+            section = (
+                f"[{item.critic_type}] score={item.score:.1f} valid={item.is_valid} "
+                f"matches_instruction={item.matches_instruction} "
+                f"issues={item.issues} suggestions={item.suggestions}"
+            )
+            if item.raw_response is not None:
+                section += f"\n[{item.critic_type}] raw_response:\n{item.raw_response}"
+            raw_sections.append(section)
         return validate_critic_feedback(
             CriticFeedback(
                 score=sum(item.score for item in feedback_items) / len(feedback_items),
@@ -122,6 +129,15 @@ class CompositeCritic(BaseCritic):
                 raw_response="\n".join(raw_sections),
                 critic_version="+".join(
                     item.critic_version or "unversioned" for item in feedback_items
+                ),
+                model_id=_join_optional_strings(
+                    item.model_id for item in feedback_items
+                ),
+                model_revision=_join_optional_strings(
+                    item.model_revision for item in feedback_items
+                ),
+                prompt_version=_join_optional_strings(
+                    item.prompt_version for item in feedback_items
                 ),
             ),
         )
@@ -189,8 +205,17 @@ def build_generation_runtime(
     rag_enabled = enable_rag or orchestration_config.get("enable_rag", False)
     critic_enabled = enable_critic or orchestration_config.get("enable_critic", False)
     critic_type = orchestration_config.get("critic_type", "rule") if critic_enabled else None
-    if critic_type not in {None, "rule", "llm", "both"}:
+    if critic_type not in {None, "rule", "llm", "both", "vlm", "rule_vlm"}:
         raise ValueError(f"Unsupported critic_type: {critic_type}")
+    if critic_type in {"vlm", "rule_vlm"}:
+        if critic_model_config is None:
+            raise ValueError(f"critic_type={critic_type!r} requires a nonempty critic_model.")
+        critic_backend_type = str(critic_model_config.get("backend_type", "")).strip().lower()
+        if critic_backend_type != "transformers_vlm":
+            raise ValueError(
+                f"critic_type={critic_type!r} requires "
+                "critic_model.backend_type='transformers_vlm'."
+            )
 
     output_dir = Path(paths_config.get("outputs", {}).get("generations", "./outputs/generations"))
     render_output_dir = Path(paths_config.get("outputs", {}).get("renders", "./outputs/renders"))
@@ -220,7 +245,7 @@ def build_generation_runtime(
     critic_model_backend = model_backend
     if (
         critic_enabled
-        and critic_type in {"llm", "both"}
+        and critic_type in {"llm", "both", "vlm", "rule_vlm"}
         and critic_model_config is not None
     ):
         separate_critic_backend: BaseModelBackend | None = None
@@ -251,7 +276,12 @@ def build_generation_runtime(
     )
     validator = SVGValidator()
     critic = (
-        _build_critic(critic_type, validator, critic_model_backend)
+        _build_critic(
+            critic_type,
+            validator,
+            critic_model_backend,
+            critic_model_config=critic_model_config,
+        )
         if critic_enabled
         else None
     )
@@ -293,6 +323,9 @@ def build_generation_runtime(
         generation_config=generation_config,
         model_config=model_config,
         critic_model_config=critic_model_config,
+        critic_model_backend=(
+            critic_model_backend if critic_model_backend is not model_backend else None
+        ),
         rag_config=_redact_sensitive_config(rag_config),
         paths_config=paths_config,
         config_paths={
@@ -312,6 +345,13 @@ def build_generation_runtime(
 
 def close_generation_runtime(runtime: GenerationRuntime) -> None:
     """Release model resources owned by an assembled generation runtime."""
+    if (
+        runtime.critic_model_backend is not None
+        and runtime.critic_model_backend is not runtime.model_backend
+    ):
+        critic_unload = getattr(runtime.critic_model_backend, "unload_model", None)
+        if callable(critic_unload):
+            critic_unload()
     unload = getattr(runtime.model_backend, "unload_model", None)
     if callable(unload):
         unload()
@@ -331,6 +371,8 @@ def _build_critic(
     critic_type: str | None,
     validator: SVGValidator,
     model_backend: BaseModelBackend,
+    *,
+    critic_model_config: dict[str, Any] | None = None,
 ) -> BaseCritic:
     if critic_type == "rule":
         return RuleBasedCritic(validator)
@@ -343,6 +385,21 @@ def _build_critic(
                 LLMCritic(model_backend),
             ]
         )
+    if critic_type in {"vlm", "rule_vlm"}:
+        if not isinstance(model_backend, TransformersVLMBackend):
+            raise TypeError("VLM critics require a TransformersVLMBackend.")
+        settings = critic_model_config or {}
+        vlm_critic = VLMCritic(
+            model_backend,
+            CairoSVGRenderer(),
+            render_width=settings.get("render_width", 512),
+            render_height=settings.get("render_height", 512),
+            background_color=settings.get("background_color", "#ffffff"),
+            max_new_tokens=settings.get("max_new_tokens", 384),
+        )
+        if critic_type == "vlm":
+            return vlm_critic
+        return CompositeCritic([RuleBasedCritic(validator), vlm_critic])
     raise ValueError(f"Unsupported critic_type: {critic_type}")
 
 
@@ -383,10 +440,28 @@ def _build_model_backend(
         "revision",
         "timeout_seconds",
     }
+    transformers_vlm_keys = {
+        "attn_implementation",
+        "backend_type",
+        "background_color",
+        "device",
+        "do_sample",
+        "dtype",
+        "local_files_only",
+        "max_new_tokens",
+        "model_id",
+        "render_height",
+        "render_width",
+        "revision",
+        "token_env",
+        "trust_remote_code",
+    }
     if backend_type in {"llama_cpp", "gemma"}:
         supported_keys = llama_cpp_keys
     elif backend_type == "openai_compatible":
         supported_keys = openai_compatible_keys
+    elif backend_type == "transformers_vlm":
+        supported_keys = transformers_vlm_keys
     else:
         raise ValueError(f"Unsupported model backend_type: {backend_type}")
 
@@ -407,6 +482,23 @@ def _build_model_backend(
             allow_insecure_http=model_config.get("allow_insecure_http", False),
             generation_config=generation_config,
         )
+    if backend_type == "transformers_vlm":
+        backend_kwargs: dict[str, Any] = {}
+        for config_key, constructor_key in (
+            ("model_id", "model_id"),
+            ("revision", "model_revision"),
+            ("device", "device"),
+            ("dtype", "dtype"),
+            ("attn_implementation", "attn_implementation"),
+            ("max_new_tokens", "max_new_tokens"),
+            ("do_sample", "do_sample"),
+            ("local_files_only", "local_files_only"),
+            ("trust_remote_code", "trust_remote_code"),
+            ("token_env", "token_env"),
+        ):
+            if config_key in model_config:
+                backend_kwargs[constructor_key] = model_config[config_key]
+        return TransformersVLMBackend(**backend_kwargs)
 
     backend_class = LlamaCppModelBackend if backend_type == "llama_cpp" else GemmaModelBackend
     return backend_class(
@@ -691,3 +783,8 @@ def _unique_strings(items: Any) -> list[str]:
             seen.add(item)
             unique_items.append(item)
     return unique_items
+
+
+def _join_optional_strings(items: Any) -> str | None:
+    values = _unique_strings(item for item in items if item)
+    return "+".join(values) or None

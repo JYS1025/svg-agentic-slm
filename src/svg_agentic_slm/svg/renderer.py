@@ -12,6 +12,7 @@ from pathlib import Path
 
 from svg_agentic_slm.svg.base import BaseRenderer
 from svg_agentic_slm.svg.schemas import SVGRenderResult
+from svg_agentic_slm.svg.validator import SVGValidator
 from svg_agentic_slm.utils.atomic import atomic_output_path
 
 logger = logging.getLogger(__name__)
@@ -23,6 +24,40 @@ class CairoSVGRenderer(BaseRenderer):
     Converts SVG strings to PNG (or other raster formats) using
     the CairoSVG library.
     """
+
+    def render_bytes(
+        self,
+        svg_content: str,
+        output_width: int = 512,
+        output_height: int = 512,
+        background_color: str = "#ffffff",
+    ) -> bytes:
+        """Validate and render an SVG to in-memory PNG bytes."""
+        if output_width <= 0 or output_height <= 0:
+            raise ValueError("Render dimensions must be positive.")
+
+        validation = SVGValidator().validate(svg_content)
+        if not validation.is_valid:
+            details = "; ".join(validation.errors) or "unknown validation error"
+            raise ValueError(f"Unsafe or invalid SVG: {details}")
+
+        try:
+            import cairosvg  # type: ignore[import-not-found,import-untyped]
+        except ImportError as exc:
+            raise RuntimeError("CairoSVG is not installed.") from exc
+
+        try:
+            rendered = cairosvg.svg2png(
+                bytestring=svg_content.encode("utf-8"),
+                output_width=output_width,
+                output_height=output_height,
+                background_color=background_color,
+            )
+        except Exception as exc:
+            raise RuntimeError("In-memory SVG rendering failed.") from exc
+        if not isinstance(rendered, (bytes, bytearray)):
+            raise RuntimeError("CairoSVG did not return PNG bytes.")
+        return bytes(rendered)
 
     def render(
         self,
