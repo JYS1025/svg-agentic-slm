@@ -236,6 +236,8 @@ def safe_svg_element_names(
     if max_names <= 0:
         raise ValueError("max_names must be positive.")
 
+    from lxml import etree  # type: ignore[import-untyped]
+
     candidate = svg_content
     wrapped_fragment = False
     validation = SVGValidator().validate(candidate)
@@ -269,6 +271,8 @@ def safe_svg_element_names(
 
 def _parse_svg_xml(svg_content: str) -> etree._Element:
     """Parse XML with the single hardened configuration used by SVG safety checks."""
+    from lxml import etree  # type: ignore[import-untyped]
+
     parser = etree.XMLParser(
         resolve_entities=False,
         no_network=True,
