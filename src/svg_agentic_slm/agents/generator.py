@@ -24,6 +24,7 @@ from svg_agentic_slm.prompts.text_to_svg import (
     build_revision_prompt,
     build_text_to_svg_prompt,
 )
+from svg_agentic_slm.svg.labeler import strip_reserved_labels
 from svg_agentic_slm.svg.normalizer import extract_svg_from_text, normalize_svg
 
 if TYPE_CHECKING:
@@ -91,9 +92,10 @@ class GeneratorAgent(BaseGenerator):
         if feedback.target_attempt_id != previous.attempt_id:
             raise ValueError("Feedback target does not match the previous Generator attempt.")
         selected_context, truncated_ids = self._select_context(context or [])
+        previous_svg = _revision_input_svg(previous, feedback.feedback)
         revision = build_revision_prompt(
             instruction=request.instruction,
-            previous_svg=previous.svg,
+            previous_svg=previous_svg,
             feedback=_format_feedback(feedback.feedback),
         )
         context_prefix = build_retrieval_context(selected_context)
@@ -141,7 +143,13 @@ class GeneratorAgent(BaseGenerator):
         if extracted is None:
             error = "svg_extraction_failed"
         else:
-            svg = normalize_svg(extracted)
+            try:
+                cleaned_svg = strip_reserved_labels(extracted)
+            except Exception:
+                # Preserve the legacy normalization path for malformed model
+                # output. The downstream validator remains authoritative.
+                cleaned_svg = extracted
+            svg = normalize_svg(cleaned_svg)
             if len(svg) > self._max_svg_length:
                 error = "max_svg_length_exceeded"
                 svg = ""
@@ -204,6 +212,39 @@ class GeneratorAgent(BaseGenerator):
 
 
 def _format_feedback(feedback: CriticFeedback) -> str:
+    structured_issues = list(getattr(feedback, "structured_issues", []))
+    if getattr(feedback, "status", None) == "revise" and structured_issues:
+        issue_sections: list[str] = []
+        for index, issue in enumerate(structured_issues, start=1):
+            target_ids = ", ".join(issue.target_ids) or "GLOBAL_OR_MISSING_OBJECT"
+            issue_sections.append(
+                f"Issue {index}:\n"
+                f"  Category: {issue.category}\n"
+                f"  Type: {issue.type}\n"
+                f"  Severity: {issue.severity}\n"
+                f"  Scope: {issue.scope}\n"
+                f"  Target IDs: {target_ids}\n"
+                f"  Observed: {issue.observed}\n"
+                f"  Expected: {issue.expected}\n"
+                f"  Required fix: {issue.fix}"
+            )
+        preserve_items = list(getattr(feedback, "preserve", []))
+        preserve = "\n".join(f"- {item}" for item in preserve_items) or "- None"
+        return (
+            f"Status: revise\n"
+            f"Compatibility score: {feedback.score}\n"
+            "Structured issues:\n"
+            + "\n".join(issue_sections)
+            + "\nPreserve constraints:\n"
+            + preserve
+            + "\nRevision constraints:\n"
+            "- Target IDs refer to data-agent-id values in the labeled previous SVG.\n"
+            "- Make the smallest changes necessary to address the listed issues.\n"
+            "- Preserve unaffected elements, layout, styling, and all explicit preserve items.\n"
+            "- Modify a target and only the adjacent or shared resource nodes required by its fix.\n"
+            "- Do not emit any data-agent-id attributes in the revised SVG."
+        )
+
     issues = "\n".join(f"- {issue}" for issue in feedback.issues) or "- None"
     suggestions = "\n".join(f"- {suggestion}" for suggestion in feedback.suggestions) or "- None"
     return (
@@ -213,3 +254,35 @@ def _format_feedback(feedback: CriticFeedback) -> str:
         f"Issues:\n{issues}\n"
         f"Suggestions:\n{suggestions}"
     )
+
+
+def _revision_input_svg(previous: GeneratorOutput, feedback: CriticFeedback) -> str:
+    """Select canonical or attempt-labeled SVG without changing legacy revisions."""
+    structured_issues = list(getattr(feedback, "structured_issues", []))
+    if getattr(feedback, "status", None) != "revise" or not structured_issues:
+        return previous.svg
+
+    evidence = getattr(previous, "critic_evidence", None)
+    if evidence is None:
+        raise ValueError("Structured revision feedback requires attempt Critic evidence.")
+    if evidence.attempt_id != previous.attempt_id:
+        raise ValueError("Critic evidence does not match the previous Generator attempt.")
+    labeling = evidence.labeling
+    if labeling.attempt_id != previous.attempt_id:
+        raise ValueError("Critic labeling does not match the previous Generator attempt.")
+    if not isinstance(labeling.labeled_svg, str) or not labeling.labeled_svg:
+        raise ValueError("Critic labeling must contain a labeled SVG.")
+
+    allowed_ids = set(labeling.elements)
+    referenced_ids = {
+        target_id
+        for issue in structured_issues
+        for target_id in issue.target_ids
+    }
+    unknown_ids = sorted(referenced_ids - allowed_ids)
+    if unknown_ids:
+        raise ValueError(
+            "Structured revision feedback contains unknown target ID(s): "
+            + ", ".join(unknown_ids)
+        )
+    return labeling.labeled_svg

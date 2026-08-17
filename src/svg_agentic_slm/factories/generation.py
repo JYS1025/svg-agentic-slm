@@ -25,6 +25,7 @@ from svg_agentic_slm.agents.rule_critic import RuleBasedCritic
 from svg_agentic_slm.agents.vlm_critic import VLMCritic
 from svg_agentic_slm.agents.schemas import (
     CriticFeedback,
+    CriticInput,
     GenerationRequest,
     validate_critic_feedback,
 )
@@ -53,12 +54,16 @@ from svg_agentic_slm.rag.chroma_store import ChromaRetriever
 from svg_agentic_slm.rag.document_loader import load_svg_corpus
 from svg_agentic_slm.rag.qdrant_store import QdrantRetriever
 from svg_agentic_slm.svg.renderer import CairoSVGRenderer
+from svg_agentic_slm.svg.gates import SmokeRenderGate
+from svg_agentic_slm.svg.labeler import CriticLabeler
 from svg_agentic_slm.svg.validator import SVGValidator
 from svg_agentic_slm.utils.config import load_yaml_config
 from svg_agentic_slm.utils.paths import get_config_dir
 from svg_agentic_slm.utils.seed import set_seed
 
 logger = logging.getLogger(__name__)
+
+GROUNDED_VISUAL_CRITIC_TYPES = frozenset({"vlm", "rule_vlm", "critic_v1"})
 
 
 @dataclass
@@ -102,10 +107,18 @@ class CompositeCritic(BaseCritic):
         return f"CompositeCritic[{critic_names}]"
 
     def critique(self, instruction: str, svg_content: str) -> CriticFeedback:
-        feedback_items = [
+        return self._combine([
             validate_critic_feedback(critic.critique(instruction, svg_content))
             for critic in self._critics
-        ]
+        ])
+
+    def critique_attempt(self, value: CriticInput) -> CriticFeedback:
+        return self._combine([
+            validate_critic_feedback(critic.critique_attempt(value))
+            for critic in self._critics
+        ])
+
+    def _combine(self, feedback_items: list[CriticFeedback]) -> CriticFeedback:
         raw_sections: list[str] = []
         for item in feedback_items:
             section = (
@@ -116,6 +129,41 @@ class CompositeCritic(BaseCritic):
             if item.raw_response is not None:
                 section += f"\n[{item.critic_type}] raw_response:\n{item.raw_response}"
             raw_sections.append(section)
+
+        statuses = {item.status for item in feedback_items if item.status is not None}
+        if "invalid" in statuses:
+            status = "invalid"
+        elif "revise" in statuses:
+            status = "revise"
+        elif statuses == {"pass"}:
+            status = "pass"
+        else:
+            status = None
+
+        structured_issues = []
+        for item in feedback_items:
+            for issue in item.structured_issues:
+                if issue not in structured_issues:
+                    structured_issues.append(issue)
+        preserve = _unique_strings(
+            entry for item in feedback_items for entry in item.preserve
+        )
+        model_calls = []
+        seen_call_ids: set[str] = set()
+        evidence_provenance: list[dict[str, Any]] = []
+        for item in feedback_items:
+            for call in item.model_calls:
+                if call.critic_call_id not in seen_call_ids:
+                    seen_call_ids.add(call.critic_call_id)
+                    model_calls.append(call)
+            raw_provenance = item.metadata.get("evidence_provenance", [])
+            if isinstance(raw_provenance, dict):
+                raw_provenance = [raw_provenance]
+            if isinstance(raw_provenance, list):
+                for record in raw_provenance:
+                    if isinstance(record, dict) and record not in evidence_provenance:
+                        evidence_provenance.append(dict(record))
+
         return validate_critic_feedback(
             CriticFeedback(
                 score=sum(item.score for item in feedback_items) / len(feedback_items),
@@ -139,6 +187,15 @@ class CompositeCritic(BaseCritic):
                 prompt_version=_join_optional_strings(
                     item.prompt_version for item in feedback_items
                 ),
+                status=status,
+                structured_issues=structured_issues,
+                preserve=preserve,
+                schema_version=max(item.schema_version for item in feedback_items),
+                metadata={
+                    "children": [dict(item.metadata) for item in feedback_items],
+                    "evidence_provenance": evidence_provenance,
+                },
+                model_calls=model_calls,
             ),
         )
 
@@ -204,10 +261,23 @@ def build_generation_runtime(
     orchestration_config = generation_config.get("orchestration", {})
     rag_enabled = enable_rag or orchestration_config.get("enable_rag", False)
     critic_enabled = enable_critic or orchestration_config.get("enable_critic", False)
-    critic_type = orchestration_config.get("critic_type", "rule") if critic_enabled else None
-    if critic_type not in {None, "rule", "llm", "both", "vlm", "rule_vlm"}:
+    critic_type = (
+        orchestration_config.get("critic_type", "critic_v1")
+        if critic_enabled
+        else None
+    )
+    if critic_type not in {
+        None,
+        "rule",
+        "llm",
+        "both",
+        "vlm",
+        "rule_vlm",
+        "critic_v1",
+    }:
         raise ValueError(f"Unsupported critic_type: {critic_type}")
-    if critic_type in {"vlm", "rule_vlm"}:
+    grounded_visual_critic = critic_type in GROUNDED_VISUAL_CRITIC_TYPES
+    if grounded_visual_critic:
         if critic_model_config is None:
             raise ValueError(f"critic_type={critic_type!r} requires a nonempty critic_model.")
         critic_backend_type = str(critic_model_config.get("backend_type", "")).strip().lower()
@@ -245,7 +315,7 @@ def build_generation_runtime(
     critic_model_backend = model_backend
     if (
         critic_enabled
-        and critic_type in {"llm", "both", "vlm", "rule_vlm"}
+        and critic_type in {"llm", "both", *GROUNDED_VISUAL_CRITIC_TYPES}
         and critic_model_config is not None
     ):
         separate_critic_backend: BaseModelBackend | None = None
@@ -286,6 +356,24 @@ def build_generation_runtime(
         else None
     )
     renderer = _build_renderer(render_config) if render_config["enabled"] else None
+    critic_evidence_settings = critic_model_config or {}
+    critic_render_width = critic_evidence_settings.get("render_width", 256)
+    critic_render_height = critic_evidence_settings.get("render_height", 256)
+    if (
+        not isinstance(critic_render_width, int)
+        or isinstance(critic_render_width, bool)
+        or critic_render_width <= 0
+        or not isinstance(critic_render_height, int)
+        or isinstance(critic_render_height, bool)
+        or critic_render_height <= 0
+    ):
+        raise ValueError("Critic evidence render dimensions must be positive integers.")
+    critic_labeler = CriticLabeler() if grounded_visual_critic else None
+    smoke_render_gate = (
+        SmokeRenderGate(width=critic_render_width, height=critic_render_height)
+        if grounded_visual_critic
+        else None
+    )
 
     orchestrator = SVGGenerationOrchestrator(
         generator=generator,
@@ -303,6 +391,9 @@ def build_generation_runtime(
             "critic_acceptance_score",
             8.0,
         ),
+        critic_labeler=critic_labeler,
+        smoke_render_gate=smoke_render_gate,
+        require_visual_evidence=grounded_visual_critic,
     )
 
     request = GenerationRequest(
@@ -385,7 +476,7 @@ def _build_critic(
                 LLMCritic(model_backend),
             ]
         )
-    if critic_type in {"vlm", "rule_vlm"}:
+    if critic_type in GROUNDED_VISUAL_CRITIC_TYPES:
         if not isinstance(model_backend, TransformersVLMBackend):
             raise TypeError("VLM critics require a TransformersVLMBackend.")
         settings = critic_model_config or {}

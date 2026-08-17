@@ -24,7 +24,9 @@ generation:
     critic_acceptance_score: 8.0
     max_no_improvement_rounds: 1
     min_critic_score_improvement: 0.1
-    critic_type: "rule"  # Options: rule, llm, both, vlm, rule_vlm
+    # critic_v1 = rule validation + grounded Qwen VLM feedback (recommended).
+    # It requires a transformers_vlm critic_model in the selected model config.
+    critic_type: "critic_v1"  # Options: critic_v1, rule, llm, both, vlm, rule_vlm
 
   # Render settings for generated SVG artifacts
   render:

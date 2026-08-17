@@ -11,7 +11,7 @@ import shutil
 import time
 from collections.abc import Iterator
 from contextlib import contextmanager
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass, is_dataclass
 from datetime import UTC, datetime
 from importlib import import_module
 from pathlib import Path
@@ -123,7 +123,7 @@ def _persist_generation_artifacts_locked(
         outcome = final_attempt.metadata.get("outcome")
         stop_reason = final_attempt.metadata.get("stop_reason")
         metadata_payload = {
-            "schema_version": 1,
+            "schema_version": 2,
             "run_id": run_id,
             "instruction": result.instruction,
             "svg_path": _relative_artifact_reference(
@@ -285,25 +285,213 @@ def _persist_attempt_artifacts(
                 metadata_dir,
             )
 
-        records.append(
-            {
-                "attempt_id": attempt.attempt_id,
-                "mode": attempt.mode,
-                "parent_attempt_id": attempt.parent_attempt_id,
-                "trigger_feedback_id": attempt.trigger_feedback_id,
-                "svg_ref": svg_ref,
-                "raw_output_ref": raw_output_ref,
-                "status": attempt.status,
-                "error": attempt.error,
-                "outcome": attempt.metadata.get("outcome"),
-                "stop_reason": attempt.metadata.get("stop_reason"),
-                "prompt_version": attempt.prompt_version,
-                "context_item_ids": attempt.context_item_ids,
-                "truncated_context_item_ids": attempt.truncated_context_item_ids,
-                "model_calls": model_calls,
-                "metadata": attempt.metadata,
-            }
+        evidence_record = _persist_critic_evidence(
+            attempt=attempt,
+            prefix=prefix,
+            attempt_dir=attempt_dir,
+            published_attempt_dir=published_attempt_dir,
+            metadata_dir=metadata_dir,
         )
+        critic_calls = _persist_critic_call_traces(
+            result=result,
+            attempt=attempt,
+            prefix=prefix,
+            attempt_dir=attempt_dir,
+            published_attempt_dir=published_attempt_dir,
+            metadata_dir=metadata_dir,
+        )
+
+        record: dict[str, Any] = {
+            "attempt_id": attempt.attempt_id,
+            "mode": attempt.mode,
+            "parent_attempt_id": attempt.parent_attempt_id,
+            "trigger_feedback_id": attempt.trigger_feedback_id,
+            "svg_ref": svg_ref,
+            "raw_output_ref": raw_output_ref,
+            "status": attempt.status,
+            "error": attempt.error,
+            "outcome": attempt.metadata.get("outcome"),
+            "stop_reason": attempt.metadata.get("stop_reason"),
+            "prompt_version": attempt.prompt_version,
+            "context_item_ids": attempt.context_item_ids,
+            "truncated_context_item_ids": attempt.truncated_context_item_ids,
+            "model_calls": model_calls,
+            "metadata": attempt.metadata,
+        }
+        if evidence_record is not None:
+            record["critic_evidence"] = evidence_record
+        if critic_calls:
+            record["critic_calls"] = critic_calls
+        records.append(record)
+    return records
+
+
+def _persist_critic_evidence(
+    *,
+    attempt: Any,
+    prefix: str,
+    attempt_dir: Path,
+    published_attempt_dir: Path,
+    metadata_dir: Path,
+) -> dict[str, Any] | None:
+    """Persist optional attempt-correlated PNG and labeling evidence."""
+    evidence = getattr(attempt, "critic_evidence", None)
+    if evidence is None:
+        return None
+    if evidence.attempt_id != attempt.attempt_id:
+        raise ValueError("Critic evidence attempt_id does not match attempt.")
+    if evidence.labeling.attempt_id != attempt.attempt_id:
+        raise ValueError("Critic labeling attempt_id does not match attempt.")
+    if not isinstance(evidence.png, bytes) or not evidence.png:
+        raise ValueError("Critic evidence PNG must contain bytes.")
+    if not isinstance(evidence.labeling.labeled_svg, str) or not evidence.labeling.labeled_svg:
+        raise ValueError("Critic evidence labeled SVG must be non-empty.")
+
+    png_path = attempt_dir / f"{prefix}.critic.png"
+    labeled_path = attempt_dir / f"{prefix}.labeled.svg"
+    manifest_path = attempt_dir / f"{prefix}.manifest.json"
+    _atomic_write_bytes(png_path, evidence.png)
+    _atomic_write_text(labeled_path, evidence.labeling.labeled_svg)
+    manifest = {
+        str(key): _serialize_dataclass_value(value)
+        for key, value in evidence.labeling.elements.items()
+    }
+    _atomic_write_text(
+        manifest_path,
+        json.dumps(
+            manifest,
+            indent=2,
+            ensure_ascii=False,
+            allow_nan=False,
+        ),
+    )
+
+    record: dict[str, Any] = {
+        "attempt_id": evidence.attempt_id,
+        "png_ref": _relative_artifact_reference(
+            published_attempt_dir / png_path.name,
+            metadata_dir,
+        ),
+        "labeled_svg_ref": _relative_artifact_reference(
+            published_attempt_dir / labeled_path.name,
+            metadata_dir,
+        ),
+        "manifest_ref": _relative_artifact_reference(
+            published_attempt_dir / manifest_path.name,
+            metadata_dir,
+        ),
+        "renderer": evidence.renderer,
+        "renderer_version": evidence.renderer_version,
+        "width": evidence.width,
+        "height": evidence.height,
+    }
+    diagnostics = getattr(evidence, "diagnostics", None)
+    if diagnostics:
+        record["diagnostics"] = [
+            _serialize_dataclass_value(item) for item in diagnostics
+        ]
+    return record
+
+
+def _persist_critic_call_traces(
+    *,
+    result: GenerationResult,
+    attempt: Any,
+    prefix: str,
+    attempt_dir: Path,
+    published_attempt_dir: Path,
+    metadata_dir: Path,
+) -> list[dict[str, Any]]:
+    """Persist successful and failed Critic calls correlated to an attempt."""
+    traced_calls: list[tuple[str | None, Any]] = []
+    for event in result.feedback_events:
+        if event.target_attempt_id != attempt.attempt_id:
+            continue
+        for call in getattr(event.feedback, "model_calls", []):
+            traced_calls.append((event.feedback_id, call))
+    for call in getattr(attempt, "critic_error_calls", []):
+        traced_calls.append((None, call))
+
+    records: list[dict[str, Any]] = []
+    for call_number, (feedback_id, call) in enumerate(traced_calls):
+        call_prefix = f"{prefix}.critic-call-{call_number:03d}"
+        response = call.response
+        prompt_ref = _write_optional_trace_text(
+            attempt_dir / f"{call_prefix}.prompt.txt",
+            call.prompt,
+            metadata_dir,
+            published_attempt_dir,
+        )
+        system_prompt_ref = _write_optional_trace_text(
+            attempt_dir / f"{call_prefix}.system.txt",
+            call.system_prompt,
+            metadata_dir,
+            published_attempt_dir,
+        )
+        raw_output_ref = _write_optional_trace_text(
+            attempt_dir / f"{call_prefix}.raw.txt",
+            response.text,
+            metadata_dir,
+            published_attempt_dir,
+        )
+        response_format_path = attempt_dir / f"{call_prefix}.response-format.json"
+        validation_path = attempt_dir / f"{call_prefix}.validation.json"
+        _atomic_write_text(
+            response_format_path,
+            json.dumps(
+                _redact_sensitive_config(call.response_format),
+                indent=2,
+                ensure_ascii=False,
+                allow_nan=False,
+            ),
+        )
+        _atomic_write_text(
+            validation_path,
+            json.dumps(
+                {
+                    "success": call.validation_success,
+                    "error": call.validation_error,
+                },
+                indent=2,
+                ensure_ascii=False,
+                allow_nan=False,
+            ),
+        )
+        record: dict[str, Any] = {
+            "critic_call_id": call.critic_call_id,
+            "feedback_id": feedback_id,
+            "retry_index": call.retry_index,
+            "prompt_ref": prompt_ref,
+            "system_prompt_ref": system_prompt_ref,
+            "raw_output_ref": raw_output_ref,
+            "response_format_ref": _relative_artifact_reference(
+                published_attempt_dir / response_format_path.name,
+                metadata_dir,
+            ),
+            "validation_ref": _relative_artifact_reference(
+                published_attempt_dir / validation_path.name,
+                metadata_dir,
+            ),
+            "validation_success": call.validation_success,
+            "validation_error": call.validation_error,
+            "generation_parameters": _redact_sensitive_config(
+                call.generation_parameters
+            ),
+            "model_id": response.model_id,
+            "model_revision": response.model_revision,
+            "finish_reason": response.finish_reason,
+            "prompt_tokens": response.prompt_tokens,
+            "completion_tokens": response.completion_tokens,
+            "latency_seconds": response.latency_seconds,
+            "metadata": _redact_sensitive_config(response.metadata),
+        }
+        time_to_first_token = getattr(response, "time_to_first_token_seconds", None)
+        tokens_per_second = getattr(response, "tokens_per_second", None)
+        if time_to_first_token is not None:
+            record["time_to_first_token_seconds"] = time_to_first_token
+        if tokens_per_second is not None:
+            record["tokens_per_second"] = tokens_per_second
+        records.append(record)
     return records
 
 
@@ -321,11 +509,12 @@ def _serialize_feedback_events(result: GenerationResult) -> list[dict[str, Any]]
 
 
 def _serialize_feedback(feedback: CriticFeedback) -> dict[str, Any]:
-    return {
+    critic_schema_version = getattr(feedback, "schema_version", 1)
+    structured_issues = list(getattr(feedback, "structured_issues", []))
+    payload: dict[str, Any] = {
         "score": feedback.score,
         "is_valid": feedback.is_valid,
         "matches_instruction": feedback.matches_instruction,
-        "issues": feedback.issues,
         "suggestions": feedback.suggestions,
         "critic_type": feedback.critic_type,
         "raw_response": feedback.raw_response,
@@ -334,6 +523,32 @@ def _serialize_feedback(feedback: CriticFeedback) -> dict[str, Any]:
         "model_revision": feedback.model_revision,
         "prompt_version": feedback.prompt_version,
     }
+    if isinstance(critic_schema_version, int) and critic_schema_version >= 2:
+        model_calls = list(getattr(feedback, "model_calls", []))
+        payload.update(
+            {
+                "status": feedback.status,
+                "issues": [
+                    _serialize_dataclass_value(item) for item in structured_issues
+                ],
+                "legacy_issues": list(feedback.issues),
+                "preserve": list(feedback.preserve),
+                "critic_schema_version": critic_schema_version,
+                "metadata": _redact_sensitive_config(feedback.metadata),
+                "model_call_ids": [call.critic_call_id for call in model_calls],
+            }
+        )
+    else:
+        payload["issues"] = list(feedback.issues)
+    return payload
+
+
+def _serialize_dataclass_value(value: Any) -> dict[str, Any]:
+    if is_dataclass(value) and not isinstance(value, type):
+        return asdict(value)
+    if isinstance(value, dict):
+        return dict(value)
+    raise TypeError("Structured Critic artifact values must be dataclasses or mappings.")
 
 
 def _redact_sensitive_config(value: Any) -> Any:
@@ -409,6 +624,21 @@ def _atomic_write_text(
         os.replace(temporary_path, path)
         if on_replace is not None:
             on_replace()
+        _fsync_directory(path.parent)
+    finally:
+        temporary_path.unlink(missing_ok=True)
+
+
+def _atomic_write_bytes(path: Path, content: bytes) -> None:
+    """Atomically publish binary evidence without exposing partial content."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary_path = path.with_name(f".{path.name}.{uuid4().hex}.tmp")
+    try:
+        with temporary_path.open("wb") as handle:
+            handle.write(content)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(temporary_path, path)
         _fsync_directory(path.parent)
     finally:
         temporary_path.unlink(missing_ok=True)

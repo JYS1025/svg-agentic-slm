@@ -88,7 +88,9 @@ def parse_generation_artifact_payload(
     schema_version = _schema_version(payload.get("schema_version", 0))
     strict_references = schema_version >= 1
     if strict_references:
-        _validate_v1_payload(payload)
+        _validate_v1_payload(payload, allow_v2_feedback=schema_version >= 2)
+    if schema_version >= 2:
+        _validate_v2_payload(payload)
 
     svg_path = _resolve_artifact_reference(
         payload.get("svg_path"),
@@ -362,12 +364,16 @@ def _string_list(value: object) -> list[str]:
 def _schema_version(value: object) -> int:
     if not isinstance(value, int) or isinstance(value, bool) or value < 0:
         raise ValueError("schema_version must be a non-negative integer.")
-    if value > 1:
+    if value > 2:
         raise ValueError(f"Unsupported generation artifact schema_version: {value}")
     return value
 
 
-def _validate_v1_payload(payload: dict[str, Any]) -> None:
+def _validate_v1_payload(
+    payload: dict[str, Any],
+    *,
+    allow_v2_feedback: bool = False,
+) -> None:
     _require_string(payload.get("run_id"), "run_id", non_empty=True)
     _require_string(payload.get("instruction"), "instruction", non_empty=True)
     _require_string(payload.get("svg_path"), "svg_path", non_empty=True)
@@ -408,7 +414,11 @@ def _validate_v1_payload(payload: dict[str, Any]) -> None:
             f"{prefix}.matches_instruction",
         )
         _require_string(feedback.get("critic_type"), f"{prefix}.critic_type")
-        _require_string_list(feedback.get("issues"), f"{prefix}.issues")
+        critic_schema_version = feedback.get("critic_schema_version", 1)
+        if allow_v2_feedback and critic_schema_version >= 2:
+            _validate_v2_feedback(feedback, prefix)
+        else:
+            _require_string_list(feedback.get("issues"), f"{prefix}.issues")
         _require_string_list(feedback.get("suggestions"), f"{prefix}.suggestions")
         _require_string(
             feedback.get("feedback_id"),
@@ -420,6 +430,243 @@ def _validate_v1_payload(payload: dict[str, Any]) -> None:
             f"{prefix}.target_attempt_id",
             non_empty=True,
         )
+
+
+def _validate_v2_payload(payload: dict[str, Any]) -> None:
+    """Validate critic_v1 evidence and cross-record correlation for schema v2."""
+    metadata = _require_mapping(payload.get("metadata"), "metadata")
+    generator = _require_mapping(metadata.get("generator"), "metadata.generator")
+    attempts_value = generator.get("attempts")
+    if not isinstance(attempts_value, list) or not attempts_value:
+        raise ValueError("metadata.generator.attempts must be a non-empty list.")
+
+    attempts: dict[str, dict[str, Any]] = {}
+    call_ids_by_attempt: dict[str, set[str]] = {}
+    for index, attempt_value in enumerate(attempts_value):
+        prefix = f"metadata.generator.attempts[{index}]"
+        attempt = _require_mapping(attempt_value, prefix)
+        attempt_id = attempt.get("attempt_id")
+        _require_string(attempt_id, f"{prefix}.attempt_id", non_empty=True)
+        if attempt_id in attempts:
+            raise ValueError("metadata.generator.attempts contains a duplicate attempt_id.")
+        attempts[attempt_id] = attempt
+        call_ids_by_attempt[attempt_id] = _validate_v2_attempt(attempt, prefix)
+
+    feedback_items = payload.get("critic_feedback")
+    if not isinstance(feedback_items, list):
+        raise ValueError("critic_feedback must be a list.")
+    feedback_ids: set[str] = set()
+    latest_v2_feedback: dict[str, Any] | None = None
+    for index, feedback_value in enumerate(feedback_items):
+        prefix = f"critic_feedback[{index}]"
+        feedback = _require_mapping(feedback_value, prefix)
+        feedback_id = feedback.get("feedback_id")
+        target_attempt_id = feedback.get("target_attempt_id")
+        if feedback_id in feedback_ids:
+            raise ValueError("critic_feedback contains a duplicate feedback_id.")
+        feedback_ids.add(feedback_id)
+        if target_attempt_id not in attempts:
+            raise ValueError(f"{prefix}.target_attempt_id does not identify an attempt.")
+        critic_schema_version = feedback.get("critic_schema_version", 1)
+        if not isinstance(critic_schema_version, int) or isinstance(critic_schema_version, bool):
+            raise ValueError(f"{prefix}.critic_schema_version must be an integer.")
+        if critic_schema_version < 1 or critic_schema_version > 2:
+            raise ValueError(f"{prefix}.critic_schema_version is unsupported.")
+        if critic_schema_version < 2:
+            if any(key in feedback for key in ("status", "legacy_issues", "preserve", "model_call_ids")):
+                raise ValueError(f"{prefix} uses critic_v1 fields with a legacy critic schema.")
+            continue
+
+        latest_v2_feedback = feedback
+        status = feedback.get("status")
+        attempt = attempts[target_attempt_id]
+        evidence = attempt.get("critic_evidence")
+        if status in {"pass", "revise"} and not isinstance(evidence, dict):
+            raise ValueError(f"{prefix} requires attempt-correlated critic evidence.")
+
+        model_call_ids = feedback.get("model_call_ids")
+        if not isinstance(model_call_ids, list) or any(
+            not isinstance(item, str) or not item for item in model_call_ids
+        ):
+            raise ValueError(f"{prefix}.model_call_ids must be a list of non-empty strings.")
+        if len(set(model_call_ids)) != len(model_call_ids):
+            raise ValueError(f"{prefix}.model_call_ids contains duplicates.")
+        if status in {"pass", "revise"} and not model_call_ids:
+            raise ValueError(f"{prefix} requires at least one successful Critic model call.")
+        unknown_calls = set(model_call_ids) - call_ids_by_attempt[target_attempt_id]
+        if unknown_calls:
+            raise ValueError(f"{prefix}.model_call_ids references an unknown Critic call.")
+
+        allowed_target_ids = _feedback_evidence_target_ids(feedback, prefix, target_attempt_id)
+        for issue in feedback.get("issues", []):
+            target_ids = set(issue.get("target_ids", []))
+            if target_ids and not allowed_target_ids:
+                raise ValueError(f"{prefix} has grounded targets without evidence target IDs.")
+            if not target_ids.issubset(allowed_target_ids):
+                raise ValueError(f"{prefix} contains a target ID absent from Critic evidence.")
+
+    if payload.get("outcome") == "accepted" and latest_v2_feedback is not None:
+        final_attempt_id = attempts_value[-1].get("attempt_id")
+        if (
+            latest_v2_feedback.get("target_attempt_id") != final_attempt_id
+            or latest_v2_feedback.get("status") != "pass"
+        ):
+            raise ValueError("A schema-v2 accepted artifact requires pass feedback for the final attempt.")
+
+
+def _validate_v2_feedback(feedback: dict[str, Any], prefix: str) -> None:
+    critic_schema_version = feedback.get("critic_schema_version")
+    if not isinstance(critic_schema_version, int) or isinstance(critic_schema_version, bool) or critic_schema_version < 2:
+        raise ValueError(f"{prefix}.critic_schema_version must be at least 2.")
+    status = feedback.get("status")
+    _require_choice(status, f"{prefix}.status", {"pass", "revise", "invalid"})
+    issues = feedback.get("issues")
+    if not isinstance(issues, list) or len(issues) > 3:
+        raise ValueError(f"{prefix}.issues must be an array of at most 3 typed issues.")
+    issue_keys: set[tuple[str, str, tuple[str, ...]]] = set()
+    for index, issue_value in enumerate(issues):
+        issue = _require_mapping(issue_value, f"{prefix}.issues[{index}]")
+        issue_key = _validate_v2_issue(issue, f"{prefix}.issues[{index}]", status)
+        if issue_key in issue_keys:
+            raise ValueError(f"{prefix}.issues contains a duplicate typed issue.")
+        issue_keys.add(issue_key)
+    _require_string_list(feedback.get("legacy_issues"), f"{prefix}.legacy_issues")
+    preserve = feedback.get("preserve")
+    _require_string_list(preserve, f"{prefix}.preserve")
+    if len(preserve) > 3 or len(set(preserve)) != len(preserve) or any(not item.strip() for item in preserve):
+        raise ValueError(f"{prefix}.preserve must contain at most 3 unique non-empty strings.")
+    metadata = feedback.get("metadata")
+    if not isinstance(metadata, dict):
+        raise ValueError(f"{prefix}.metadata must be an object.")
+    if status == "pass":
+        if issues or preserve:
+            raise ValueError(f"{prefix}: pass requires empty issues and preserve.")
+        if feedback.get("is_valid") is not True or feedback.get("matches_instruction") is not True:
+            raise ValueError(f"{prefix}: only pass may represent acceptance.")
+    elif status == "revise":
+        if not issues or feedback.get("matches_instruction") is not False:
+            raise ValueError(f"{prefix}: revise requires issues and cannot be accepted.")
+    elif not issues or feedback.get("is_valid") is not False or feedback.get("matches_instruction") is not False:
+        raise ValueError(f"{prefix}: invalid requires issues and false acceptance booleans.")
+
+
+def _validate_v2_issue(
+    issue: dict[str, Any],
+    prefix: str,
+    status: str,
+) -> tuple[str, str, tuple[str, ...]]:
+    required = {
+        "category", "type", "severity", "scope", "target_ids",
+        "observed", "expected", "fix",
+    }
+    if set(issue) != required:
+        raise ValueError(f"{prefix} must contain exactly the CriticIssue fields.")
+    category = issue.get("category")
+    issue_type = issue.get("type")
+    allowed_types = {
+        "content": {"element_presence_or_count", "object_identity_or_state", "reference_or_instance", "text_or_label_content"},
+        "layout": {"viewport_or_clipping", "placement_or_transform", "relative_scale_alignment_or_spacing", "stacking_or_occlusion"},
+        "shape": {"contour_or_curve_geometry", "closure_or_part_connectivity", "topology_or_fill_region"},
+        "style": {"fill_or_paint_server", "stroke_or_marker", "visibility_opacity_or_compositing", "typography_or_glyph_appearance"},
+    }
+    if category == "validity":
+        if status != "invalid":
+            raise ValueError(f"{prefix}: validity category is reserved for invalid feedback.")
+    elif category not in allowed_types or issue_type not in allowed_types[category]:
+        raise ValueError(f"{prefix}.type is invalid for its category.")
+    _require_choice(issue.get("severity"), f"{prefix}.severity", {"critical", "major", "minor"})
+    _require_choice(issue.get("scope"), f"{prefix}.scope", {"global", "object", "part"})
+    targets = issue.get("target_ids")
+    if not isinstance(targets, list) or len(targets) > 4 or len(set(targets)) != len(targets):
+        raise ValueError(f"{prefix}.target_ids is invalid.")
+    if any(
+        not isinstance(item, str)
+        or len(item) != 5
+        or item[0] not in "sged"
+        or not item[1:].isdigit()
+        for item in targets
+    ):
+        raise ValueError(f"{prefix}.target_ids contains an invalid ID.")
+    missing_object = category == "content" and issue_type == "element_presence_or_count"
+    if not targets and not missing_object and issue.get("scope") != "global" and category != "validity":
+        raise ValueError(f"{prefix}: empty targets require a missing object or global issue.")
+    if category == "validity" and (
+        issue.get("severity") != "critical" or issue.get("scope") != "global" or targets
+    ):
+        raise ValueError(f"{prefix}: validity issues must be critical and global.")
+    for key in ("type", "observed", "expected", "fix"):
+        _require_string(issue.get(key), f"{prefix}.{key}", non_empty=True)
+    return str(category), str(issue_type), tuple(targets)
+
+
+def _validate_v2_attempt(attempt: dict[str, Any], prefix: str) -> set[str]:
+    attempt_id = attempt.get("attempt_id")
+    evidence = attempt.get("critic_evidence")
+    if evidence is not None:
+        evidence = _require_mapping(evidence, f"{prefix}.critic_evidence")
+        if evidence.get("attempt_id") != attempt_id:
+            raise ValueError(f"{prefix}.critic_evidence.attempt_id does not match.")
+        for name in ("png_ref", "labeled_svg_ref", "manifest_ref", "renderer"):
+            _require_string(evidence.get(name), f"{prefix}.critic_evidence.{name}", non_empty=True)
+        _require_optional_string(evidence.get("renderer_version"), f"{prefix}.critic_evidence.renderer_version")
+        for name in ("width", "height"):
+            value = evidence.get(name)
+            if not isinstance(value, int) or isinstance(value, bool) or value <= 0:
+                raise ValueError(f"{prefix}.critic_evidence.{name} must be a positive integer.")
+        diagnostics = evidence.get("diagnostics", [])
+        if not isinstance(diagnostics, list) or any(not isinstance(item, dict) for item in diagnostics):
+            raise ValueError(f"{prefix}.critic_evidence.diagnostics must be an object array.")
+
+    calls = attempt.get("critic_calls", [])
+    if not isinstance(calls, list):
+        raise ValueError(f"{prefix}.critic_calls must be a list.")
+    call_ids: set[str] = set()
+    for index, call_value in enumerate(calls):
+        call_prefix = f"{prefix}.critic_calls[{index}]"
+        call = _require_mapping(call_value, call_prefix)
+        call_id = call.get("critic_call_id")
+        _require_string(call_id, f"{call_prefix}.critic_call_id", non_empty=True)
+        if call_id in call_ids:
+            raise ValueError(f"{prefix}.critic_calls contains a duplicate call ID.")
+        call_ids.add(call_id)
+        _require_optional_string(call.get("feedback_id"), f"{call_prefix}.feedback_id")
+        _require_nonnegative_int(call.get("retry_index"), f"{call_prefix}.retry_index")
+        for name in ("prompt_ref", "response_format_ref", "validation_ref"):
+            _require_string(call.get(name), f"{call_prefix}.{name}", non_empty=True)
+        _require_optional_string(
+            call.get("system_prompt_ref"), f"{call_prefix}.system_prompt_ref"
+        )
+        _require_optional_string(call.get("raw_output_ref"), f"{call_prefix}.raw_output_ref")
+        _require_bool(call.get("validation_success"), f"{call_prefix}.validation_success")
+        _require_optional_string(call.get("validation_error"), f"{call_prefix}.validation_error")
+        if not isinstance(call.get("generation_parameters"), dict):
+            raise ValueError(f"{call_prefix}.generation_parameters must be an object.")
+    return call_ids
+
+
+def _feedback_evidence_target_ids(
+    feedback: dict[str, Any],
+    prefix: str,
+    attempt_id: str,
+) -> set[str]:
+    metadata = _require_mapping(feedback.get("metadata"), f"{prefix}.metadata")
+    provenance = metadata.get("evidence_provenance")
+    if not isinstance(provenance, list):
+        raise ValueError(f"{prefix}.metadata.evidence_provenance must be a list.")
+    result: set[str] = set()
+    matched = False
+    for index, record_value in enumerate(provenance):
+        record = _require_mapping(record_value, f"{prefix}.metadata.evidence_provenance[{index}]")
+        if record.get("attempt_id") != attempt_id:
+            continue
+        matched = True
+        targets = record.get("target_ids", [])
+        if not isinstance(targets, list) or any(not isinstance(item, str) for item in targets):
+            raise ValueError(f"{prefix}.metadata.evidence_provenance target_ids is invalid.")
+        result.update(targets)
+    if feedback.get("status") in {"pass", "revise"} and not matched:
+        raise ValueError(f"{prefix} lacks attempt-correlated evidence provenance.")
+    return result
 
 
 def _validate_v1_attempt(attempt: dict[str, Any], prefix: str) -> None:

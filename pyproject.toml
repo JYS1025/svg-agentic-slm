@@ -59,6 +59,9 @@ svg-agentic-slm = "svg_agentic_slm.cli.app:app"
 [tool.setuptools.packages.find]
 where = ["src"]
 
+[tool.setuptools.package-data]
+svg_agentic_slm = ["agents/*.json"]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["src"]

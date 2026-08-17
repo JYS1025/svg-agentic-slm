@@ -12,6 +12,7 @@ from typing import TYPE_CHECKING
 
 from svg_agentic_slm.agents.schemas import (
     CriticFeedback,
+    CriticInput,
     CriticFeedbackEvent,
     GenerationRequest,
     GeneratorOutput,
@@ -89,3 +90,7 @@ class BaseCritic(BaseAgent):
             Structured critic feedback.
         """
         ...
+
+    def critique_attempt(self, value: CriticInput) -> CriticFeedback:
+        """Evaluate correlated evidence; legacy critics receive canonical SVG only."""
+        return self.critique(value.instruction, value.canonical_svg)

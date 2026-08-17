@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from .schemas import SVGDiagnostic
+
 import logging
 import re
 
@@ -126,7 +128,7 @@ SAFE_STYLE_FUNCTIONS = {
 class SVGValidator(BaseValidator):
     """Validate XML structure and reject active or externally loaded content."""
 
-    def validate(self, svg_content: str) -> SVGValidationResult:
+    def _validate_without_diagnostics(self, svg_content: str) -> SVGValidationResult:
         """Validate an SVG without resolving DTDs, entities, or networks."""
         result = SVGValidationResult()
         errors: list[str] = []
@@ -218,6 +220,34 @@ class SVGValidator(BaseValidator):
         result.errors = errors
         result.warnings = warnings
         result.is_valid = not errors
+        return result
+
+    def validate(self, svg_content: str) -> SVGValidationResult:
+        """Validate SVG and attach stable, machine-readable diagnostics."""
+
+        import re
+
+        result = self._validate_without_diagnostics(svg_content)
+        errors = list(result.errors)
+        reserved_label = re.search(
+            r"\bdata-agent-id\s*=",
+            svg_content,
+            flags=re.IGNORECASE,
+        )
+        if reserved_label is not None:
+            message = (
+                "Reserved critic label attribute data-agent-id must not "
+                "appear in canonical SVG"
+            )
+            if message not in errors:
+                errors.append(message)
+
+        result.errors = errors
+        result.is_valid = result.is_valid and reserved_label is None
+        result.diagnostics = _build_diagnostics(
+            errors,
+            list(result.warnings),
+        )
         return result
 
 
@@ -333,3 +363,33 @@ def _check_style_attribute(value: str, errors: list[str]) -> None:
             if function_name.lower() not in SAFE_STYLE_FUNCTIONS:
                 errors.append(f"Unsafe inline CSS function: {function_name}.")
         _check_url_references(property_value, errors)
+
+
+def _build_diagnostics(errors: list[str], warnings: list[str]) -> list[SVGDiagnostic]:
+    def code(message: str) -> str:
+        lowered = message.lower()
+        if "data-agent-id" in lowered:
+            return "reserved_label_dependency"
+        if "xml parsing" in lowered:
+            return "xml_parse_error"
+        if "missing <svg>" in lowered:
+            return "missing_svg_root"
+        if "root element" in lowered:
+            return "invalid_root"
+        if "namespace" in lowered:
+            return "invalid_namespace"
+        if "doctype" in lowered:
+            return "unsafe_doctype"
+        if "element is not allowed" in lowered:
+            return "unsafe_element"
+        if "reference" in lowered or "uri" in lowered or "url" in lowered:
+            return "external_reference"
+        if "css" in lowered or "style" in lowered:
+            return "unsafe_css"
+        return "unsafe_attribute"
+
+    return [
+        SVGDiagnostic(code(message), message, "error") for message in errors
+    ] + [
+        SVGDiagnostic(code(message), message, "warning") for message in warnings
+    ]

@@ -9,6 +9,7 @@ the orchestrator testable and backend-agnostic.
 
 from __future__ import annotations
 
+import hashlib
 import logging
 import time
 from collections.abc import Callable
@@ -17,12 +18,19 @@ from typing import TYPE_CHECKING
 from uuid import uuid4
 
 from svg_agentic_slm.agents.schemas import (
+    CriticEvidence,
+    CriticFeedback,
     CriticFeedbackEvent,
+    CriticInput,
+    CriticIssue,
+    CriticTraceError,
     GenerationRequest,
     GenerationResult,
     GeneratorOutput,
     validate_critic_feedback,
 )
+from svg_agentic_slm.svg.gates import SmokeRenderGate
+from svg_agentic_slm.svg.labeler import CriticLabeler
 
 if TYPE_CHECKING:
     from svg_agentic_slm.agents.base import BaseCritic, BaseGenerator
@@ -73,6 +81,9 @@ class SVGGenerationOrchestrator:
         render_height: int = 256,
         render_format: str = "png",
         critic_acceptance_score: float = 8.0,
+        critic_labeler: CriticLabeler | None = None,
+        smoke_render_gate: SmokeRenderGate | None = None,
+        require_visual_evidence: bool = False,
     ) -> None:
         if max_revisions < 0:
             raise ValueError("max_revisions must be non-negative.")
@@ -90,6 +101,12 @@ class SVGGenerationOrchestrator:
         self._render_height = render_height
         self._render_format = render_format
         self._critic_acceptance_score = critic_acceptance_score
+        self._critic_labeler = critic_labeler or CriticLabeler()
+        self._smoke_render_gate = smoke_render_gate or SmokeRenderGate(
+            width=render_width,
+            height=render_height,
+        )
+        self._require_visual_evidence = require_visual_evidence
 
     def run(
         self,
@@ -155,9 +172,7 @@ class SVGGenerationOrchestrator:
 
         # Step 3: Critique and revise
         while self._critic is not None and current.status == "succeeded":
-            feedback = validate_critic_feedback(
-                self._critic.critique(request.instruction, current.svg)
-            )
+            feedback = self._critique_attempt(request, current, validation)
             latest_feedback_event = CriticFeedbackEvent(
                 feedback_id=f"feedback_{uuid4().hex}",
                 target_attempt_id=current.attempt_id,
@@ -270,6 +285,76 @@ class SVGGenerationOrchestrator:
         )
         return result
 
+    def _critique_attempt(
+        self,
+        request: GenerationRequest,
+        attempt: GeneratorOutput,
+        validation: SVGValidationResult,
+    ) -> CriticFeedback:
+        """Build immutable visual evidence and invoke the typed Critic boundary."""
+        if self._critic is None:
+            raise RuntimeError("Critic evidence requested without a configured Critic.")
+        if not self._require_visual_evidence:
+            return validate_critic_feedback(
+                self._critic.critique(request.instruction, attempt.svg)
+            )
+        if not validation.is_valid:
+            messages = list(validation.errors) or ["SVG validation failed."]
+            return _invalid_evidence_feedback(
+                attempt.attempt_id,
+                stage="svg_validation_failure",
+                messages=messages,
+            )
+
+        render_result = self._smoke_render_gate.evaluate(attempt.svg)
+        if not render_result.success:
+            messages = [
+                f"{diagnostic.code}: {diagnostic.message}"
+                for diagnostic in render_result.diagnostics
+            ] or ["SVG smoke render failed."]
+            return _invalid_evidence_feedback(
+                attempt.attempt_id,
+                stage="smoke_render_failure",
+                messages=messages,
+            )
+
+        try:
+            labeling = self._critic_labeler.label(attempt.svg, attempt.attempt_id)
+        except Exception as exc:
+            return _invalid_evidence_feedback(
+                attempt.attempt_id,
+                stage="labeling_failure",
+                messages=[f"{type(exc).__name__}: {exc}"],
+            )
+
+        evidence = CriticEvidence(
+            attempt_id=attempt.attempt_id,
+            png=render_result.png,
+            labeling=labeling,
+            diagnostics=list(render_result.diagnostics),
+            renderer="cairosvg",
+            renderer_version=render_result.renderer_version,
+            width=self._smoke_render_gate.width,
+            height=self._smoke_render_gate.height,
+        )
+        attempt.critic_evidence = evidence
+        critic_input = CriticInput(
+            attempt_id=attempt.attempt_id,
+            instruction=request.instruction,
+            canonical_svg=attempt.svg,
+            render_png=evidence.png,
+            labeling=evidence.labeling,
+            render_width=evidence.width,
+            render_height=evidence.height,
+        )
+        try:
+            feedback = validate_critic_feedback(self._critic.critique_attempt(critic_input))
+        except CriticTraceError as exc:
+            attempt.critic_error_calls.extend(exc.model_calls)
+            raise
+        _attach_evidence_provenance(feedback, evidence)
+        return feedback
+
     def _validate_attempt(self, attempt: GeneratorOutput) -> SVGValidationResult:
         validation = self._validator.validate(attempt.svg)
         attempt.metadata["validation"] = _validation_metadata(validation)
@@ -290,6 +375,73 @@ def _validation_metadata(validation: SVGValidationResult) -> dict:
         "has_closing_tag": validation.has_closing_tag,
         "is_well_formed_xml": validation.is_well_formed_xml,
     }
+
+
+def _invalid_evidence_feedback(
+    attempt_id: str,
+    *,
+    stage: str,
+    messages: list[str],
+) -> CriticFeedback:
+    observed = "; ".join(message for message in messages if message) or stage
+    fix = "Produce a safe, renderable SVG before visual critique."
+    issue = CriticIssue(
+        category="validity",
+        type=stage,
+        severity="critical",
+        scope="global",
+        target_ids=[],
+        observed=observed,
+        expected="A structurally valid SVG with a successful canonical PNG smoke render.",
+        fix=fix,
+    )
+    return validate_critic_feedback(
+        CriticFeedback(
+            score=0.0,
+            is_valid=False,
+            matches_instruction=False,
+            issues=[observed],
+            suggestions=[fix],
+            critic_type="critic_evidence_gate",
+            critic_version="critic-evidence-gate-v1",
+            status="invalid",
+            structured_issues=[issue],
+            schema_version=2,
+            metadata={
+                "evidence_provenance": [
+                    {
+                        "attempt_id": attempt_id,
+                        "stage": stage,
+                        "success": False,
+                        "diagnostics": list(messages),
+                    }
+                ]
+            },
+        )
+    )
+
+
+def _attach_evidence_provenance(
+    feedback: CriticFeedback,
+    evidence: CriticEvidence,
+) -> None:
+    record = {
+        "attempt_id": evidence.attempt_id,
+        "renderer": evidence.renderer,
+        "renderer_version": evidence.renderer_version,
+        "width": evidence.width,
+        "height": evidence.height,
+        "png_sha256": hashlib.sha256(evidence.png).hexdigest(),
+        "labeled_svg_sha256": hashlib.sha256(
+            evidence.labeling.labeled_svg.encode("utf-8")
+        ).hexdigest(),
+        "target_ids": sorted(evidence.labeling.elements),
+    }
+    raw_provenance = feedback.metadata.get("evidence_provenance", [])
+    provenance = list(raw_provenance) if isinstance(raw_provenance, list) else []
+    if record not in provenance:
+        provenance.append(record)
+    feedback.metadata["evidence_provenance"] = provenance
 
 
 def _coerce_generator_output(value: GeneratorOutput | str) -> GeneratorOutput:
@@ -339,4 +491,10 @@ def _feedback_meets_acceptance(
     acceptance_score: float,
 ) -> bool:
     feedback = feedback_event.feedback
+    if feedback.schema_version >= 2:
+        return (
+            feedback.status == "pass"
+            and feedback.is_valid
+            and feedback.matches_instruction
+        )
     return feedback.is_valid and feedback.matches_instruction and feedback.score >= acceptance_score
