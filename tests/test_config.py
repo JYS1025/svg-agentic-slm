@@ -7,8 +7,10 @@ from pathlib import Path
 import pytest
 import yaml
 
-from svg_agentic_slm.factories.generation import _build_model_backend
-from svg_agentic_slm.factories.generation import validate_model_config_security
+from svg_agentic_slm.factories.generation import (
+    _build_model_backend,
+    validate_model_config_security,
+)
 from svg_agentic_slm.models.gemma_loader import GemmaModelBackend
 from svg_agentic_slm.models.generation_config import GenerationConfig
 from svg_agentic_slm.models.llama_cpp_backend import (
@@ -148,6 +150,8 @@ def test_model_backend_factory_selects_class_and_forwards_common_options(
             "filename": "model.gguf",
             "n_ctx": 4096,
             "n_gpu_layers": 24,
+            "main_gpu": 1,
+            "split_mode": "none",
             "n_batch": 128,
             "flash_attn": False,
             "use_mmap": False,
@@ -162,6 +166,8 @@ def test_model_backend_factory_selects_class_and_forwards_common_options(
     assert backend.filename == "model.gguf"
     assert backend.n_ctx == 4096
     assert backend.n_gpu_layers == 24
+    assert backend.main_gpu == 1
+    assert backend.split_mode == "none"
     assert backend.n_batch == 128
     assert backend.flash_attn is False
     assert backend.use_mmap is False

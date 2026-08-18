@@ -2,21 +2,34 @@
 rag:
   # Default backend. CLI override: --rag-backend chromadb|qdrant
   backend: "chromadb"
+  # Backend-specific settings below override these legacy shared defaults.
   embedding_model: "sentence-transformers/all-MiniLM-L6-v2"
   top_k: 3
   similarity_threshold: 0.5
 
   chromadb:
-    collection_name: "svg_patterns"
+    collection_name: "mmsvg_description_qwen3_0_6b_1024_v1"
     persist_directory: "./data/chroma_db"
-    corpus_path: "./data/rag_corpus/svg_patterns_sample.jsonl"
-    # The four-record local corpus is a connectivity smoke test. Always return
-    # its nearest top-k examples even when the cross-language score is low.
+    embedding_model: "Qwen/Qwen3-Embedding-0.6B"
+    embedding_revision: "97b0c614be4d77ee51c0cef4e5f07c00f9eb65b3"
+    embedding_dimension: 1024
+    precomputed_embeddings: true
+    device: "cuda:0"
+    overfetch_factor: 5
     similarity_threshold: 0.0
+    query_instruction: >-
+      Given a user description of a desired SVG image, retrieve SVG examples
+      matching the objects, attributes, colors, style, composition, and spatial
+      relationships.
+    dataset_roots:
+      icon: "./data/raw/mmsvg_icon_v2/data"
+      illustration: "./data/raw/mmsvg_illustration_v2/data"
 
   # Credentials are read only from these environment-variable names.
   qdrant:
     collection_name: "svg_text2svg_stack_minilm384_v1"
+    embedding_model: "sentence-transformers/all-MiniLM-L6-v2"
+    similarity_threshold: 0.5
     url_env: "QDRANT_URL"
     api_key_env: "QDRANT_API_KEY"
     timeout_seconds: 120

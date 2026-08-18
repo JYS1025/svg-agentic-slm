@@ -70,6 +70,8 @@ def test_llama_cpp_backend_loads_with_full_gpu_offload(tmp_path: Path) -> None:
         model_revision="revision",
         n_ctx=8192,
         n_gpu_layers=-1,
+        main_gpu=0,
+        split_mode="none",
         client_factory=client_factory,
     )
 
@@ -84,6 +86,8 @@ def test_llama_cpp_backend_loads_with_full_gpu_offload(tmp_path: Path) -> None:
     assert backend.is_loaded()
     assert clients[0].load_kwargs["n_gpu_layers"] == -1
     assert clients[0].load_kwargs["n_ctx"] == 8192
+    assert clients[0].load_kwargs["main_gpu"] == 0
+    assert clients[0].load_kwargs["split_mode"] == 0
     assert clients[0].call_kwargs["temperature"] == 0.0
     assert clients[0].call_kwargs["messages"][0]["role"] == "system"
     assert response.text == "<svg></svg>"
@@ -91,6 +95,8 @@ def test_llama_cpp_backend_loads_with_full_gpu_offload(tmp_path: Path) -> None:
     assert response.metadata["quantization"] == "Q4_0"
     assert response.metadata["quantization_provider"] == "LM Studio Community"
     assert response.metadata["upstream_model_id"] == ("google/gemma-4-12B-it-qat-q4_0-unquantized")
+    assert response.metadata["main_gpu"] == 0
+    assert response.metadata["split_mode"] == "none"
 
 
 def test_llama_cpp_backend_pins_download_revision(tmp_path: Path) -> None:

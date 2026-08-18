@@ -19,6 +19,10 @@ DEFAULT_MODEL_REVISION = "482adb537c021c86670beed01cd58990d01e72e4"
 
 _ALLOWED_DTYPES = {"bfloat16", "float16", "float32"}
 _ALLOWED_ATTENTION_IMPLEMENTATIONS = {"sdpa", "eager", "flash_attention_2"}
+_AUTO_MODEL_CLASSES = {
+    "image_text_to_text": "AutoModelForImageTextToText",
+    "multimodal_lm": "AutoModelForMultimodalLM",
+}
 _MIME_TO_PIL_FORMATS = {
     "image/jpeg": {"JPEG"},
     "image/png": {"PNG"},
@@ -45,8 +49,10 @@ class TransformersVLMBackend(BaseModelBackend):
         device: str = "cuda",
         dtype: str = "bfloat16",
         attn_implementation: str = "sdpa",
+        auto_model_class: str = "image_text_to_text",
         max_new_tokens: int = 384,
         do_sample: bool = False,
+        enable_thinking: bool | None = None,
         local_files_only: bool = False,
         trust_remote_code: bool = False,
         token_env: str | None = None,
@@ -60,8 +66,14 @@ class TransformersVLMBackend(BaseModelBackend):
             "attn_implementation",
             _ALLOWED_ATTENTION_IMPLEMENTATIONS,
         )
+        self._auto_model_class = _validate_choice(
+            auto_model_class, "auto_model_class", set(_AUTO_MODEL_CLASSES)
+        )
         self._max_new_tokens = _require_positive_int(max_new_tokens, "max_new_tokens")
         self._do_sample = _require_bool(do_sample, "do_sample")
+        if enable_thinking is not None:
+            enable_thinking = _require_bool(enable_thinking, "enable_thinking")
+        self._enable_thinking = enable_thinking
         self._local_files_only = _require_bool(local_files_only, "local_files_only")
         self._trust_remote_code = _require_bool(trust_remote_code, "trust_remote_code")
         self._token_env = _validate_token_env(token_env)
@@ -89,11 +101,18 @@ class TransformersVLMBackend(BaseModelBackend):
 
             try:
                 import torch
-                from transformers import AutoModelForImageTextToText, AutoProcessor
+                import transformers
+                from transformers import AutoProcessor
             except ImportError as exc:
                 raise RuntimeError(
                     "The 'vlm' dependencies are required for TransformersVLMBackend."
                 ) from exc
+            model_class_name = _AUTO_MODEL_CLASSES[self._auto_model_class]
+            model_loader = getattr(transformers, model_class_name, None)
+            if model_loader is None:
+                raise RuntimeError(
+                    f"Configured VLM loader {model_class_name} is unavailable in Transformers."
+                )
 
             _validate_runtime_device(torch, self._device, self._dtype)
             torch_dtype = getattr(torch, self._dtype)
@@ -108,7 +127,7 @@ class TransformersVLMBackend(BaseModelBackend):
 
             try:
                 processor = AutoProcessor.from_pretrained(self._model_id, **hub_kwargs)
-                model = AutoModelForImageTextToText.from_pretrained(
+                model = model_loader.from_pretrained(
                     self._model_id,
                     dtype=torch_dtype,
                     attn_implementation=self._attn_implementation,
@@ -161,21 +180,23 @@ class TransformersVLMBackend(BaseModelBackend):
                 {
                     "role": "user",
                     "content": [
-                        {"type": "image"},
+                        {"type": "image", "image": image},
                         {"type": "text", "text": normalized_prompt},
                     ],
                 }
             ]
+            template_kwargs: dict[str, Any] = {
+                "add_generation_prompt": True,
+                "tokenize": True,
+                "return_dict": True,
+                "return_tensors": "pt",
+            }
+            if self._enable_thinking is not None:
+                template_kwargs["enable_thinking"] = self._enable_thinking
             try:
-                chat_text = self._processor.apply_chat_template(
+                inputs = self._processor.apply_chat_template(
                     messages,
-                    add_generation_prompt=True,
-                    tokenize=False,
-                )
-                inputs = self._processor(
-                    text=chat_text,
-                    images=[image],
-                    return_tensors="pt",
+                    **template_kwargs,
                 )
             except Exception as exc:
                 raise RuntimeError("Failed to preprocess VLM image and prompt inputs.") from exc
@@ -241,7 +262,9 @@ class TransformersVLMBackend(BaseModelBackend):
                     "device": self._device,
                     "dtype": self._dtype,
                     "attn_implementation": self._attn_implementation,
+                    "auto_model_class": self._auto_model_class,
                     "do_sample": options["do_sample"],
+                    "enable_thinking": self._enable_thinking,
                     "image_mime_type": normalized_mime,
                     "image_width": image_width,
                     "image_height": image_height,

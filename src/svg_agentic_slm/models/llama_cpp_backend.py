@@ -23,6 +23,11 @@ DEFAULT_UPSTREAM_MODEL_ID = "google/gemma-4-12B-it-qat-q4_0-unquantized"
 DEFAULT_QUANTIZATION = "Q4_0"
 DEFAULT_QUANTIZATION_PROVIDER = "LM Studio Community"
 DEFAULT_CONVERSION_RUNTIME = "llama.cpp b9518"
+_SPLIT_MODES = {
+    "none": 0,
+    "layer": 1,
+    "row": 2,
+}
 
 
 class LlamaCppModelBackend(BaseModelBackend):
@@ -46,6 +51,8 @@ class LlamaCppModelBackend(BaseModelBackend):
         conversion_runtime: str | None = None,
         n_ctx: int = 8192,
         n_gpu_layers: int = -1,
+        main_gpu: int = 0,
+        split_mode: str = "layer",
         n_batch: int = 512,
         flash_attn: bool = True,
         use_mmap: bool = True,
@@ -60,6 +67,11 @@ class LlamaCppModelBackend(BaseModelBackend):
             raise ValueError("n_ctx must be positive.")
         if n_batch <= 0:
             raise ValueError("n_batch must be positive.")
+        if not isinstance(main_gpu, int) or isinstance(main_gpu, bool) or main_gpu < 0:
+            raise ValueError("main_gpu must be a non-negative integer.")
+        if not isinstance(split_mode, str) or split_mode.strip().lower() not in _SPLIT_MODES:
+            names = ", ".join(sorted(_SPLIT_MODES))
+            raise ValueError(f"split_mode must be one of: {names}.")
 
         uses_default_distribution = model_id == DEFAULT_MODEL_ID and filename == DEFAULT_MODEL_FILE
         self.model_id = model_id
@@ -82,6 +94,8 @@ class LlamaCppModelBackend(BaseModelBackend):
         )
         self.n_ctx = n_ctx
         self.n_gpu_layers = n_gpu_layers
+        self.main_gpu = main_gpu
+        self.split_mode = split_mode.strip().lower()
         self.n_batch = n_batch
         self.flash_attn = flash_attn
         self.use_mmap = use_mmap
@@ -108,6 +122,8 @@ class LlamaCppModelBackend(BaseModelBackend):
             "model_path": str(model_path),
             "n_ctx": self.n_ctx,
             "n_gpu_layers": self.n_gpu_layers,
+            "main_gpu": self.main_gpu,
+            "split_mode": _SPLIT_MODES[self.split_mode],
             "n_batch": self.n_batch,
             "flash_attn": self.flash_attn,
             "use_mmap": self.use_mmap,
@@ -182,6 +198,8 @@ class LlamaCppModelBackend(BaseModelBackend):
                 "conversion_runtime": self.conversion_runtime,
                 "n_ctx": self.n_ctx,
                 "n_gpu_layers": self.n_gpu_layers,
+                "main_gpu": self.main_gpu,
+                "split_mode": self.split_mode,
                 "n_batch": self.n_batch,
                 "flash_attn": self.flash_attn,
                 "streaming_metrics_enabled": self.measure_streaming_metrics,

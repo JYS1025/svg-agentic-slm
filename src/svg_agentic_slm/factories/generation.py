@@ -22,13 +22,13 @@ from svg_agentic_slm.agents.llm_critic import LLMCritic
 from svg_agentic_slm.agents.orchestrator import SVGGenerationOrchestrator
 from svg_agentic_slm.agents.rag_agent import RAGAgent
 from svg_agentic_slm.agents.rule_critic import RuleBasedCritic
-from svg_agentic_slm.agents.vlm_critic import VLMCritic
 from svg_agentic_slm.agents.schemas import (
     CriticFeedback,
     CriticInput,
     GenerationRequest,
     validate_critic_feedback,
 )
+from svg_agentic_slm.agents.vlm_critic import VLMCritic
 from svg_agentic_slm.artifacts.writer import (
     GenerationArtifacts as GenerationArtifacts,
 )
@@ -53,9 +53,9 @@ from svg_agentic_slm.rag.base import BaseRetriever
 from svg_agentic_slm.rag.chroma_store import ChromaRetriever
 from svg_agentic_slm.rag.document_loader import load_svg_corpus
 from svg_agentic_slm.rag.qdrant_store import QdrantRetriever
-from svg_agentic_slm.svg.renderer import CairoSVGRenderer
 from svg_agentic_slm.svg.gates import SmokeRenderGate
 from svg_agentic_slm.svg.labeler import CriticLabeler
+from svg_agentic_slm.svg.renderer import CairoSVGRenderer
 from svg_agentic_slm.svg.validator import SVGValidator
 from svg_agentic_slm.utils.config import load_yaml_config
 from svg_agentic_slm.utils.paths import get_config_dir
@@ -510,12 +510,14 @@ def _build_model_backend(
         "model_id",
         "model_path",
         "measure_streaming_metrics",
+        "main_gpu",
         "n_batch",
         "n_ctx",
         "n_gpu_layers",
         "quantization",
         "quantization_provider",
         "revision",
+        "split_mode",
         "upstream_model_id",
         "use_mmap",
         "verbose",
@@ -533,11 +535,13 @@ def _build_model_backend(
     }
     transformers_vlm_keys = {
         "attn_implementation",
+        "auto_model_class",
         "backend_type",
         "background_color",
         "device",
         "do_sample",
         "dtype",
+        "enable_thinking",
         "local_files_only",
         "max_new_tokens",
         "model_id",
@@ -581,8 +585,10 @@ def _build_model_backend(
             ("device", "device"),
             ("dtype", "dtype"),
             ("attn_implementation", "attn_implementation"),
+            ("auto_model_class", "auto_model_class"),
             ("max_new_tokens", "max_new_tokens"),
             ("do_sample", "do_sample"),
+            ("enable_thinking", "enable_thinking"),
             ("local_files_only", "local_files_only"),
             ("trust_remote_code", "trust_remote_code"),
             ("token_env", "token_env"),
@@ -603,6 +609,8 @@ def _build_model_backend(
         conversion_runtime=model_config.get("conversion_runtime"),
         n_ctx=model_config.get("n_ctx", 8192),
         n_gpu_layers=model_config.get("n_gpu_layers", -1),
+        main_gpu=model_config.get("main_gpu", 0),
+        split_mode=model_config.get("split_mode", "layer"),
         n_batch=model_config.get("n_batch", 512),
         flash_attn=model_config.get("flash_attn", True),
         use_mmap=model_config.get("use_mmap", True),
@@ -635,6 +643,10 @@ def build_rag_retriever(
     backend = str(rag_config.get("backend", "chromadb")).strip().lower()
     if backend in {"chroma", "chromadb"}:
         settings = _merge_backend_settings(rag_config, "chromadb")
+        dataset_roots = settings.get("dataset_roots", {})
+        if not isinstance(dataset_roots, dict):
+            raise ValueError("rag.chromadb.dataset_roots must be a mapping.")
+        embedding_dimension = settings.get("embedding_dimension")
         retriever = ChromaRetriever(
             collection_name=settings.get("collection_name", "svg_patterns"),
             persist_directory=settings.get(
@@ -646,6 +658,15 @@ def build_rag_retriever(
                 "all-MiniLM-L6-v2",
             ),
             similarity_threshold=settings.get("similarity_threshold", 0.0),
+            embedding_revision=settings.get("embedding_revision"),
+            embedding_dimension=(
+                int(embedding_dimension) if embedding_dimension is not None else None
+            ),
+            query_instruction=settings.get("query_instruction"),
+            device=settings.get("device", "cuda:0"),
+            dataset_roots=dataset_roots,
+            precomputed_embeddings=bool(settings.get("precomputed_embeddings", False)),
+            overfetch_factor=int(settings.get("overfetch_factor", 5)),
         )
         corpus_path = settings.get("corpus_path")
         if index_chroma_corpus and corpus_path:

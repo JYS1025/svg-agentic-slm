@@ -1,0 +1,37 @@
+# Gemma 4 text-to-SVG Generator on GPU 0 with a Gemma 4 visual Critic on GPU 1.
+model:
+  backend_type: "llama_cpp"
+  model_id: "lmstudio-community/gemma-4-12B-it-QAT-GGUF"
+  filename: "gemma-4-12B-it-QAT-Q4_0.gguf"
+  revision: "291406f49e16eff811c85ad8884d375f34138663"
+  upstream_model_id: "google/gemma-4-12B-it-qat-q4_0-unquantized"
+  quantization: "Q4_0"
+  quantization_provider: "LM Studio Community"
+  conversion_runtime: "llama.cpp b9518"
+  n_gpu_layers: -1
+  main_gpu: 0
+  split_mode: "none"
+  n_ctx: 32768
+  n_batch: 512
+  flash_attn: true
+  use_mmap: true
+  verbose: false
+  chat_format: null
+  measure_streaming_metrics: true
+
+critic_model:
+  backend_type: "transformers_vlm"
+  model_id: "google/gemma-4-12B-it-qat-q4_0-unquantized"
+  revision: "b6ed86275a6a5735884e208bfed95b445a684ca2"
+  auto_model_class: "multimodal_lm"
+  device: "cuda:1"
+  dtype: "bfloat16"
+  attn_implementation: "sdpa"
+  max_new_tokens: 384
+  do_sample: false
+  enable_thinking: false
+  local_files_only: false
+  trust_remote_code: false
+  render_width: 512
+  render_height: 512
+  background_color: "#ffffff"
