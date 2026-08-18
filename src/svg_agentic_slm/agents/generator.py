@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import logging
-from dataclasses import replace
 from typing import TYPE_CHECKING, Literal
 from uuid import uuid4
 
@@ -31,6 +30,42 @@ if TYPE_CHECKING:
     from svg_agentic_slm.rag.schemas import RetrievedExample
 
 logger = logging.getLogger(__name__)
+
+
+def select_retrieval_context(
+    items: list[RetrievedExample],
+    *,
+    max_context_characters: int,
+) -> tuple[list[RetrievedExample], list[str]]:
+    """Apply the Generator's character budget to typed retrieval context.
+
+    This helper is intentionally model-free so diagnostic tools can preview
+    the exact prompt context selection used by :class:`GeneratorAgent`.
+
+    SVG XML is never cut mid-document. An item that does not fit is omitted so
+    every reference included in the model prompt remains structurally valid.
+
+    Returns:
+        A pair of the selected complete examples and the stable IDs of examples
+        omitted by the context budget. The second value keeps the historical
+        ``truncated_context_item_ids`` artifact name for schema compatibility.
+    """
+    if max_context_characters < 0:
+        raise ValueError("max_context_characters must be non-negative.")
+
+    selected: list[RetrievedExample] = []
+    truncated_ids: list[str] = []
+    remaining = max_context_characters
+
+    for item in items:
+        item_cost = len(item.description) + len(item.source) + len(item.content) + 128
+        if item_cost > remaining:
+            truncated_ids.append(item.item_id)
+            continue
+        selected.append(item)
+        remaining -= item_cost
+
+    return selected, truncated_ids
 
 
 class GeneratorAgent(BaseGenerator):
@@ -180,27 +215,10 @@ class GeneratorAgent(BaseGenerator):
         self,
         items: list[RetrievedExample],
     ) -> tuple[list[RetrievedExample], list[str]]:
-        selected: list[RetrievedExample] = []
-        truncated_ids: list[str] = []
-        remaining = self._max_context_characters
-
-        for item in items:
-            overhead = len(item.description) + len(item.source) + 128
-            available_content = remaining - overhead
-            if available_content <= 0:
-                truncated_ids.append(item.item_id)
-                continue
-
-            if len(item.content) <= available_content:
-                selected.append(item)
-                remaining -= overhead + len(item.content)
-                continue
-
-            selected.append(replace(item, content=item.content[:available_content]))
-            truncated_ids.append(item.item_id)
-            remaining = 0
-
-        return selected, truncated_ids
+        return select_retrieval_context(
+            items,
+            max_context_characters=self._max_context_characters,
+        )
 
 
 def _format_feedback(feedback: CriticFeedback) -> str:

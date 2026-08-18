@@ -15,6 +15,7 @@ from svg_agentic_slm.cli.app import app
 from svg_agentic_slm.factories import generation
 from svg_agentic_slm.rag.hf_indexer import IndexingResult
 from svg_agentic_slm.rag.schemas import RetrievedExample
+from svg_agentic_slm.utils.config import load_yaml_config
 
 runner = CliRunner()
 
@@ -115,12 +116,84 @@ def test_backend_factory_skips_chroma_corpus_when_requested(
     )
 
 
+def test_backend_factory_forwards_precomputed_mmsvg_chroma_settings(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(generation, "ChromaRetriever", _FactoryProduct)
+    dataset_roots = {
+        "icon": "./data/raw/mmsvg_icon_v2/data",
+        "illustration": "./data/raw/mmsvg_illustration_v2/data",
+    }
+
+    retriever = generation.build_rag_retriever(
+        {
+            "backend": "chromadb",
+            "chromadb": {
+                "collection_name": "mmsvg-description-qwen",
+                "persist_directory": "./data/chroma_db",
+                "embedding_model": "Qwen/Qwen3-Embedding-0.6B",
+                "embedding_revision": "revision-123",
+                "embedding_dimension": 1024,
+                "similarity_threshold": 0.25,
+                "query_instruction": "Retrieve matching SVG examples.",
+                "device": "cuda:1",
+                "dataset_roots": dataset_roots,
+                "precomputed_embeddings": True,
+                "overfetch_factor": 7,
+            },
+        },
+        index_chroma_corpus=False,
+    )
+
+    assert isinstance(retriever, _FactoryProduct)
+    assert retriever.kwargs == {
+        "collection_name": "mmsvg-description-qwen",
+        "persist_directory": "./data/chroma_db",
+        "embedding_model": "Qwen/Qwen3-Embedding-0.6B",
+        "embedding_revision": "revision-123",
+        "embedding_dimension": 1024,
+        "similarity_threshold": 0.25,
+        "query_instruction": "Retrieve matching SVG examples.",
+        "device": "cuda:1",
+        "dataset_roots": dataset_roots,
+        "precomputed_embeddings": True,
+        "overfetch_factor": 7,
+    }
+
+
+def test_active_rag_config_keeps_chroma_and_qdrant_embedding_dimensions_separate(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    rag_config = load_yaml_config(Path(__file__).parents[1] / "configs" / "rag.yaml")["rag"]
+    monkeypatch.setattr(generation, "ChromaRetriever", _FactoryProduct)
+    monkeypatch.setattr(generation, "QdrantRetriever", _FactoryProduct)
+
+    chroma = generation.build_rag_retriever(
+        {**rag_config, "backend": "chromadb"},
+        index_chroma_corpus=False,
+    )
+    qdrant = generation.build_rag_retriever(
+        {**rag_config, "backend": "qdrant"},
+        index_chroma_corpus=False,
+    )
+
+    assert chroma.kwargs["embedding_model"] == "Qwen/Qwen3-Embedding-0.6B"
+    assert chroma.kwargs["embedding_dimension"] == 1024
+    assert qdrant.kwargs["embedding_model"] == ("sentence-transformers/all-MiniLM-L6-v2")
+
+
 def test_backend_factory_rejects_unknown_backend_and_invalid_nested_config() -> None:
     with pytest.raises(ValueError, match="Unsupported RAG backend"):
         generation.build_rag_retriever({"backend": "pinecone"})
 
     with pytest.raises(ValueError, match=r"rag\.qdrant must be a mapping"):
         generation.build_rag_retriever({"backend": "qdrant", "qdrant": "not-a-mapping"})
+
+
+@pytest.mark.parametrize("top_k", [True, 0, -1, 3.5, "3"])
+def test_rag_agent_factory_rejects_non_positive_integer_top_k(top_k: Any) -> None:
+    with pytest.raises(ValueError, match=r"rag\.top_k must be a positive integer"):
+        generation._build_rag_agent({"top_k": top_k})
 
 
 @pytest.mark.parametrize("secret_key", ["api_key", "token", "service_password"])

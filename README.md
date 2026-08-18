@@ -14,6 +14,9 @@ An agentic pipeline utilizing Small Language Models (SLMs) to generate, validate
 
 ## Project Documents
 
+- [Slurm Quick Start (Korean)](docs/slurm-quickstart.md):
+  concise cluster resource discovery, interactive debugging, batch submission,
+  monitoring, job arrays, and project-specific GPU/model-cache notes.
 - [Generator Development Cycle Roadmap](docs/generator-cycle-roadmap.md):
   concise Cycle 0–8 goals, dependencies, ownership boundaries, experiments,
   and exit criteria.

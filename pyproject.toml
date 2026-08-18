@@ -15,12 +15,14 @@ authors = [
 
 dependencies = [
     "torch>=2.0",
-    "transformers>=4.40",
+    "transformers>=4.51,<5",
+    "sentence-transformers>=3,<6",
     "peft>=0.10",
     "trl>=0.8",
     "datasets>=2.18",
+    "pyarrow>=20,<23",
     "accelerate>=0.28",
-    "chromadb>=0.4",
+    "chromadb>=1.5,<2",
     "cairosvg>=2.7",
     "typer>=0.12",
     "rich>=13.0",

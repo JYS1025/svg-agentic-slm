@@ -342,6 +342,10 @@ def build_rag_retriever(
     backend = str(rag_config.get("backend", "chromadb")).strip().lower()
     if backend in {"chroma", "chromadb"}:
         settings = _merge_backend_settings(rag_config, "chromadb")
+        dataset_roots = settings.get("dataset_roots", {})
+        if not isinstance(dataset_roots, dict):
+            raise ValueError("rag.chromadb.dataset_roots must be a mapping.")
+        embedding_dimension = settings.get("embedding_dimension")
         retriever = ChromaRetriever(
             collection_name=settings.get("collection_name", "svg_patterns"),
             persist_directory=settings.get(
@@ -353,6 +357,15 @@ def build_rag_retriever(
                 "all-MiniLM-L6-v2",
             ),
             similarity_threshold=settings.get("similarity_threshold", 0.0),
+            embedding_revision=settings.get("embedding_revision"),
+            embedding_dimension=(
+                int(embedding_dimension) if embedding_dimension is not None else None
+            ),
+            query_instruction=settings.get("query_instruction"),
+            device=settings.get("device", "cuda:0"),
+            dataset_roots=dataset_roots,
+            precomputed_embeddings=bool(settings.get("precomputed_embeddings", False)),
+            overfetch_factor=int(settings.get("overfetch_factor", 5)),
         )
         corpus_path = settings.get("corpus_path")
         if index_chroma_corpus and corpus_path:
@@ -386,12 +399,15 @@ def build_rag_retriever(
 
 
 def _build_rag_agent(rag_config: dict[str, Any]) -> RAGAgent:
+    top_k = rag_config.get("top_k", 3)
+    if isinstance(top_k, bool) or not isinstance(top_k, int) or top_k <= 0:
+        raise ValueError("rag.top_k must be a positive integer.")
     retriever = build_rag_retriever(rag_config)
     if isinstance(retriever, QdrantRetriever):
         retriever.preflight()
     return RAGAgent(
         retriever=retriever,
-        top_k=rag_config.get("top_k", 3),
+        top_k=top_k,
     )
 
 

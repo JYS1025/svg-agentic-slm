@@ -4,7 +4,9 @@ import typer
 
 from svg_agentic_slm.cli.commands_eval import evaluate
 from svg_agentic_slm.cli.commands_generate import generate
+from svg_agentic_slm.cli.commands_mmsvg_rag_index import mmsvg_rag_index
 from svg_agentic_slm.cli.commands_rag_index import rag_index
+from svg_agentic_slm.cli.commands_rag_preview import rag_preview
 from svg_agentic_slm.cli.commands_render import render
 from svg_agentic_slm.cli.commands_train import train
 from svg_agentic_slm.cli.commands_validate import validate
@@ -20,6 +22,8 @@ app.command(name="validate")(validate)
 app.command(name="render")(render)
 app.command(name="train")(train)
 app.command(name="rag-index")(rag_index)
+app.command(name="mmsvg-rag-index")(mmsvg_rag_index)
+app.command(name="rag-preview")(rag_preview)
 app.command(name="eval")(evaluate)
 
 
