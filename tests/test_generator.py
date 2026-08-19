@@ -2,6 +2,10 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
+
+import pytest
+
 from svg_agentic_slm.agents.generator import GeneratorAgent
 from svg_agentic_slm.agents.schemas import (
     CriticFeedback,
@@ -9,7 +13,9 @@ from svg_agentic_slm.agents.schemas import (
     GenerationRequest,
 )
 from svg_agentic_slm.models.schemas import ModelResponse
+from svg_agentic_slm.prompts.text_to_svg import build_retrieval_context
 from svg_agentic_slm.rag.schemas import RetrievedExample
+from svg_agentic_slm.svg.validator import SVGValidator
 
 
 class _RecordingBackend:
@@ -24,6 +30,9 @@ class _RecordingBackend:
             model_id="fake-model",
             model_revision="revision",
         )
+
+    def count_tokens(self, text: str) -> int:
+        return len(text.encode("utf-8"))
 
 
 def test_generate_extracts_svg_and_preserves_context_provenance() -> None:
@@ -49,6 +58,8 @@ def test_generate_extracts_svg_and_preserves_context_provenance() -> None:
     assert output.svg == "<svg><circle/></svg>"
     assert output.raw_output.startswith("Here is")
     assert output.context_item_ids == ["rag-1"]
+    assert output.metadata["context_usage"][0]["status"] == "fully_used"
+    assert output.metadata["context_usage"][0]["token_count"] > 0
     assert "corpus:item-1" in backend.calls[0][0]
     assert output.model_calls[0].prompt == backend.calls[0][0]
     assert output.model_calls[0].system_prompt
@@ -90,3 +101,93 @@ def test_generate_reports_svg_extraction_failure() -> None:
     assert output.status == "failed"
     assert output.svg == ""
     assert output.error == "svg_extraction_failed"
+
+
+def test_context_budget_uses_whole_svg_elements_and_records_usage() -> None:
+    backend = _RecordingBackend(["<svg><path d='M0 0'/></svg>"])
+    item = RetrievedExample(
+        content=(
+            '<svg xmlns="http://www.w3.org/2000/svg">'
+            '<rect id="kept" width="10" height="10"/>'
+            '<circle id="dropped" cx="20" cy="20" r="5"/>'
+            "</svg>"
+        ),
+        description="Two shapes",
+        source="corpus:item",
+        item_id="rag-elements",
+    )
+    one_element = replace(
+        item,
+        content=(
+            '<svg xmlns="http://www.w3.org/2000/svg">'
+            '<rect id="kept" width="10" height="10"/>'
+            "</svg>"
+        ),
+    )
+    token_budget = backend.count_tokens(build_retrieval_context([one_element]))
+    generator = GeneratorAgent(backend, max_context_tokens=token_budget)
+
+    output = generator.generate(
+        GenerationRequest(instruction="Draw a path."),
+        context=[item],
+    )
+
+    prompt = backend.calls[0][0]
+    context_svg_start = prompt.index('<svg xmlns="http://www.w3.org/2000/svg">')
+    context_svg_end = prompt.index("</svg>", context_svg_start) + len("</svg>")
+    selected_svg = prompt[context_svg_start:context_svg_end]
+    assert SVGValidator().validate(selected_svg).is_valid
+    assert 'id="kept"' in selected_svg
+    assert 'id="dropped"' not in selected_svg
+    assert output.context_item_ids == ["rag-elements"]
+    assert output.truncated_context_item_ids == ["rag-elements"]
+    assert output.metadata["context_token_count"] <= token_budget
+    assert output.metadata["context_usage"] == [
+        {
+            "item_id": "rag-elements",
+            "status": "partially_used",
+            "token_count": output.metadata["context_token_count"],
+            "included_element_count": 1,
+            "total_element_count": 2,
+        }
+    ]
+
+
+def test_context_budget_drops_whole_non_svg_item_without_character_slicing() -> None:
+    backend = _RecordingBackend(["<svg/>"])
+    generator = GeneratorAgent(backend, max_context_tokens=1)
+    item = RetrievedExample(
+        content="Never slice this correction text.",
+        description="Correction",
+        source="corpus:correction",
+        item_id="rag-correction",
+        kind="correction_pair",
+    )
+
+    output = generator.generate(
+        GenerationRequest(instruction="Draw."),
+        context=[item],
+    )
+
+    assert "Never slice" not in backend.calls[0][0]
+    assert output.context_item_ids == []
+    assert output.metadata["context_usage"][0]["status"] == "dropped"
+    assert output.metadata["context_usage"][0]["token_count"] == 0
+
+
+def test_nonempty_context_requires_backend_tokenizer() -> None:
+    class BackendWithoutTokenizer:
+        def generate(self, prompt: str, **kwargs) -> ModelResponse:
+            return ModelResponse(text="<svg/>", model_id="fake")
+
+    generator = GeneratorAgent(BackendWithoutTokenizer())  # type: ignore[arg-type]
+    item = RetrievedExample(
+        content="Correction text",
+        description="Correction",
+        source="corpus:correction",
+        item_id="rag-correction",
+        kind="correction_pair",
+    )
+
+    with pytest.raises(RuntimeError, match="tokenizer-based count_tokens"):
+        generator.generate(GenerationRequest(instruction="Draw."), context=[item])

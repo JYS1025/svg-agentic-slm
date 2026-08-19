@@ -34,6 +34,9 @@ An agentic pipeline utilizing Small Language Models (SLMs) to generate, validate
 - [Generator Cycle 0 Status and Experiment Runbook](docs/generator-cycle0-status-and-runbook.md):
   completion gates, agreed contracts, and user-run model/dataset experiment
   commands.
+- [Pipeline Operational Safety Contract](docs/pipeline-operational-safety-contract.md):
+  shared RAG context, candidate selection, static SVG, Critic failure, artifact,
+  and timing rules for all pipeline workstreams.
 - [Generate Command Workflow](docs/generate-command-workflow.md): current CLI,
   ownership, configuration, and artifact flow.
 

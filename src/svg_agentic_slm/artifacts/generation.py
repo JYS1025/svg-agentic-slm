@@ -88,7 +88,11 @@ def parse_generation_artifact_payload(
     schema_version = _schema_version(payload.get("schema_version", 0))
     strict_references = schema_version >= 1
     if strict_references:
-        _validate_v1_payload(payload, allow_v2_feedback=schema_version >= 2)
+        _validate_v1_payload(
+            payload,
+            allow_v2_feedback=schema_version >= 2,
+            allow_v2_outcomes=schema_version >= 2,
+        )
     if schema_version >= 2:
         _validate_v2_payload(payload)
 
@@ -113,6 +117,7 @@ def parse_generation_artifact_payload(
         metadata,
         metadata_path,
         strict_references=strict_references,
+        allow_v2_outcomes=schema_version >= 2,
     )
     if strict_references:
         _validate_v1_consistency(payload, attempts, svg_path)
@@ -210,6 +215,7 @@ def _load_attempts(
     metadata_path: Path,
     *,
     strict_references: bool,
+    allow_v2_outcomes: bool = False,
 ) -> list[GenerationAttemptRecord]:
     generator_metadata = _as_dict(metadata.get("generator"))
     raw_attempts = generator_metadata.get("attempts", [])
@@ -228,7 +234,11 @@ def _load_attempts(
             continue
         field_prefix = f"metadata.generator.attempts[{attempt_index}]"
         if strict_references:
-            _validate_v1_attempt(raw_attempt, field_prefix)
+            _validate_v1_attempt(
+                raw_attempt,
+                field_prefix,
+                allow_v2_outcomes=allow_v2_outcomes,
+            )
         model_calls = _load_model_calls(
             raw_attempt.get("model_calls"),
             metadata_path,
@@ -373,6 +383,7 @@ def _validate_v1_payload(
     payload: dict[str, Any],
     *,
     allow_v2_feedback: bool = False,
+    allow_v2_outcomes: bool = False,
 ) -> None:
     _require_string(payload.get("run_id"), "run_id", non_empty=True)
     _require_string(payload.get("instruction"), "instruction", non_empty=True)
@@ -380,10 +391,13 @@ def _validate_v1_payload(
     _require_bool(payload.get("is_valid"), "is_valid")
     _require_nonnegative_int(payload.get("revision_count"), "revision_count")
     _require_optional_string(payload.get("render_path"), "render_path")
+    outcomes = {"accepted", "rejected", "failed"}
+    if allow_v2_outcomes:
+        outcomes.update({"selected_best", "rolled_back", "critic_contract_failure"})
     _require_choice(
         payload.get("outcome"),
         "outcome",
-        {"accepted", "rejected", "failed"},
+        outcomes,
     )
     _require_string(payload.get("stop_reason"), "stop_reason", non_empty=True)
     _require_string(
@@ -448,7 +462,7 @@ def _validate_v2_payload(payload: dict[str, Any]) -> None:
         attempt_id = attempt.get("attempt_id")
         _require_string(attempt_id, f"{prefix}.attempt_id", non_empty=True)
         if attempt_id in attempts:
-            raise ValueError("metadata.generator.attempts contains a duplicate attempt_id.")
+            raise ValueError("attempt_id values must be unique within one run.")
         attempts[attempt_id] = attempt
         call_ids_by_attempt[attempt_id] = _validate_v2_attempt(attempt, prefix)
 
@@ -506,7 +520,9 @@ def _validate_v2_payload(payload: dict[str, Any]) -> None:
                 raise ValueError(f"{prefix} contains a target ID absent from Critic evidence.")
 
     if payload.get("outcome") == "accepted" and latest_v2_feedback is not None:
-        final_attempt_id = attempts_value[-1].get("attempt_id")
+        final_attempt_id = _selected_attempt_id(payload) or attempts_value[-1].get(
+            "attempt_id"
+        )
         if (
             latest_v2_feedback.get("target_attempt_id") != final_attempt_id
             or latest_v2_feedback.get("status") != "pass"
@@ -669,7 +685,12 @@ def _feedback_evidence_target_ids(
     return result
 
 
-def _validate_v1_attempt(attempt: dict[str, Any], prefix: str) -> None:
+def _validate_v1_attempt(
+    attempt: dict[str, Any],
+    prefix: str,
+    *,
+    allow_v2_outcomes: bool = False,
+) -> None:
     _require_string(attempt.get("attempt_id"), f"{prefix}.attempt_id", non_empty=True)
     mode = attempt.get("mode")
     _require_choice(mode, f"{prefix}.mode", {"initial", "revision"})
@@ -712,10 +733,13 @@ def _validate_v1_attempt(attempt: dict[str, Any], prefix: str) -> None:
     )
     _require_optional_string(attempt.get("error"), f"{prefix}.error")
     outcome = attempt.get("outcome")
+    outcomes = {"accepted", "rejected", "failed"}
+    if allow_v2_outcomes:
+        outcomes.update({"selected_best", "rolled_back", "critic_contract_failure"})
     _require_choice(
         outcome,
         f"{prefix}.outcome",
-        {"accepted", "rejected", "failed"},
+        outcomes,
     )
     if (status == "failed") != (outcome == "failed"):
         raise ValueError(f"{prefix} status and outcome are inconsistent.")
@@ -791,19 +815,37 @@ def _validate_v1_consistency(
             "revision_count must equal the number of revision attempts."
         )
 
-    final_attempt = attempts[-1]
-    if payload["outcome"] != final_attempt.outcome:
-        raise ValueError("Top-level outcome must match the final attempt.")
-    if payload["stop_reason"] != final_attempt.stop_reason:
-        raise ValueError("Top-level stop_reason must match the final attempt.")
+    selected_attempt_id = _selected_attempt_id(payload)
+    selected_attempt = attempts[-1]
+    selection_label = "final"
+    if selected_attempt_id is not None:
+        matching_attempts = [
+            attempt
+            for attempt in attempts
+            if attempt.attempt_id == selected_attempt_id
+        ]
+        if not matching_attempts:
+            raise ValueError(
+                "metadata.selection.selected_attempt_id does not identify an attempt."
+            )
+        selected_attempt = matching_attempts[0]
+        selection_label = "selected"
+    if payload["outcome"] != selected_attempt.outcome:
+        raise ValueError(f"Top-level outcome must match the {selection_label} attempt.")
+    if payload["stop_reason"] != selected_attempt.stop_reason:
+        raise ValueError(
+            f"Top-level stop_reason must match the {selection_label} attempt."
+        )
     if payload["outcome"] == "accepted" and not payload["is_valid"]:
         raise ValueError("An accepted artifact must have is_valid=true.")
     if (
-        final_attempt.status == "succeeded"
-        and final_attempt.svg_path is not None
-        and svg_path.read_bytes() != final_attempt.svg_path.read_bytes()
+        selected_attempt.status == "succeeded"
+        and selected_attempt.svg_path is not None
+        and svg_path.read_bytes() != selected_attempt.svg_path.read_bytes()
     ):
-        raise ValueError("Top-level SVG must match the final successful attempt SVG.")
+        raise ValueError(
+            f"Top-level SVG must match the {selection_label} successful attempt SVG."
+        )
 
     attempt_ids = [attempt.attempt_id for attempt in attempts]
     _require_unique_ids(attempt_ids, "attempt_id")
@@ -834,7 +876,7 @@ def _validate_v1_consistency(
                 "Each feedback target_attempt_id must reference an existing attempt."
             )
 
-    _validate_v1_acceptance(payload, final_attempt, feedback_items)
+    _validate_v1_acceptance(payload, selected_attempt, feedback_items)
 
     for attempt in attempts[1:]:
         feedback = feedback_by_id.get(attempt.trigger_feedback_id)
@@ -900,6 +942,24 @@ def _v1_critic_acceptance_score(runtime: dict[str, Any]) -> float:
     value = orchestration.get("critic_acceptance_score", 8.0)
     _require_score(value, "runtime.generation_config.orchestration.critic_acceptance_score")
     return float(value)
+
+
+def _selected_attempt_id(payload: dict[str, Any]) -> str | None:
+    metadata = payload.get("metadata")
+    if not isinstance(metadata, dict):
+        return None
+    selection = metadata.get("selection")
+    if selection is None:
+        return None
+    if not isinstance(selection, dict):
+        raise ValueError("metadata.selection must be an object.")
+    selected_id = selection.get("selected_attempt_id")
+    _require_string(
+        selected_id,
+        "metadata.selection.selected_attempt_id",
+        non_empty=True,
+    )
+    return str(selected_id)
 
 
 def _require_unique_ids(values: list[str], field_name: str) -> None:

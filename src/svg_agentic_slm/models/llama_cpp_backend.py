@@ -246,7 +246,7 @@ class LlamaCppModelBackend(BaseModelBackend):
         except Exception as exc:
             raise RuntimeError(f"Generation failed for model '{self.model_id}'.") from exc
 
-        completion_tokens = self._count_tokens(chunks["text"])
+        completion_tokens = self.count_tokens(chunks["text"])
         total_tokens = getattr(self._model, "n_tokens", None)
         prompt_tokens = (
             max(0, int(total_tokens) - completion_tokens)
@@ -265,10 +265,11 @@ class LlamaCppModelBackend(BaseModelBackend):
             ),
         }
 
-    def _count_tokens(self, text: str) -> int:
+    def count_tokens(self, text: str) -> int:
+        """Count text with the loaded llama.cpp tokenizer."""
         tokenize = getattr(self._model, "tokenize", None)
         if not callable(tokenize):
-            return 0
+            raise RuntimeError("llama.cpp tokenizer is unavailable; load the model first.")
         tokens = tokenize(text.encode("utf-8"), add_bos=False, special=True)
         return len(tokens)
 

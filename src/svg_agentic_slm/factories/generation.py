@@ -91,6 +91,8 @@ class GenerationRuntime:
     run_id: str
     critic_model_config: dict[str, Any] | None = None
     critic_model_backend: BaseModelBackend | None = None
+    execution_command: list[str] | None = None
+    benchmark_hash: str | None = None
 
 
 class CompositeCritic(BaseCritic):
@@ -343,6 +345,7 @@ def build_generation_runtime(
             "max_context_characters",
             12000,
         ),
+        max_context_tokens=svg_settings.get("max_context_tokens"),
     )
     validator = SVGValidator()
     critic = (
@@ -394,6 +397,14 @@ def build_generation_runtime(
         critic_labeler=critic_labeler,
         smoke_render_gate=smoke_render_gate,
         require_visual_evidence=grounded_visual_critic,
+        max_no_improvement_rounds=orchestration_config.get(
+            "max_no_improvement_rounds",
+            1,
+        ),
+        min_critic_score_improvement=orchestration_config.get(
+            "min_critic_score_improvement",
+            0.1,
+        ),
     )
 
     request = GenerationRequest(

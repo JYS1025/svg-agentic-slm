@@ -158,6 +158,24 @@ class OpenAICompatibleBackend(BaseModelBackend):
         """Clear local readiness state without controlling the external server."""
         self._ready = False
 
+    def count_tokens(self, text: str) -> int:
+        """Count tokens through the serving engine's tokenizer endpoint."""
+        if not self.is_loaded():
+            raise RuntimeError("Model endpoint is not ready. Call load_model() first.")
+        request_payload: dict[str, Any] = (
+            {"model": self.model_id, "prompt": text}
+            if self.engine == "vllm"
+            else {"content": text, "add_special": True}
+        )
+        payload = self._request_json("POST", "/tokenize", request_payload)
+        count = payload.get("count")
+        if isinstance(count, int) and not isinstance(count, bool) and count >= 0:
+            return count
+        tokens = payload.get("tokens")
+        if isinstance(tokens, list):
+            return len(tokens)
+        raise RuntimeError("Tokenizer response must contain a non-negative count or tokens list.")
+
     def _resolve_generation_config(self, overrides: dict[str, Any]) -> dict[str, Any]:
         supported = set(self.generation_config.to_dict())
         unknown = set(overrides) - supported

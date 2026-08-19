@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import pytest
 
+from svg_agentic_slm.prompts.system_prompts import get_svg_generator_system_prompt
+from svg_agentic_slm.svg.policy import STATIC_SVG_POLICY
 from svg_agentic_slm.svg.validator import SVGValidator, safe_svg_element_names
 
 
@@ -349,3 +351,19 @@ def test_safe_element_names_supports_documents_and_fragments() -> None:
 )
 def test_safe_element_names_uses_the_shared_strict_policy(unsafe_svg: str) -> None:
     assert safe_svg_element_names(unsafe_svg) is None
+
+
+def test_generator_prompt_and_validator_share_static_svg_policy() -> None:
+    prompt = get_svg_generator_system_prompt().lower()
+
+    for element in STATIC_SVG_POLICY.forbidden_elements:
+        assert element in prompt
+        result = SVGValidator().validate(
+            '<svg xmlns="http://www.w3.org/2000/svg">'
+            f"<{element}/>"
+            "</svg>"
+        )
+        assert not result.is_valid
+        assert any("static SVG policy" in error for error in result.errors)
+    assert "event-handler" in prompt
+    assert "#fragment" in prompt

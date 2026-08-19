@@ -14,6 +14,7 @@ from svg_agentic_slm.agents.orchestrator import SVGGenerationOrchestrator
 from svg_agentic_slm.agents.schemas import (
     CriticFeedback,
     CriticFeedbackEvent,
+    CriticTraceError,
     GenerationRequest,
     GenerationResult,
     GeneratorOutput,
@@ -201,6 +202,52 @@ class MalformedBooleanCritic(BaseCritic):
         )
 
 
+class ScoreSequenceCritic(BaseCritic):
+    def __init__(self, scores: list[float]) -> None:
+        self._scores = iter(scores)
+
+    @property
+    def name(self) -> str:
+        return "ScoreSequenceCritic"
+
+    def critique(self, instruction: str, svg_content: str) -> CriticFeedback:
+        return CriticFeedback(
+            score=next(self._scores),
+            is_valid=True,
+            matches_instruction=False,
+            critic_type="score-sequence",
+        )
+
+
+class ContractFailingCritic(BaseCritic):
+    @property
+    def name(self) -> str:
+        return "ContractFailingCritic"
+
+    def critique(self, instruction: str, svg_content: str) -> CriticFeedback:
+        raise CriticTraceError("critic response contract failed", [])
+
+
+class RevisionContractFailingCritic(BaseCritic):
+    def __init__(self) -> None:
+        self._calls = 0
+
+    @property
+    def name(self) -> str:
+        return "RevisionContractFailingCritic"
+
+    def critique(self, instruction: str, svg_content: str) -> CriticFeedback:
+        self._calls += 1
+        if self._calls == 2:
+            raise CriticTraceError("revision critic contract failed", [])
+        return CriticFeedback(
+            score=5.0,
+            is_valid=True,
+            matches_instruction=False,
+            critic_type="contract-sequence",
+        )
+
+
 def test_orchestrator_instantiation() -> None:
     """Test that the orchestrator can be created with stub components."""
     orchestrator = SVGGenerationOrchestrator(
@@ -361,3 +408,90 @@ def test_orchestrator_observer_receives_exact_initial_generator_input() -> None:
     assert len(observed) == 1
     assert observed[0][0] is request
     assert observed[0][1] == []
+
+
+def test_orchestrator_rolls_back_when_revision_score_regresses() -> None:
+    orchestrator = SVGGenerationOrchestrator(
+        generator=RevisingGenerator(),
+        validator=StubValidator(),
+        critic=ScoreSequenceCritic([8.0, 4.0]),
+        max_revisions=2,
+    )
+
+    result = orchestrator.run(GenerationRequest(instruction="Draw a circle."))
+
+    assert result.generated_svg == result.attempts[0].svg
+    assert result.generated_svg != result.attempts[-1].svg
+    assert result.metadata["selection"] == {
+        "selected_attempt_id": "attempt-initial",
+        "last_attempt_id": "attempt-revised",
+        "rolled_back": True,
+        "best_critic_score": 8.0,
+        "no_improvement_rounds": 0,
+    }
+    assert result.attempts[0].metadata["stop_reason"] == (
+        "critic_score_regressed_rollback"
+    )
+    assert result.attempts[-1].metadata["outcome"] == "rolled_back"
+
+
+def test_orchestrator_stops_after_configured_no_improvement_rounds() -> None:
+    orchestrator = SVGGenerationOrchestrator(
+        generator=RevisingGenerator(),
+        validator=StubValidator(),
+        critic=ScoreSequenceCritic([5.0, 5.05]),
+        max_revisions=2,
+        max_no_improvement_rounds=1,
+        min_critic_score_improvement=0.1,
+    )
+
+    result = orchestrator.run(GenerationRequest(instruction="Draw a circle."))
+
+    assert result.generated_svg == result.attempts[0].svg
+    assert result.metadata["selection"]["no_improvement_rounds"] == 1
+    assert result.attempts[0].metadata["stop_reason"] == (
+        "no_critic_score_improvement_rollback"
+    )
+
+
+def test_orchestrator_does_not_revise_on_critic_contract_failure() -> None:
+    generator = RevisingGenerator()
+    orchestrator = SVGGenerationOrchestrator(
+        generator=generator,
+        validator=StubValidator(),
+        critic=ContractFailingCritic(),
+        max_revisions=2,
+    )
+
+    result = orchestrator.run(GenerationRequest(instruction="Draw a circle."))
+
+    assert result.revision_count == 0
+    assert result.critic_feedback == []
+    assert result.feedback_events == []
+    assert generator.revision_feedback is None
+    assert result.generated_svg == result.attempts[0].svg
+    assert result.attempts[0].metadata["outcome"] == "critic_contract_failure"
+    assert result.attempts[0].metadata["stop_reason"] == "critic_contract_failure"
+    assert result.metadata["critic_contract_failure"]["attempt_id"] == "attempt-initial"
+    assert result.metadata["timing"]["pipeline_latency_seconds"] >= 0
+    assert result.metadata["timing"]["critic_latency_seconds"] >= 0
+
+
+def test_revision_contract_failure_rolls_back_without_more_feedback() -> None:
+    generator = RevisingGenerator()
+    orchestrator = SVGGenerationOrchestrator(
+        generator=generator,
+        validator=StubValidator(),
+        critic=RevisionContractFailingCritic(),
+        max_revisions=2,
+    )
+
+    result = orchestrator.run(GenerationRequest(instruction="Draw a circle."))
+
+    assert result.revision_count == 1
+    assert len(result.feedback_events) == 1
+    assert result.generated_svg == result.attempts[0].svg
+    assert result.metadata["selection"]["rolled_back"] is True
+    assert result.attempts[0].metadata["outcome"] == "selected_best"
+    assert result.attempts[-1].metadata["outcome"] == "critic_contract_failure"
+    assert result.attempts[-1].metadata["stop_reason"] == "critic_contract_failure"

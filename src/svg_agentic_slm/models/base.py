@@ -58,3 +58,14 @@ class BaseModelBackend(ABC):
         Default implementation is a no-op. Override if cleanup is needed.
         """
         pass
+
+    def count_tokens(self, text: str) -> int:
+        """Count tokens with the tokenizer used by this backend.
+
+        Backends that support RAG context budgeting must override this method.
+        Failing closed prevents character-based truncation from silently
+        corrupting structured context.
+        """
+        raise NotImplementedError(
+            f"{type(self).__name__} does not expose its generation tokenizer."
+        )

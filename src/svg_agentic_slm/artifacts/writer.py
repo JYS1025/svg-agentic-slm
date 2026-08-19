@@ -8,12 +8,12 @@ import logging
 import os
 import re
 import shutil
+import subprocess
 import time
 from collections.abc import Iterator
 from contextlib import contextmanager
 from dataclasses import asdict, dataclass, is_dataclass
 from datetime import UTC, datetime
-from importlib import import_module
 from pathlib import Path
 from typing import Any, Callable, Protocol
 from uuid import uuid4
@@ -22,7 +22,6 @@ from svg_agentic_slm.agents.schemas import CriticFeedback, GenerationResult
 from svg_agentic_slm.artifacts.generation import parse_generation_artifact_payload
 
 logger = logging.getLogger(__name__)
-_FILE_LOCK_API = import_module("msvcrt" if os.name == "nt" else "fcntl")
 
 
 class GenerationArtifactRuntime(Protocol):
@@ -69,10 +68,14 @@ def _persist_generation_artifacts_locked(
     """Publish an immutable run bundle, then atomically replace its sidecar."""
     if not result.attempts:
         raise ValueError("GenerationResult must contain at least one attempt.")
-    final_attempt = result.attempts[-1]
-    if result.generated_svg != final_attempt.svg:
+    selected_attempt = _selected_attempt(result)
+    if result.generated_svg != selected_attempt.svg:
+        attempt_label = (
+            "final" if selected_attempt is result.attempts[-1] else "selected"
+        )
         raise ValueError(
-            "GenerationResult.generated_svg must match the final attempt SVG."
+            "GenerationResult.generated_svg must match the "
+            f"{attempt_label} attempt SVG."
         )
     if result.critic_feedback and not result.feedback_events:
         raise ValueError(
@@ -85,6 +88,7 @@ def _persist_generation_artifacts_locked(
     bundle_dir = bundle_root / bundle_token
     staging_dir = bundle_root / f".{bundle_token}.{uuid4().hex}.tmp"
     metadata_published = False
+    git_provenance = _git_provenance()
 
     if bundle_dir.exists():
         raise FileExistsError(f"Artifact bundle already exists: {bundle_dir}")
@@ -120,8 +124,14 @@ def _persist_generation_artifacts_locked(
         generator_metadata = dict(result_metadata.get("generator", {}))
         generator_metadata["attempts"] = attempt_records
         result_metadata["generator"] = generator_metadata
-        outcome = final_attempt.metadata.get("outcome")
-        stop_reason = final_attempt.metadata.get("stop_reason")
+        outcome = selected_attempt.metadata.get("outcome")
+        stop_reason = selected_attempt.metadata.get("stop_reason")
+        provenance = _build_provenance(
+            result,
+            runtime,
+            attempt_records,
+            git_provenance=git_provenance,
+        )
         metadata_payload = {
             "schema_version": 2,
             "run_id": run_id,
@@ -165,6 +175,7 @@ def _persist_generation_artifacts_locked(
                 },
             },
             "metadata": result_metadata,
+            "provenance": provenance,
             "generated_at_utc": datetime.now(UTC).isoformat(),
         }
         metadata_content = json.dumps(
@@ -260,7 +271,13 @@ def _persist_attempt_artifacts(
                 {
                     "model_call_id": call.model_call_id,
                     "prompt_ref": prompt_ref,
+                    "prompt_sha256": _sha256_text(call.prompt),
                     "system_prompt_ref": system_prompt_ref,
+                    "system_prompt_sha256": (
+                        _sha256_text(call.system_prompt)
+                        if call.system_prompt is not None
+                        else None
+                    ),
                     "generation_parameters": call.generation_parameters,
                     "raw_output_ref": _relative_artifact_reference(
                         published_attempt_dir / raw_path.name,
@@ -368,6 +385,7 @@ def _persist_critic_evidence(
 
     record: dict[str, Any] = {
         "attempt_id": evidence.attempt_id,
+        "role": "critic_evidence_render",
         "png_ref": _relative_artifact_reference(
             published_attempt_dir / png_path.name,
             metadata_dir,
@@ -462,7 +480,13 @@ def _persist_critic_call_traces(
             "feedback_id": feedback_id,
             "retry_index": call.retry_index,
             "prompt_ref": prompt_ref,
+            "prompt_sha256": _sha256_text(call.prompt),
             "system_prompt_ref": system_prompt_ref,
+            "system_prompt_sha256": (
+                _sha256_text(call.system_prompt)
+                if call.system_prompt is not None
+                else None
+            ),
             "raw_output_ref": raw_output_ref,
             "response_format_ref": _relative_artifact_reference(
                 published_attempt_dir / response_format_path.name,
@@ -646,51 +670,32 @@ def _atomic_write_bytes(path: Path, content: bytes) -> None:
 
 @contextmanager
 def _artifact_publication_lock(metadata_path: Path) -> Iterator[None]:
+    """Serialize publication with an atomic, self-cleaning lock directory."""
     resolved_metadata_path = metadata_path.resolve()
     lock_path = resolved_metadata_path.with_suffix(
         f"{resolved_metadata_path.suffix}.lock"
     )
     lock_path.parent.mkdir(parents=True, exist_ok=True)
-    with lock_path.open("a+b") as lock_handle:
-        _acquire_file_lock(lock_handle)
-        try:
-            yield
-        finally:
-            _release_file_lock(lock_handle)
-
-
-def _acquire_file_lock(lock_handle: Any) -> None:
-    if os.name != "nt":
-        _FILE_LOCK_API.flock(lock_handle.fileno(), _FILE_LOCK_API.LOCK_EX)
-        return
-
-    lock_handle.seek(0)
-    lock_handle.write(b"\0")
-    lock_handle.flush()
+    deadline = time.monotonic() + 120.0
     while True:
-        lock_handle.seek(0)
         try:
-            _FILE_LOCK_API.locking(
-                lock_handle.fileno(),
-                _FILE_LOCK_API.LK_NBLCK,
-                1,
-            )
-            return
-        except OSError:
+            lock_path.mkdir()
+            break
+        except FileExistsError:
+            # The owner may remove the directory between mkdir() and inspection.
+            if not lock_path.exists():
+                continue
+            if not lock_path.is_dir():
+                raise RuntimeError(
+                    f"Legacy artifact lock file blocks publication: {lock_path}"
+                )
+            if time.monotonic() >= deadline:
+                raise TimeoutError(f"Timed out waiting for artifact lock: {lock_path}")
             time.sleep(0.05)
-
-
-def _release_file_lock(lock_handle: Any) -> None:
-    if os.name != "nt":
-        _FILE_LOCK_API.flock(lock_handle.fileno(), _FILE_LOCK_API.LOCK_UN)
-        return
-
-    lock_handle.seek(0)
-    _FILE_LOCK_API.locking(
-        lock_handle.fileno(),
-        _FILE_LOCK_API.LK_UNLCK,
-        1,
-    )
+    try:
+        yield
+    finally:
+        lock_path.rmdir()
 
 
 def _copy_file_durable(source: Path, destination: Path) -> None:
@@ -718,6 +723,121 @@ def build_bundle_token(run_id: str) -> str:
     token = re.sub(r"[^A-Za-z0-9_.-]+", "-", run_id).strip(".-")
     digest = hashlib.sha256(run_id.encode("utf-8")).hexdigest()[:12]
     return f"{(token or 'run')[:64]}.{digest}"
+
+
+def _selected_attempt(result: GenerationResult) -> Any:
+    selection = result.metadata.get("selection", {})
+    selected_id = (
+        selection.get("selected_attempt_id")
+        if isinstance(selection, dict)
+        else None
+    )
+    if selected_id is None:
+        return result.attempts[-1]
+    for attempt in result.attempts:
+        if attempt.attempt_id == selected_id:
+            return attempt
+    raise ValueError("metadata.selection.selected_attempt_id does not identify an attempt.")
+
+
+def _build_provenance(
+    result: GenerationResult,
+    runtime: GenerationArtifactRuntime,
+    attempt_records: list[dict[str, Any]],
+    *,
+    git_provenance: dict[str, Any],
+) -> dict[str, Any]:
+    config_hashes = {
+        name: _sha256_file(Path(path))
+        for name, path in runtime.config_paths.items()
+        if Path(path).is_file()
+    }
+    generator_prompt_hashes = [
+        {
+            "attempt_id": attempt["attempt_id"],
+            "model_call_id": call["model_call_id"],
+            "prompt": call.get("prompt_sha256"),
+            "system_prompt": call.get("system_prompt_sha256"),
+        }
+        for attempt in attempt_records
+        for call in attempt.get("model_calls", [])
+    ]
+    critic_prompt_hashes = [
+        {
+            "attempt_id": attempt["attempt_id"],
+            "critic_call_id": call["critic_call_id"],
+            "prompt": call.get("prompt_sha256"),
+            "system_prompt": call.get("system_prompt_sha256"),
+        }
+        for attempt in attempt_records
+        for call in attempt.get("critic_calls", [])
+    ]
+    benchmark_hash = getattr(runtime, "benchmark_hash", None)
+    if benchmark_hash is None:
+        benchmark_hash = result.metadata.get("benchmark_sha256")
+    effective_config = {
+        "generation": runtime.generation_config,
+        "model": runtime.model_config,
+        "critic_model": runtime.critic_model_config,
+        "rag": runtime.rag_config,
+        "render": runtime.render_config,
+    }
+    return {
+        "git": git_provenance,
+        "execution_command": getattr(runtime, "execution_command", None),
+        "config_sha256": config_hashes,
+        "effective_config_sha256": _sha256_json(effective_config),
+        "prompt_sha256": {
+            "generator": generator_prompt_hashes,
+            "critic": critic_prompt_hashes,
+        },
+        "benchmark_sha256": benchmark_hash,
+    }
+
+
+def _git_provenance() -> dict[str, Any]:
+    source_checkout = Path(__file__).resolve().parents[3]
+    git_cwd = source_checkout if (source_checkout / ".git").exists() else None
+    try:
+        sha = subprocess.run(
+            ["git", "rev-parse", "HEAD"],
+            check=True,
+            capture_output=True,
+            cwd=git_cwd,
+            text=True,
+            timeout=5,
+        ).stdout.strip()
+        status = subprocess.run(
+            ["git", "status", "--porcelain", "--untracked-files=normal"],
+            check=True,
+            capture_output=True,
+            cwd=git_cwd,
+            text=True,
+            timeout=5,
+        ).stdout
+    except (OSError, subprocess.SubprocessError):
+        return {"sha": None, "dirty": None}
+    return {"sha": sha or None, "dirty": bool(status.strip())}
+
+
+def _sha256_text(value: str) -> str:
+    return hashlib.sha256(value.encode("utf-8")).hexdigest()
+
+
+def _sha256_file(path: Path) -> str:
+    return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def _sha256_json(value: Any) -> str:
+    serialized = json.dumps(
+        value,
+        sort_keys=True,
+        ensure_ascii=False,
+        allow_nan=False,
+        separators=(",", ":"),
+        default=str,
+    )
+    return _sha256_text(serialized)
 
 
 def _relative_artifact_reference(path: Path, metadata_dir: Path) -> str:

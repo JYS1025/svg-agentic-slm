@@ -8,6 +8,8 @@ to establish its role and constraints.
 
 from __future__ import annotations
 
+from svg_agentic_slm.svg.policy import STATIC_SVG_POLICY
+
 
 def get_svg_generator_system_prompt() -> str:
     """Return the system prompt for the SVG generator agent.
@@ -35,8 +37,7 @@ def get_svg_generator_system_prompt() -> str:
         "Never reuse an id within the document.\n"
         "8. Include only objects, text, and decoration supported by the user "
         "instruction. Keep the SVG simple, clean, and visually accurate.\n"
-        "9. Do not include scripts, event handlers, foreign content, data URLs, "
-        "or external references.\n"
+        f"9. {STATIC_SVG_POLICY.generator_rule()}\n"
     )
 
 

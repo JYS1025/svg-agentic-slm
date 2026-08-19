@@ -33,6 +33,7 @@ conda-env/
 outputs/
 checkpoints/
 logs/
+simple_bench_run1/
 
 # Data (keep examples)
 data/raw/*

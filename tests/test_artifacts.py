@@ -345,6 +345,53 @@ def test_v1_reader_accepts_correlated_revision_lineage(tmp_path: Path) -> None:
     assert record.attempts[-1].trigger_feedback_id == "feedback-1"
 
 
+def test_v2_reader_accepts_selected_best_before_rolled_back_revision(
+    tmp_path: Path,
+) -> None:
+    selected_svg = tmp_path / "sample.svg"
+    revision_svg = tmp_path / "revision.svg"
+    selected_svg.write_text('<svg id="selected"/>', encoding="utf-8")
+    revision_svg.write_text('<svg id="revision"/>', encoding="utf-8")
+    payload = _v1_payload("sample.svg")
+    payload["schema_version"] = 2
+    payload["outcome"] = "selected_best"
+    payload["stop_reason"] = "critic_score_regressed_rollback"
+    payload["revision_count"] = 1
+    metadata = payload["metadata"]  # type: ignore[assignment]
+    attempts = metadata["generator"]["attempts"]  # type: ignore[index]
+    initial = attempts[0]
+    initial["outcome"] = "selected_best"
+    initial["stop_reason"] = "critic_score_regressed_rollback"
+    revision = dict(initial)
+    revision.update(
+        {
+            "attempt_id": "attempt-2",
+            "mode": "revision",
+            "parent_attempt_id": "attempt-1",
+            "trigger_feedback_id": "feedback-1",
+            "svg_ref": "revision.svg",
+            "outcome": "rolled_back",
+        }
+    )
+    attempts.append(revision)
+    metadata["selection"] = {  # type: ignore[index]
+        "selected_attempt_id": "attempt-1",
+        "last_attempt_id": "attempt-2",
+        "rolled_back": True,
+    }
+    payload["critic_feedback"] = [
+        _feedback_payload("feedback-1", "attempt-1", score=5.0)
+    ]
+    metadata_path = tmp_path / "sample.json"
+    metadata_path.write_text(json.dumps(payload), encoding="utf-8")
+
+    record = load_generation_artifact(metadata_path)
+
+    assert record.outcome == "selected_best"
+    assert record.svg_path.read_text(encoding="utf-8") == '<svg id="selected"/>'
+    assert record.attempts[-1].outcome == "rolled_back"
+
+
 @pytest.mark.parametrize(
     ("feedback_updates", "message"),
     [

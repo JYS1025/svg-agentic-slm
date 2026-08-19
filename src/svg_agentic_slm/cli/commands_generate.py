@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import sys
 from dataclasses import asdict
 from pathlib import Path
 
@@ -143,6 +144,7 @@ def generate(
             model_config_path=model_config,
             overrides=cli_overrides,
         )
+        runtime.execution_command = list(sys.argv)
         if print_generator_parameters:
             result = runtime.orchestrator.run(
                 runtime.request,
@@ -158,10 +160,25 @@ def generate(
     console.print("\n[bold green]Generated SVG:[/bold green]")
     console.print(result.generated_svg)
     console.print(f"\nValid SVG: {result.is_valid}")
-    final_attempt = result.attempts[-1] if result.attempts else None
-    if final_attempt is not None:
-        console.print(f"Outcome: {final_attempt.metadata.get('outcome', 'unknown')}")
-        console.print(f"Stop reason: {final_attempt.metadata.get('stop_reason', 'unknown')}")
+    selected_attempt_id = result.metadata.get("selection", {}).get(
+        "selected_attempt_id"
+    )
+    selected_attempt = next(
+        (
+            attempt
+            for attempt in result.attempts
+            if attempt.attempt_id == selected_attempt_id
+        ),
+        result.attempts[-1] if result.attempts else None,
+    )
+    if selected_attempt is not None:
+        console.print(
+            f"Outcome: {selected_attempt.metadata.get('outcome', 'unknown')}"
+        )
+        console.print(
+            "Stop reason: "
+            f"{selected_attempt.metadata.get('stop_reason', 'unknown')}"
+        )
 
     if result.critic_feedback:
         latest_feedback = result.critic_feedback[-1]
