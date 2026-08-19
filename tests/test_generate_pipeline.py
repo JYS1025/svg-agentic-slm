@@ -14,7 +14,11 @@ import yaml
 from typer.testing import CliRunner
 
 from svg_agentic_slm.agents.base import BaseCritic
-from svg_agentic_slm.agents.schemas import CriticFeedback
+from svg_agentic_slm.agents.schemas import (
+    CriticFeedback,
+    CriticFeedbackEvent,
+    GeneratorOutput,
+)
 from svg_agentic_slm.artifacts.generation import load_generation_artifact
 from svg_agentic_slm.cli.app import app
 from svg_agentic_slm.factories.generation import (
@@ -96,6 +100,8 @@ def test_build_generation_runtime_from_sibling_configs(tmp_path: Path) -> None:
     assert runtime.output_dir == output_dir
     assert runtime.config_paths["model"].endswith("model.yaml")
     assert runtime.config_paths["paths"].endswith("paths.yaml")
+    assert runtime.orchestrator._max_no_improvement_rounds == 3
+    assert runtime.orchestrator._min_critic_score_improvement == 0.25
 
 
 def test_build_generation_runtime_uses_explicit_model_profile(tmp_path: Path) -> None:
@@ -233,7 +239,7 @@ def test_generate_command_persists_svg_and_metadata(tmp_path: Path) -> None:
     assert "<circle" in svg_files[0].read_text(encoding="utf-8")
 
     metadata = json.loads(json_files[0].read_text(encoding="utf-8"))
-    assert metadata["schema_version"] == 1
+    assert metadata["schema_version"] == 2
     assert metadata["run_id"].startswith("run_")
     assert metadata["instruction"] == "Draw a blue circle."
     assert metadata["outcome"] == "accepted"
@@ -258,7 +264,26 @@ def test_generate_command_persists_svg_and_metadata(tmp_path: Path) -> None:
     assert (json_files[0].parent / model_call["system_prompt_ref"]).exists()
     assert model_call["generation_parameters"]["max_new_tokens"] == 128
     assert metadata["critic_feedback"][0]["target_attempt_id"] == attempt["attempt_id"]
+    provenance = metadata["provenance"]
+    assert len(provenance["git"]["sha"]) == 40
+    assert provenance["git"]["dirty"] is True
+    assert isinstance(provenance["execution_command"], list)
+    assert set(provenance["config_sha256"]) == {
+        "generation",
+        "model",
+        "rag",
+        "paths",
+    }
+    assert all(
+        len(digest) == 64 for digest in provenance["config_sha256"].values()
+    )
+    assert len(provenance["effective_config_sha256"]) == 64
+    generator_hashes = provenance["prompt_sha256"]["generator"]
+    assert generator_hashes[0]["model_call_id"] == model_call["model_call_id"]
+    assert len(generator_hashes[0]["prompt"]) == 64
+    assert len(generator_hashes[0]["system_prompt"]) == 64
     assert not list(output_dir.rglob("*.tmp"))
+    assert not json_files[0].with_suffix(".json.lock").exists()
     record = load_generation_artifact(json_files[0])
     assert record.outcome == "accepted"
     assert len(record.attempts) == 1
@@ -430,6 +455,70 @@ def test_artifact_writer_rejects_final_svg_mismatch(tmp_path: Path) -> None:
     assert not runtime.metadata_output_path.with_suffix(".artifacts").exists()
 
 
+def test_artifact_round_trip_publishes_selected_best_attempt(tmp_path: Path) -> None:
+    output_dir = tmp_path / "outputs" / "generations"
+    _write_generation_config_bundle(tmp_path, output_dir)
+    runtime = build_generation_runtime(
+        config_path=tmp_path / "generation.yaml",
+        prompt="Draw a circle.",
+        output_path=tmp_path / "result.svg",
+    )
+    result = runtime.orchestrator.run(runtime.request)
+    selected = result.attempts[0]
+    feedback = CriticFeedback(
+        score=5.0,
+        is_valid=True,
+        matches_instruction=False,
+        critic_type="test",
+    )
+    event = CriticFeedbackEvent(
+        feedback_id="feedback-rollback",
+        target_attempt_id=selected.attempt_id,
+        feedback=feedback,
+    )
+    revision = GeneratorOutput(
+        attempt_id="attempt-rolled-back",
+        mode="revision",
+        svg='<svg xmlns="http://www.w3.org/2000/svg"><rect/></svg>',
+        raw_output="<svg><rect/></svg>",
+        status="succeeded",
+        prompt_version="test",
+        parent_attempt_id=selected.attempt_id,
+        trigger_feedback_id=event.feedback_id,
+        metadata={
+            "outcome": "rolled_back",
+            "stop_reason": "critic_score_regressed_rollback",
+        },
+    )
+    selected.metadata.update(
+        {
+            "outcome": "selected_best",
+            "stop_reason": "critic_score_regressed_rollback",
+        }
+    )
+    result.attempts.append(revision)
+    result.revision_count = 1
+    result.critic_feedback = [feedback]
+    result.feedback_events = [event]
+    result.metadata["selection"] = {
+        "selected_attempt_id": selected.attempt_id,
+        "last_attempt_id": revision.attempt_id,
+        "rolled_back": True,
+        "best_critic_score": 5.0,
+        "no_improvement_rounds": 0,
+    }
+    runtime.enable_critic = True
+    runtime.critic_type = "rule"
+
+    artifacts = persist_generation_artifacts(result, runtime)
+    record = load_generation_artifact(artifacts.metadata_path)
+
+    assert record.outcome == "selected_best"
+    assert record.svg_path.read_text(encoding="utf-8") == selected.svg
+    assert record.attempts[-1].outcome == "rolled_back"
+    assert not artifacts.metadata_path.with_suffix(".json.lock").exists()
+
+
 def test_artifact_writer_rejects_invalid_schema_before_publication(
     tmp_path: Path,
 ) -> None:
@@ -512,6 +601,7 @@ def test_artifact_publication_is_serialized_per_output_stem(
             future.result()
 
     assert maximum_active == 1
+    assert not (tmp_path / "result.json.lock").exists()
 
 
 def test_generate_command_applies_cli_overrides(tmp_path: Path) -> None:
@@ -618,6 +708,8 @@ def _write_generation_config_bundle(
                     "enable_rag": False,
                     "enable_critic": False,
                     "max_revision_rounds": 2,
+                    "max_no_improvement_rounds": 3,
+                    "min_critic_score_improvement": 0.25,
                     "critic_type": "rule",
                 },
                 "render": {

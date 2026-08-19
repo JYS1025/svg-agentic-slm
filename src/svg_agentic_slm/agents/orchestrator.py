@@ -84,11 +84,17 @@ class SVGGenerationOrchestrator:
         critic_labeler: CriticLabeler | None = None,
         smoke_render_gate: SmokeRenderGate | None = None,
         require_visual_evidence: bool = False,
+        max_no_improvement_rounds: int = 1,
+        min_critic_score_improvement: float = 0.1,
     ) -> None:
         if max_revisions < 0:
             raise ValueError("max_revisions must be non-negative.")
         if not 0.0 <= critic_acceptance_score <= 10.0:
             raise ValueError("critic_acceptance_score must be between 0 and 10.")
+        if max_no_improvement_rounds <= 0:
+            raise ValueError("max_no_improvement_rounds must be positive.")
+        if min_critic_score_improvement < 0:
+            raise ValueError("min_critic_score_improvement must be non-negative.")
         self._generator = generator
         self._validator = validator
         self._renderer = renderer
@@ -107,6 +113,8 @@ class SVGGenerationOrchestrator:
             height=render_height,
         )
         self._require_visual_evidence = require_visual_evidence
+        self._max_no_improvement_rounds = max_no_improvement_rounds
+        self._min_critic_score_improvement = min_critic_score_improvement
 
     def run(
         self,
@@ -129,18 +137,25 @@ class SVGGenerationOrchestrator:
         logger.info("Starting generation pipeline for: %s", request.instruction[:80])
         started_at = time.perf_counter()
         run_id = request.run_id or f"run_{uuid4().hex}"
-
         result = GenerationResult(instruction=request.instruction, run_id=run_id)
         result.metadata["request"] = {
             "task": request.task,
             "config_overrides": request.config_overrides,
             "run_id": run_id,
         }
+        timing = {
+            "rag_latency_seconds": 0.0,
+            "generator_latency_seconds": 0.0,
+            "critic_latency_seconds": 0.0,
+            "validation_latency_seconds": 0.0,
+            "render_latency_seconds": 0.0,
+        }
 
-        # Step 1: RAG retrieval (optional)
         context = []
         if self._rag_agent is not None:
+            stage_started = time.perf_counter()
             context = self._rag_agent.retrieve(request.instruction)
+            timing["rag_latency_seconds"] += time.perf_counter() - stage_started
             logger.info("Retrieved %d RAG examples.", len(context))
         result.metadata["rag"] = {
             "enabled": self._rag_agent is not None,
@@ -160,19 +175,58 @@ class SVGGenerationOrchestrator:
             ],
         }
 
-        # Step 2: Generate SVG
         if on_generator_input is not None:
             on_generator_input(request, context)
-        current = self._generator.generate(request, context=context)
-        current = _coerce_generator_output(current)
+        stage_started = time.perf_counter()
+        current = _coerce_generator_output(
+            self._generator.generate(request, context=context)
+        )
+        timing["generator_latency_seconds"] += time.perf_counter() - stage_started
         result.attempts.append(current)
+        result.metadata["rag"]["context_usage"] = list(
+            current.metadata.get("context_usage", [])
+        )
+        result.metadata["rag"]["context_token_count"] = current.metadata.get(
+            "context_token_count", 0
+        )
 
+        stage_started = time.perf_counter()
         validation = self._validate_attempt(current)
+        timing["validation_latency_seconds"] += time.perf_counter() - stage_started
+        validations = {current.attempt_id: validation}
+        best_attempt = current if current.status == "succeeded" and validation.is_valid else None
+        best_validation = validation if best_attempt is not None else None
+        best_score: float | None = None
+        no_improvement_rounds = 0
+        stop_reason_override: str | None = None
         latest_feedback_event: CriticFeedbackEvent | None = None
 
-        # Step 3: Critique and revise
         while self._critic is not None and current.status == "succeeded":
-            feedback = self._critique_attempt(request, current, validation)
+            stage_started = time.perf_counter()
+            try:
+                feedback = self._critique_attempt(request, current, validation)
+            except CriticTraceError as exc:
+                elapsed = time.perf_counter() - stage_started
+                evidence_render_latency = _critic_evidence_render_latency(current)
+                timing["render_latency_seconds"] += evidence_render_latency
+                timing["critic_latency_seconds"] += max(
+                    0.0, elapsed - evidence_render_latency
+                )
+                stop_reason_override = "critic_contract_failure"
+                current.metadata["outcome"] = "critic_contract_failure"
+                current.metadata["stop_reason"] = stop_reason_override
+                result.metadata["critic_contract_failure"] = {
+                    "attempt_id": current.attempt_id,
+                    "error": str(exc),
+                    "model_call_count": len(exc.model_calls),
+                }
+                break
+            elapsed = time.perf_counter() - stage_started
+            evidence_render_latency = _critic_evidence_render_latency(current)
+            timing["render_latency_seconds"] += evidence_render_latency
+            timing["critic_latency_seconds"] += max(
+                0.0, elapsed - evidence_render_latency
+            )
             latest_feedback_event = CriticFeedbackEvent(
                 feedback_id=f"feedback_{uuid4().hex}",
                 target_attempt_id=current.attempt_id,
@@ -182,61 +236,106 @@ class SVGGenerationOrchestrator:
             result.feedback_events.append(latest_feedback_event)
             logger.info("Critic feedback: score=%.1f", feedback.score)
 
-            if (
-                validation.is_valid
-                and _feedback_meets_acceptance(
-                    latest_feedback_event,
-                    self._critic_acceptance_score,
-                )
-            ) or result.revision_count >= self._max_revisions:
+            accepted = validation.is_valid and _feedback_meets_acceptance(
+                latest_feedback_event, self._critic_acceptance_score
+            )
+            if validation.is_valid:
+                score = float(feedback.score)
+                if best_attempt is current:
+                    best_score = score
+                elif best_attempt is None or best_score is None:
+                    best_attempt = current
+                    best_validation = validation
+                    best_score = score
+                    no_improvement_rounds = 0
+                else:
+                    score_delta = score - best_score
+                    if score_delta < 0:
+                        current.metadata["outcome"] = "rolled_back"
+                        stop_reason_override = "critic_score_regressed_rollback"
+                        current.metadata["stop_reason"] = stop_reason_override
+                        break
+                    if accepted or score_delta >= self._min_critic_score_improvement:
+                        best_attempt = current
+                        best_validation = validation
+                        best_score = score
+                        no_improvement_rounds = 0
+                    else:
+                        no_improvement_rounds += 1
+                        if no_improvement_rounds >= self._max_no_improvement_rounds:
+                            current.metadata["outcome"] = "rolled_back"
+                            stop_reason_override = "no_critic_score_improvement_rollback"
+                            current.metadata["stop_reason"] = stop_reason_override
+                            break
+            elif best_attempt is not None:
+                current.metadata["outcome"] = "rolled_back"
+                stop_reason_override = "invalid_revision_rollback"
+                current.metadata["stop_reason"] = stop_reason_override
+                break
+
+            if accepted or result.revision_count >= self._max_revisions:
                 break
 
             current.metadata["outcome"] = "rejected"
             current.metadata["stop_reason"] = "critic_revision_requested"
-            current = self._generator.revise(
-                request,
-                previous=current,
-                feedback=latest_feedback_event,
-                context=context,
+            stage_started = time.perf_counter()
+            current = _coerce_generator_output(
+                self._generator.revise(
+                    request,
+                    previous=current,
+                    feedback=latest_feedback_event,
+                    context=context,
+                )
             )
-            current = _coerce_generator_output(current)
+            timing["generator_latency_seconds"] += time.perf_counter() - stage_started
             result.attempts.append(current)
             result.revision_count += 1
+            stage_started = time.perf_counter()
             validation = self._validate_attempt(current)
+            timing["validation_latency_seconds"] += time.perf_counter() - stage_started
+            validations[current.attempt_id] = validation
 
-        result.generated_svg = current.svg
-        result.is_valid = validation.is_valid
-        result.metadata["validation"] = _validation_metadata(validation)
+        selected = best_attempt or current
+        selected_validation = best_validation or validations[current.attempt_id]
+        if current.status == "failed" and current is not selected:
+            current.metadata["outcome"] = "failed"
+            current.metadata["stop_reason"] = current.error or "generator_failed"
+        result.generated_svg = selected.svg
+        result.is_valid = selected_validation.is_valid
+        result.metadata["validation"] = _validation_metadata(selected_validation)
+        result.metadata["selection"] = {
+            "selected_attempt_id": selected.attempt_id,
+            "last_attempt_id": current.attempt_id,
+            "rolled_back": selected.attempt_id != current.attempt_id,
+            "best_critic_score": best_score,
+            "no_improvement_rounds": no_improvement_rounds,
+        }
 
-        # Step 4: Render (optional)
         render_success = False
         render_error: str | None = None
         if self._renderer is not None:
-            if current.status != "succeeded":
+            if selected.status != "succeeded":
                 render_error = "Render skipped because SVG generation failed."
-            elif not validation.is_valid:
+            elif not selected_validation.is_valid:
                 render_error = "Render skipped because SVG validation failed."
             else:
                 render_path = self._render_output_path or (self._output_dir / "render.png")
+                stage_started = time.perf_counter()
                 render_result = self._renderer.render(
-                    current.svg,
+                    selected.svg,
                     render_path,
                     width=self._render_width,
                     height=self._render_height,
                     output_format=self._render_format,
                 )
+                timing["render_latency_seconds"] += time.perf_counter() - stage_started
                 render_success = render_result.success
                 render_error = render_result.error
                 if render_result.success and render_result.output_path is not None:
                     result.render_path = str(render_result.output_path)
-                logger.info(
-                    "Render result: success=%s, path=%s, error=%s",
-                    render_result.success,
-                    render_result.output_path,
-                    render_result.error,
-                )
         result.metadata["render"] = {
             "enabled": self._renderer is not None,
+            "role": "user_output_render",
             "render_path": result.render_path,
             "planned_output_path": (
                 str(self._render_output_path) if self._render_output_path else None
@@ -247,25 +346,33 @@ class SVGGenerationOrchestrator:
             "width": self._render_width,
             "height": self._render_height,
         }
-
         result.metadata["critic"] = {
             "enabled": self._critic is not None,
             "feedback_count": len(result.critic_feedback),
             "acceptance_score": self._critic_acceptance_score,
+            "max_no_improvement_rounds": self._max_no_improvement_rounds,
+            "min_critic_score_improvement": self._min_critic_score_improvement,
         }
-        if current.status == "failed":
-            current.metadata["outcome"] = "failed"
-        elif validation.is_valid and (
+
+        if (
+            stop_reason_override == "critic_contract_failure"
+            and selected.attempt_id == current.attempt_id
+        ):
+            selected.metadata["outcome"] = "critic_contract_failure"
+        elif selected.status == "failed":
+            selected.metadata["outcome"] = "failed"
+        elif selected.attempt_id != current.attempt_id:
+            selected.metadata["outcome"] = "selected_best"
+        elif selected_validation.is_valid and (
             latest_feedback_event is None
             or _feedback_meets_acceptance(
-                latest_feedback_event,
-                self._critic_acceptance_score,
+                latest_feedback_event, self._critic_acceptance_score
             )
         ):
-            current.metadata["outcome"] = "accepted"
+            selected.metadata["outcome"] = "accepted"
         else:
-            current.metadata["outcome"] = "rejected"
-        current.metadata["stop_reason"] = _stop_reason(
+            selected.metadata["outcome"] = "rejected"
+        selected.metadata["stop_reason"] = stop_reason_override or _stop_reason(
             current=current,
             validation_is_valid=validation.is_valid,
             feedback_event=latest_feedback_event,
@@ -274,9 +381,27 @@ class SVGGenerationOrchestrator:
             max_revisions=self._max_revisions,
         )
 
+        pipeline_latency = time.perf_counter() - started_at
         result.metadata["timing"] = {
-            "generation_latency_seconds": round(time.perf_counter() - started_at, 6),
+            key: round(value, 6) for key, value in timing.items()
         }
+        result.metadata["timing"].update(
+            {
+                "pipeline_latency_seconds": round(pipeline_latency, 6),
+                "generation_latency_seconds": round(pipeline_latency, 6),
+                "critic_evidence_render_latency_seconds": round(
+                    sum(
+                        float(
+                            attempt.metadata.get("timing", {}).get(
+                                "critic_evidence_render_latency_seconds", 0.0
+                            )
+                        )
+                        for attempt in result.attempts
+                    ),
+                    6,
+                ),
+            }
+        )
 
         logger.info(
             "Pipeline complete. Valid=%s, Revisions=%d",
@@ -306,7 +431,11 @@ class SVGGenerationOrchestrator:
                 messages=messages,
             )
 
+        evidence_render_started_at = time.perf_counter()
         render_result = self._smoke_render_gate.evaluate(attempt.svg)
+        attempt.metadata.setdefault("timing", {})[
+            "critic_evidence_render_latency_seconds"
+        ] = round(time.perf_counter() - evidence_render_started_at, 6)
         if not render_result.success:
             messages = [
                 f"{diagnostic.code}: {diagnostic.message}"
@@ -375,6 +504,16 @@ def _validation_metadata(validation: SVGValidationResult) -> dict:
         "has_closing_tag": validation.has_closing_tag,
         "is_well_formed_xml": validation.is_well_formed_xml,
     }
+
+
+def _critic_evidence_render_latency(attempt: GeneratorOutput) -> float:
+    timing = attempt.metadata.get("timing", {})
+    if not isinstance(timing, dict):
+        return 0.0
+    value = timing.get("critic_evidence_render_latency_seconds", 0.0)
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return 0.0
+    return max(0.0, float(value))
 
 
 def _invalid_evidence_feedback(

@@ -133,6 +133,48 @@ def test_llama_cpp_dialect_uses_repeat_penalty(
     assert "repetition_penalty" not in request_payload
 
 
+@pytest.mark.parametrize(
+    ("engine", "token_response", "expected_payload"),
+    [
+        (
+            "vllm",
+            {"count": 3},
+            {"model": "local-model", "prompt": "token budget"},
+        ),
+        (
+            "llama_cpp",
+            {"tokens": [1, 2, 3]},
+            {"content": "token budget", "add_special": True},
+        ),
+    ],
+)
+def test_backend_counts_tokens_with_served_model_tokenizer(
+    monkeypatch: pytest.MonkeyPatch,
+    engine: str,
+    token_response: dict[str, object],
+    expected_payload: dict[str, object],
+) -> None:
+    opener = _RecordingURLopener(
+        [{"data": [{"id": "local-model"}]}, token_response]
+    )
+    monkeypatch.setattr(
+        "svg_agentic_slm.models.openai_compatible_backend._URL_OPENER.open",
+        opener,
+    )
+    backend = OpenAICompatibleBackend(
+        base_url="http://localhost:8080/v1",
+        model_id="local-model",
+        engine=engine,
+    )
+
+    backend.load_model()
+    count = backend.count_tokens("token budget")
+
+    assert count == 3
+    assert opener.calls[1][0].full_url.endswith("/v1/tokenize")
+    assert json.loads(opener.calls[1][0].data or b"{}") == expected_payload
+
+
 def test_backend_rejects_unserved_or_mismatched_model(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

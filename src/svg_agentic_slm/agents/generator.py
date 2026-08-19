@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import logging
-from dataclasses import replace
+from dataclasses import asdict
 from typing import TYPE_CHECKING, Literal
 from uuid import uuid4
 
@@ -24,6 +24,7 @@ from svg_agentic_slm.prompts.text_to_svg import (
     build_revision_prompt,
     build_text_to_svg_prompt,
 )
+from svg_agentic_slm.rag.context import ContextSelection, select_context_by_tokens
 from svg_agentic_slm.svg.labeler import strip_reserved_labels
 from svg_agentic_slm.svg.normalizer import extract_svg_from_text, normalize_svg
 
@@ -47,14 +48,22 @@ class GeneratorAgent(BaseGenerator):
         *,
         max_svg_length: int = 8192,
         max_context_characters: int = 12000,
+        max_context_tokens: int | None = None,
     ) -> None:
         if max_svg_length <= 0:
             raise ValueError("max_svg_length must be positive.")
         if max_context_characters < 0:
             raise ValueError("max_context_characters must be non-negative.")
+        if max_context_tokens is not None and max_context_tokens < 0:
+            raise ValueError("max_context_tokens must be non-negative.")
         self._model = model_backend
         self._max_svg_length = max_svg_length
         self._max_context_characters = max_context_characters
+        self._max_context_tokens = (
+            max_context_tokens
+            if max_context_tokens is not None
+            else max_context_characters // 4
+        )
 
     @property
     def name(self) -> str:
@@ -67,7 +76,8 @@ class GeneratorAgent(BaseGenerator):
     ) -> GeneratorOutput:
         """Generate an initial SVG attempt."""
         logger.info("Generating SVG for: %s", request.instruction[:80])
-        selected_context, truncated_ids = self._select_context(context or [])
+        context_selection = self._select_context(context or [])
+        selected_context = context_selection.items
         prompt = build_text_to_svg_prompt(
             instruction=request.instruction,
             retrieved_examples=selected_context,
@@ -78,7 +88,7 @@ class GeneratorAgent(BaseGenerator):
             mode="initial",
             prompt_version=INITIAL_PROMPT_VERSION,
             context=selected_context,
-            truncated_context_item_ids=truncated_ids,
+            context_selection=context_selection,
         )
 
     def revise(
@@ -91,7 +101,8 @@ class GeneratorAgent(BaseGenerator):
         """Revise a previous attempt using feedback that targets it."""
         if feedback.target_attempt_id != previous.attempt_id:
             raise ValueError("Feedback target does not match the previous Generator attempt.")
-        selected_context, truncated_ids = self._select_context(context or [])
+        context_selection = self._select_context(context or [])
+        selected_context = context_selection.items
         previous_svg = _revision_input_svg(previous, feedback.feedback)
         revision = build_revision_prompt(
             instruction=request.instruction,
@@ -106,7 +117,7 @@ class GeneratorAgent(BaseGenerator):
             mode="revision",
             prompt_version=REVISION_PROMPT_VERSION,
             context=selected_context,
-            truncated_context_item_ids=truncated_ids,
+            context_selection=context_selection,
             parent_attempt_id=previous.attempt_id,
             trigger_feedback_id=feedback.feedback_id,
         )
@@ -119,7 +130,7 @@ class GeneratorAgent(BaseGenerator):
         mode: Literal["initial", "revision"],
         prompt_version: str,
         context: list[RetrievedExample],
-        truncated_context_item_ids: list[str],
+        context_selection: ContextSelection,
         parent_attempt_id: str | None = None,
         trigger_feedback_id: str | None = None,
     ) -> GeneratorOutput:
@@ -176,39 +187,39 @@ class GeneratorAgent(BaseGenerator):
             trigger_feedback_id=trigger_feedback_id,
             error=error,
             context_item_ids=[item.item_id for item in context],
-            truncated_context_item_ids=truncated_context_item_ids,
+            truncated_context_item_ids=[
+                item.item_id
+                for item in context_selection.usage
+                if item.status != "fully_used"
+            ],
             metadata={
                 "run_id": request.run_id,
                 "max_svg_length": self._max_svg_length,
                 "max_context_characters": self._max_context_characters,
+                "max_context_tokens": self._max_context_tokens,
+                "context_token_count": context_selection.token_count,
+                "context_usage": [asdict(item) for item in context_selection.usage],
             },
         )
 
     def _select_context(
         self,
         items: list[RetrievedExample],
-    ) -> tuple[list[RetrievedExample], list[str]]:
-        selected: list[RetrievedExample] = []
-        truncated_ids: list[str] = []
-        remaining = self._max_context_characters
-
-        for item in items:
-            overhead = len(item.description) + len(item.source) + 128
-            available_content = remaining - overhead
-            if available_content <= 0:
-                truncated_ids.append(item.item_id)
-                continue
-
-            if len(item.content) <= available_content:
-                selected.append(item)
-                remaining -= overhead + len(item.content)
-                continue
-
-            selected.append(replace(item, content=item.content[:available_content]))
-            truncated_ids.append(item.item_id)
-            remaining = 0
-
-        return selected, truncated_ids
+    ) -> ContextSelection:
+        if not items:
+            return ContextSelection(items=[], usage=[], token_count=0)
+        count_tokens = getattr(self._model, "count_tokens", None)
+        if not callable(count_tokens):
+            raise RuntimeError(
+                "RAG context requires a model backend with tokenizer-based "
+                "count_tokens support."
+            )
+        return select_context_by_tokens(
+            items,
+            max_tokens=self._max_context_tokens,
+            count_tokens=count_tokens,
+            format_context=build_retrieval_context,
+        )
 
 
 def _format_feedback(feedback: CriticFeedback) -> str:
@@ -241,7 +252,8 @@ def _format_feedback(feedback: CriticFeedback) -> str:
             "- Target IDs refer to data-agent-id values in the labeled previous SVG.\n"
             "- Make the smallest changes necessary to address the listed issues.\n"
             "- Preserve unaffected elements, layout, styling, and all explicit preserve items.\n"
-            "- Modify a target and only the adjacent or shared resource nodes required by its fix.\n"
+            "- Modify a target and only the adjacent or shared resource nodes required "
+            "by its fix.\n"
             "- Do not emit any data-agent-id attributes in the revised SVG."
         )
 

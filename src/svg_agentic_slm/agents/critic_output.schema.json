@@ -1,1 +1,48 @@
-{"type":"object","additionalProperties":false,"required":["status","issues","preserve"],"properties":{"status":{"enum":["pass","revise"]},"issues":{"type":"array","maxItems":3,"items":{"type":"object","additionalProperties":false,"required":["category","type","severity","scope","target_ids","observed","expected","fix"],"properties":{"category":{"enum":["content","layout","shape","style"]},"type":{"type":"string"},"severity":{"enum":["critical","major","minor"]},"scope":{"enum":["global","object","part"]},"target_ids":{"type":"array","maxItems":4,"uniqueItems":true,"items":{"type":"string","pattern":"^[sged][0-9]{4}$"}},"observed":{"type":"string"},"expected":{"type":"string"},"fix":{"type":"string"}}}},"preserve":{"type":"array","maxItems":3,"uniqueItems":true,"items":{"type":"string"}}}}
+{
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["status", "issues", "preserve"],
+  "properties": {
+    "status": {"enum": ["pass", "revise"]},
+    "issues": {
+      "type": "array",
+      "maxItems": 3,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["category", "type", "severity", "scope", "target_ids", "observed", "expected", "fix"],
+        "properties": {
+          "category": {"enum": ["content", "layout", "shape", "style"]},
+          "type": {"type": "string", "minLength": 1},
+          "severity": {"enum": ["critical", "major", "minor"]},
+          "scope": {"enum": ["global", "object", "part"]},
+          "target_ids": {
+            "type": "array",
+            "maxItems": 4,
+            "uniqueItems": true,
+            "items": {"type": "string", "pattern": "^[sged][0-9]{4}$"}
+          },
+          "observed": {"type": "string", "minLength": 1},
+          "expected": {"type": "string", "minLength": 1},
+          "fix": {"type": "string", "minLength": 1}
+        }
+      }
+    },
+    "preserve": {
+      "type": "array",
+      "maxItems": 3,
+      "uniqueItems": true,
+      "items": {"type": "string", "minLength": 1}
+    }
+  },
+  "allOf": [
+    {
+      "if": {"properties": {"status": {"const": "pass"}}, "required": ["status"]},
+      "then": {"properties": {"issues": {"maxItems": 0}, "preserve": {"maxItems": 0}}}
+    },
+    {
+      "if": {"properties": {"status": {"const": "revise"}}, "required": ["status"]},
+      "then": {"properties": {"issues": {"minItems": 1}}}
+    }
+  ]
+}

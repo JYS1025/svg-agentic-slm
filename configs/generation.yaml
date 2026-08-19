@@ -15,6 +15,7 @@ generation:
     target_height: 256
     max_svg_length: 8192  # characters
     max_context_characters: 12000
+    max_context_tokens: 3000
 
   # Orchestration settings
   orchestration:

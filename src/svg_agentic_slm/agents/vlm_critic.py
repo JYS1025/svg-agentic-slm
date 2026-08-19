@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+import base64
 import copy
 import json
 import logging
 import re
+from importlib.resources import files
 from typing import Protocol, cast
 from uuid import uuid4
 
@@ -19,11 +21,13 @@ from svg_agentic_slm.agents.schemas import (
     CriticScope,
     CriticSeverity,
     CriticStatus,
+    CriticTraceError,
     validate_critic_feedback,
 )
 from svg_agentic_slm.models.schemas import ModelResponse
 from svg_agentic_slm.prompts.vlm_critic import (
     VLM_CRITIC_PROMPT_VERSION,
+    build_vlm_critic_format_repair_prompt,
     build_vlm_critic_prompt,
 )
 from svg_agentic_slm.svg.labeler import CriticLabeler
@@ -33,6 +37,9 @@ logger = logging.getLogger(__name__)
 
 VLM_CRITIC_VERSION = "vlm-critic-v2-grounded"
 _SYSTEM_PROMPT = ""
+_FORMAT_REPAIR_IMAGE = base64.b64decode(
+    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII="
+)
 _TARGET_ID_RE = re.compile(r"^[sged][0-9]{4}$")
 _ISSUE_KEYS = {
     "category",
@@ -77,51 +84,16 @@ _ISSUE_TAXONOMY: dict[str, frozenset[str]] = {
         }
     ),
 }
+_CRITIC_SCHEMA = json.loads(
+    files("svg_agentic_slm.agents")
+    .joinpath("critic_output.schema.json")
+    .read_text(encoding="utf-8")
+)
 _CRITIC_RESPONSE_FORMAT: dict[str, object] = {
     "type": "json_schema",
     "name": "critic_output",
     "strict": True,
-    "schema": {
-        "type": "object",
-        "additionalProperties": False,
-        "required": ["status", "issues", "preserve"],
-        "properties": {
-            "status": {"enum": ["pass", "revise"]},
-            "issues": {
-                "type": "array",
-                "maxItems": 3,
-                "items": {
-                    "type": "object",
-                    "additionalProperties": False,
-                    "required": sorted(_ISSUE_KEYS),
-                    "properties": {
-                        "category": {"enum": list(_ISSUE_TAXONOMY)},
-                        "type": {"type": "string"},
-                        "severity": {"enum": ["critical", "major", "minor"]},
-                        "scope": {"enum": ["global", "object", "part"]},
-                        "target_ids": {
-                            "type": "array",
-                            "maxItems": 4,
-                            "uniqueItems": True,
-                            "items": {
-                                "type": "string",
-                                "pattern": "^[sged][0-9]{4}$",
-                            },
-                        },
-                        "observed": {"type": "string"},
-                        "expected": {"type": "string"},
-                        "fix": {"type": "string"},
-                    },
-                },
-            },
-            "preserve": {
-                "type": "array",
-                "maxItems": 3,
-                "uniqueItems": True,
-                "items": {"type": "string"},
-            },
-        },
-    },
+    "schema": _CRITIC_SCHEMA,
 }
 
 
@@ -197,17 +169,29 @@ class VLMCritic(BaseCritic):
         allowed_target_ids = sorted(value.labeling.elements)
         calls: list[CriticCallTrace] = []
         retry_error: str | None = None
+        previous_response: str | None = None
+        previous_payload: dict[str, object] | None = None
 
         for retry_index in range(2):
-            prompt = build_vlm_critic_prompt(
-                value.instruction,
-                labeled_svg=value.labeling.labeled_svg,
-                allowed_target_ids=allowed_target_ids,
-                retry_error=retry_error,
+            prompt = (
+                build_vlm_critic_prompt(
+                    value.instruction,
+                    labeled_svg=value.labeling.labeled_svg,
+                    allowed_target_ids=allowed_target_ids,
+                )
+                if retry_index == 0
+                else build_vlm_critic_format_repair_prompt(
+                    previous_response or "",
+                    retry_error or "Unknown contract error.",
+                )
             )
             response = self._model.generate_with_image(
                 prompt,
-                bytes(value.render_png),
+                (
+                    bytes(value.render_png)
+                    if retry_index == 0
+                    else _FORMAT_REPAIR_IMAGE
+                ),
                 mime_type="image/png",
                 max_new_tokens=self._max_new_tokens,
                 do_sample=False,
@@ -228,16 +212,23 @@ class VLMCritic(BaseCritic):
                     "mime_type": "image/png",
                     "render_width": value.render_width,
                     "render_height": value.render_height,
+                    "format_repair_only": retry_index > 0,
                 },
             )
+            parsed_payload: dict[str, object] | None = None
             try:
-                payload = _parse_json_object(response.text)
+                parsed_payload = _parse_json_object(response.text)
+                if retry_index > 0 and previous_payload is not None:
+                    _validate_format_repair(previous_payload, parsed_payload)
                 status, issues, preserve = _parse_critic_contract(
-                    payload,
+                    parsed_payload,
                     allowed_target_ids=set(allowed_target_ids),
                 )
             except (AttributeError, KeyError, TypeError, ValueError) as exc:
                 retry_error = f"{type(exc).__name__}: {exc}"
+                previous_response = response.text
+                if retry_index == 0:
+                    previous_payload = parsed_payload
                 trace.validation_error = retry_error
                 calls.append(trace)
                 logger.warning(
@@ -247,13 +238,10 @@ class VLMCritic(BaseCritic):
                 )
                 if retry_index == 0:
                     continue
-                return _invalid_feedback(
-                    f"VLM critic response violated the critic_v1 contract after retry: "
-                    f"{retry_error}",
-                    attempt_id=value.attempt_id,
-                    stage="response_contract",
-                    response=response,
-                    model_calls=calls,
+                raise CriticTraceError(
+                    "VLM critic response violated the critic_v1 contract after "
+                    f"format repair: {retry_error}",
+                    calls,
                 )
 
             trace.validation_success = True
@@ -424,11 +412,24 @@ def _parse_critic_contract(
 
     if status == "pass" and issues:
         raise ValueError("status=pass requires issues=[].")
-    if status == "pass":
-        preserve = []
+    if status == "pass" and preserve:
+        raise ValueError("status=pass requires preserve=[].")
     if status == "revise" and not issues:
         raise ValueError("status=revise requires at least one issue.")
     return status, issues, preserve
+
+
+def _validate_format_repair(
+    previous: dict[str, object],
+    repaired: dict[str, object],
+) -> None:
+    """Reject a repair that changes any existing judgment-contract field."""
+    for field_name in ("status", "issues", "preserve"):
+        if field_name in previous and repaired.get(field_name) != previous[field_name]:
+            raise ValueError(
+                "VLM critic format repair changed the existing "
+                f"'{field_name}' judgment field."
+            )
 
 
 def _parse_issue(
@@ -475,10 +476,16 @@ def _parse_issue(
         target_id for target_id in target_ids if _TARGET_ID_RE.fullmatch(target_id) is None
     )
     if malformed_ids:
-        raise ValueError("VLM critic issue contains malformed target ID(s): " + ", ".join(malformed_ids))
+        raise ValueError(
+            "VLM critic issue contains malformed target ID(s): "
+            + ", ".join(malformed_ids)
+        )
     unknown_ids = sorted(set(target_ids) - allowed_target_ids)
     if unknown_ids:
-        raise ValueError("VLM critic issue contains unknown target ID(s): " + ", ".join(unknown_ids))
+        raise ValueError(
+            "VLM critic issue contains unknown target ID(s): "
+            + ", ".join(unknown_ids)
+        )
     if (
         not target_ids
         and scope != "global"

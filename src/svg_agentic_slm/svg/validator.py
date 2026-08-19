@@ -2,127 +2,31 @@
 
 from __future__ import annotations
 
-from .schemas import SVGDiagnostic
-
 import logging
 import re
 
 from svg_agentic_slm.svg.base import BaseValidator
-from svg_agentic_slm.svg.schemas import SVGValidationResult
+from svg_agentic_slm.svg.policy import STATIC_SVG_POLICY
+from svg_agentic_slm.svg.schemas import SVGDiagnostic, SVGValidationResult
 
 logger = logging.getLogger(__name__)
 
 SVG_NAMESPACE = "http://www.w3.org/2000/svg"
 XLINK_NAMESPACE = "http://www.w3.org/1999/xlink"
 XML_NAMESPACE = "http://www.w3.org/XML/1998/namespace"
-SAFE_ELEMENTS = {
-    "circle",
-    "clipPath",
-    "defs",
-    "desc",
-    "ellipse",
-    "feBlend",
-    "feColorMatrix",
-    "feComponentTransfer",
-    "feComposite",
-    "feConvolveMatrix",
-    "feDiffuseLighting",
-    "feDisplacementMap",
-    "feDistantLight",
-    "feDropShadow",
-    "feFlood",
-    "feFuncA",
-    "feFuncB",
-    "feFuncG",
-    "feFuncR",
-    "feGaussianBlur",
-    "feImage",
-    "feMerge",
-    "feMergeNode",
-    "feMorphology",
-    "feOffset",
-    "fePointLight",
-    "feSpecularLighting",
-    "feSpotLight",
-    "feTile",
-    "feTurbulence",
-    "filter",
-    "g",
-    "image",
-    "line",
-    "linearGradient",
-    "marker",
-    "mask",
-    "metadata",
-    "path",
-    "pattern",
-    "polygon",
-    "polyline",
-    "radialGradient",
-    "rect",
-    "stop",
-    "svg",
-    "switch",
-    "symbol",
-    "text",
-    "textPath",
-    "title",
-    "tspan",
-    "use",
-}
+SAFE_ELEMENTS = STATIC_SVG_POLICY.safe_elements
 URL_PATTERN = re.compile(
     r"url\(\s*(['\"]?)(.*?)\1\s*\)",
     re.IGNORECASE | re.DOTALL,
 )
 URI_SCHEME_PATTERN = re.compile(
-    r"(?:data|file|ftp|https?|javascript):",
+    r"(?:" + "|".join(STATIC_SVG_POLICY.forbidden_uri_schemes) + r"):",
     re.IGNORECASE,
 )
 URL_IGNORED_ASCII_WHITESPACE = str.maketrans("", "", "\t\n\r")
 CSS_FUNCTION_PATTERN = re.compile(r"([A-Za-z-]+)\s*\(")
-SAFE_STYLE_PROPERTIES = {
-    "color",
-    "display",
-    "dominant-baseline",
-    "fill",
-    "fill-opacity",
-    "font-family",
-    "font-size",
-    "font-style",
-    "font-weight",
-    "opacity",
-    "paint-order",
-    "shape-rendering",
-    "stop-color",
-    "stop-opacity",
-    "stroke",
-    "stroke-dasharray",
-    "stroke-dashoffset",
-    "stroke-linecap",
-    "stroke-linejoin",
-    "stroke-miterlimit",
-    "stroke-opacity",
-    "stroke-width",
-    "text-anchor",
-    "text-rendering",
-    "transform",
-    "vector-effect",
-    "visibility",
-}
-SAFE_STYLE_FUNCTIONS = {
-    "calc",
-    "hsl",
-    "hsla",
-    "matrix",
-    "rgb",
-    "rgba",
-    "rotate",
-    "scale",
-    "skewx",
-    "skewy",
-    "translate",
-    "url",
-}
+SAFE_STYLE_PROPERTIES = STATIC_SVG_POLICY.safe_style_properties
+SAFE_STYLE_FUNCTIONS = STATIC_SVG_POLICY.safe_style_functions
 
 
 class SVGValidator(BaseValidator):
@@ -189,6 +93,11 @@ class SVGValidator(BaseValidator):
                 errors.append(
                     f"Foreign element namespace is not allowed: {element_qname.namespace}."
                 )
+            if element_name.lower() in STATIC_SVG_POLICY.forbidden_elements:
+                errors.append(
+                    "Active element is forbidden by static SVG policy: "
+                    f"<{element_name}>."
+                )
             if element_name not in SAFE_ELEMENTS:
                 errors.append(f"Element is not allowed in static SVG: <{element_name}>.")
 
@@ -208,7 +117,11 @@ class SVGValidator(BaseValidator):
                     )
                 if attribute_name == "base":
                     errors.append("Base URI attributes are not allowed.")
-                if attribute_name in {"href", "src"} and value and not value.startswith("#"):
+                if (
+                    attribute_name in STATIC_SVG_POLICY.external_reference_attributes
+                    and value
+                    and not value.startswith("#")
+                ):
                     errors.append(
                         f"External reference is not allowed in {attribute_name}: {value}."
                     )
