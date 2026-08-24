@@ -1,4 +1,4 @@
-# R0 baseline: description-only instruction and raw SVG XML target.
+# C1: description-only matched ablation using the independent SVG discrete codec.
 train:
   model:
     model_id: "google/gemma-4-12B-it-qat-q4_0-unquantized"
@@ -11,12 +11,9 @@ train:
     bnb_4bit_use_double_quant: true
     local_files_only: false
     trust_remote_code: false
-    token_env: null
-
   experiment:
     instruction_mode: "description_only"
-    target_representation: "raw_xml"
-
+    target_representation: "omnisvg_discrete"
   lora:
     r: 16
     lora_alpha: 32
@@ -24,10 +21,9 @@ train:
     target_modules: ["q_proj", "k_proj", "v_proj", "o_proj", "gate_proj", "up_proj", "down_proj"]
     bias: "none"
     task_type: "CAUSAL_LM"
-    modules_to_save: []
-
+    modules_to_save: ["embed_tokens", "lm_head"]
   sft:
-    output_dir: "./outputs/sft/gemma4_raw"
+    output_dir: "./outputs/sft/gemma4_discrete"
     num_train_epochs: 1.0
     per_device_train_batch_size: 1
     per_device_eval_batch_size: 1
@@ -42,15 +38,10 @@ train:
     save_total_limit: 2
     max_seq_length: 8192
     bf16: true
-    fp16: false
     gradient_checkpointing: true
     optim: "paged_adamw_8bit"
     seed: 42
-    dataloader_num_workers: 2
-    resume_from_checkpoint: null
     merge_adapter: false
-    report_to: []
-
   dataset:
     train_path: "./data/processed/mmsvg_sft_20k/train.jsonl"
     validation_path: "./data/processed/mmsvg_sft_20k/validation.jsonl"

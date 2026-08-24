@@ -42,6 +42,9 @@ vlm = [
     "num2words>=0.5.14",
     "torchvision>=0.20",
 ]
+train = [
+    "bitsandbytes>=0.46,<1",
+]
 dev = [
     "pytest>=8.0",
     "pytest-cov>=5.0",

@@ -12,8 +12,8 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from svg_agentic_slm.rag.schemas import RetrievedExample
 
-INITIAL_PROMPT_VERSION = "text-to-svg-v2-conservative"
-REVISION_PROMPT_VERSION = "svg-revision-v2-conservative"
+INITIAL_PROMPT_VERSION = "text-to-svg-v3-omnisvg-aligned"
+REVISION_PROMPT_VERSION = "svg-revision-v3-omnisvg-aligned"
 
 
 def build_text_to_svg_prompt(
@@ -36,9 +36,10 @@ def build_text_to_svg_prompt(
         parts.append(retrieval_context)
 
     parts.append(
-        "Create a new, original SVG for the user instruction below. Preserve all "
-        "requested objects, spatial relations, and style while adding nothing that "
-        "the instruction does not support.\n"
+        "Generate a precise, valid, new, and original SVG for the user instruction "
+        "below. Create complete SVG geometry with proper coordinates and colors. "
+        "Accurately capture the key shapes, spatial relationships, and visual "
+        "composition while adding nothing that the instruction does not support.\n"
         f"<user_instruction>\n{instruction}\n</user_instruction>\n"
         "Return only the complete standalone SVG document."
     )
@@ -97,6 +98,7 @@ def build_revision_prompt(
         "from the original instruction and actionable feedback. Preserve semantic ids "
         "for unchanged components and keep every id unique. Maintain clear "
         "back-to-front layers, integer in-viewBox coordinates where practical, and "
-        "simple primitives or short paths. Return only one complete standalone SVG "
-        "document with no explanation or markdown."
+        "simple primitives or short paths. Keep coordinates, colors, key shapes, "
+        "spatial relationships, and visual composition precise. Return only one "
+        "complete standalone SVG document with no explanation or markdown."
     )

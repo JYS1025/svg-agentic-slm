@@ -48,6 +48,7 @@ from svg_agentic_slm.models.llama_cpp_backend import (
     LlamaCppModelBackend,
 )
 from svg_agentic_slm.models.openai_compatible_backend import OpenAICompatibleBackend
+from svg_agentic_slm.models.transformers_text_backend import TransformersTextBackend
 from svg_agentic_slm.models.transformers_vlm_backend import TransformersVLMBackend
 from svg_agentic_slm.rag.base import BaseRetriever
 from svg_agentic_slm.rag.chroma_store import ChromaRetriever
@@ -562,12 +563,33 @@ def _build_model_backend(
         "token_env",
         "trust_remote_code",
     }
+    transformers_text_keys = {
+        "adapter_path",
+        "attn_implementation",
+        "auto_model_class",
+        "backend_type",
+        "codec_grid_size",
+        "codec_manifest_path",
+        "device",
+        "dtype",
+        "enable_thinking",
+        "local_files_only",
+        "model_id",
+        "model_path",
+        "output_format",
+        "revision",
+        "token_env",
+        "tokenizer_path",
+        "trust_remote_code",
+    }
     if backend_type in {"llama_cpp", "gemma"}:
         supported_keys = llama_cpp_keys
     elif backend_type == "openai_compatible":
         supported_keys = openai_compatible_keys
     elif backend_type == "transformers_vlm":
         supported_keys = transformers_vlm_keys
+    elif backend_type == "transformers_text":
+        supported_keys = transformers_text_keys
     else:
         raise ValueError(f"Unsupported model backend_type: {backend_type}")
 
@@ -607,6 +629,29 @@ def _build_model_backend(
             if config_key in model_config:
                 backend_kwargs[constructor_key] = model_config[config_key]
         return TransformersVLMBackend(**backend_kwargs)
+    if backend_type == "transformers_text":
+        backend_kwargs = {"generation_config": generation_config}
+        for config_key, constructor_key in (
+            ("model_id", "model_id"),
+            ("revision", "model_revision"),
+            ("model_path", "model_path"),
+            ("adapter_path", "adapter_path"),
+            ("tokenizer_path", "tokenizer_path"),
+            ("output_format", "output_format"),
+            ("codec_manifest_path", "codec_manifest_path"),
+            ("codec_grid_size", "codec_grid_size"),
+            ("auto_model_class", "auto_model_class"),
+            ("device", "device"),
+            ("dtype", "dtype"),
+            ("attn_implementation", "attn_implementation"),
+            ("enable_thinking", "enable_thinking"),
+            ("local_files_only", "local_files_only"),
+            ("trust_remote_code", "trust_remote_code"),
+            ("token_env", "token_env"),
+        ):
+            if config_key in model_config:
+                backend_kwargs[constructor_key] = model_config[config_key]
+        return TransformersTextBackend(**backend_kwargs)
 
     backend_class = LlamaCppModelBackend if backend_type == "llama_cpp" else GemmaModelBackend
     return backend_class(

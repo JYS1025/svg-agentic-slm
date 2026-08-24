@@ -4,6 +4,7 @@ import typer
 
 from svg_agentic_slm.cli.commands_eval import evaluate
 from svg_agentic_slm.cli.commands_generate import generate
+from svg_agentic_slm.cli.commands_prepare_sft import prepare_sft
 from svg_agentic_slm.cli.commands_rag_index import rag_index
 from svg_agentic_slm.cli.commands_render import render
 from svg_agentic_slm.cli.commands_train import train
@@ -19,6 +20,7 @@ app.command(name="generate")(generate)
 app.command(name="validate")(validate)
 app.command(name="render")(render)
 app.command(name="train")(train)
+app.command(name="prepare-sft")(prepare_sft)
 app.command(name="rag-index")(rag_index)
 app.command(name="eval")(evaluate)
 

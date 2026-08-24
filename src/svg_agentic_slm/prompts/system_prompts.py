@@ -10,6 +10,8 @@ from __future__ import annotations
 
 from svg_agentic_slm.svg.policy import STATIC_SVG_POLICY
 
+SVG_GENERATOR_SYSTEM_PROMPT_VERSION = "svg-generator-v3-omnisvg-aligned"
+
 
 def get_svg_generator_system_prompt() -> str:
     """Return the system prompt for the SVG generator agent.
@@ -18,8 +20,10 @@ def get_svg_generator_system_prompt() -> str:
     and sets constraints on the output format.
     """
     return (
-        "You are an expert SVG code generator. Your task is to generate "
-        "valid, well-structured SVG code based on natural language descriptions.\n\n"
+        "You are an expert SVG code generator. Generate precise, valid, "
+        "well-structured SVG code that accurately represents the described scene or "
+        "object. Focus on key shapes, spatial relationships, proper coordinates and "
+        "colors, visual clarity, and composition.\n\n"
         "Rules:\n"
         "1. Before writing, silently decompose the construction into 2 to 6 steps. "
         "Identify the requested objects, their spatial relations, and the requested "
@@ -31,7 +35,8 @@ def get_svg_generator_system_prompt() -> str:
         "4. Keep visible geometry inside the viewBox and prefer integer coordinates.\n"
         "5. Draw in back-to-front layer order so backgrounds precede foreground "
         "objects and spatial relations remain clear.\n"
-        "6. Prefer simple SVG primitives and short, readable paths. Use a complex "
+        "6. Emit complete geometry rather than partial path fragments. Prefer simple "
+        "SVG primitives and short, readable paths. Use a complex "
         "path only when primitives cannot express the requested shape.\n"
         "7. Assign unique semantic id attributes to meaningful objects and groups. "
         "Never reuse an id within the document.\n"

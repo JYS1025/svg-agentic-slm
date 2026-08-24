@@ -29,27 +29,22 @@ class LoRAConfig:
     target_modules: list[str] = field(default_factory=lambda: ["q_proj", "v_proj"])
     bias: str = "none"
     task_type: str = "CAUSAL_LM"
+    modules_to_save: list[str] = field(default_factory=list)
 
     def to_peft_config(self) -> Any:
-        """Convert to a PEFT LoraConfig object.
-
-        Returns:
-            A peft.LoraConfig instance.
-
-        TODO: Implement when peft is available:
-        # from peft import LoraConfig as PeftLoraConfig
-        # return PeftLoraConfig(
-        #     r=self.r,
-        #     lora_alpha=self.lora_alpha,
-        #     lora_dropout=self.lora_dropout,
-        #     target_modules=self.target_modules,
-        #     bias=self.bias,
-        #     task_type=self.task_type,
-        # )
-        """
-        raise NotImplementedError(
-            "PEFT integration not yet implemented. "
-            "Install peft and implement to_peft_config()."
+        """Build the lazily imported PEFT configuration."""
+        try:
+            from peft import LoraConfig as PeftLoraConfig
+        except ImportError as exc:
+            raise RuntimeError("Install the project training dependencies to use LoRA.") from exc
+        return PeftLoraConfig(
+            r=self.r,
+            lora_alpha=self.lora_alpha,
+            lora_dropout=self.lora_dropout,
+            target_modules=self.target_modules,
+            bias=self.bias,
+            task_type=self.task_type,
+            modules_to_save=self.modules_to_save or None,
         )
 
     @classmethod
@@ -62,4 +57,5 @@ class LoRAConfig:
             target_modules=data.get("target_modules", ["q_proj", "v_proj"]),
             bias=data.get("bias", "none"),
             task_type=data.get("task_type", "CAUSAL_LM"),
+            modules_to_save=list(data.get("modules_to_save", [])),
         )
