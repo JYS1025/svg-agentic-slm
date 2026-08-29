@@ -48,6 +48,7 @@ from svg_agentic_slm.models.llama_cpp_backend import (
     LlamaCppModelBackend,
 )
 from svg_agentic_slm.models.openai_compatible_backend import OpenAICompatibleBackend
+from svg_agentic_slm.models.transformers_text_backend import TransformersTextBackend
 from svg_agentic_slm.models.transformers_vlm_backend import TransformersVLMBackend
 from svg_agentic_slm.rag.base import BaseRetriever
 from svg_agentic_slm.rag.chroma_store import ChromaRetriever
@@ -262,12 +263,23 @@ def build_generation_runtime(
 
     orchestration_config = generation_config.get("orchestration", {})
     rag_enabled = enable_rag or orchestration_config.get("enable_rag", False)
+    enable_revision_rag = orchestration_config.get("enable_revision_rag", False)
+    if not isinstance(enable_revision_rag, bool):
+        raise TypeError("enable_revision_rag must be a boolean.")
     critic_enabled = enable_critic or orchestration_config.get("enable_critic", False)
     critic_type = (
         orchestration_config.get("critic_type", "critic_v1")
         if critic_enabled
         else None
     )
+    critic_score_threshold = orchestration_config.get("critic_score_threshold", 3.0)
+    if (
+        not isinstance(critic_score_threshold, (int, float))
+        or isinstance(critic_score_threshold, bool)
+        or not 0.0 <= float(critic_score_threshold) <= 4.0
+    ):
+        raise ValueError("critic_score_threshold must be between 0 and 4.")
+    critic_score_threshold = float(critic_score_threshold)
     if critic_type not in {
         None,
         "rule",
@@ -346,6 +358,7 @@ def build_generation_runtime(
             12000,
         ),
         max_context_tokens=svg_settings.get("max_context_tokens"),
+        enable_revision_rag=enable_revision_rag,
     )
     validator = SVGValidator()
     critic = (
@@ -354,6 +367,7 @@ def build_generation_runtime(
             validator,
             critic_model_backend,
             critic_model_config=critic_model_config,
+            score_threshold=critic_score_threshold,
         )
         if critic_enabled
         else None
@@ -394,6 +408,7 @@ def build_generation_runtime(
             "critic_acceptance_score",
             8.0,
         ),
+        critic_score_threshold=critic_score_threshold,
         critic_labeler=critic_labeler,
         smoke_render_gate=smoke_render_gate,
         require_visual_evidence=grounded_visual_critic,
@@ -475,6 +490,7 @@ def _build_critic(
     model_backend: BaseModelBackend,
     *,
     critic_model_config: dict[str, Any] | None = None,
+    score_threshold: float = 3.0,
 ) -> BaseCritic:
     if critic_type == "rule":
         return RuleBasedCritic(validator)
@@ -497,11 +513,10 @@ def _build_critic(
             render_width=settings.get("render_width", 512),
             render_height=settings.get("render_height", 512),
             background_color=settings.get("background_color", "#ffffff"),
-            max_new_tokens=settings.get("max_new_tokens", 384),
+            max_new_tokens=settings.get("max_new_tokens", 2048),
+            score_threshold=score_threshold,
         )
-        if critic_type == "vlm":
-            return vlm_critic
-        return CompositeCritic([RuleBasedCritic(validator), vlm_critic])
+        return vlm_critic
     raise ValueError(f"Unsupported critic_type: {critic_type}")
 
 
@@ -562,12 +577,33 @@ def _build_model_backend(
         "token_env",
         "trust_remote_code",
     }
+    transformers_text_keys = {
+        "adapter_path",
+        "attn_implementation",
+        "auto_model_class",
+        "backend_type",
+        "codec_grid_size",
+        "codec_manifest_path",
+        "device",
+        "dtype",
+        "enable_thinking",
+        "local_files_only",
+        "model_id",
+        "model_path",
+        "output_format",
+        "revision",
+        "token_env",
+        "tokenizer_path",
+        "trust_remote_code",
+    }
     if backend_type in {"llama_cpp", "gemma"}:
         supported_keys = llama_cpp_keys
     elif backend_type == "openai_compatible":
         supported_keys = openai_compatible_keys
     elif backend_type == "transformers_vlm":
         supported_keys = transformers_vlm_keys
+    elif backend_type == "transformers_text":
+        supported_keys = transformers_text_keys
     else:
         raise ValueError(f"Unsupported model backend_type: {backend_type}")
 
@@ -607,6 +643,29 @@ def _build_model_backend(
             if config_key in model_config:
                 backend_kwargs[constructor_key] = model_config[config_key]
         return TransformersVLMBackend(**backend_kwargs)
+    if backend_type == "transformers_text":
+        backend_kwargs = {"generation_config": generation_config}
+        for config_key, constructor_key in (
+            ("model_id", "model_id"),
+            ("revision", "model_revision"),
+            ("model_path", "model_path"),
+            ("adapter_path", "adapter_path"),
+            ("tokenizer_path", "tokenizer_path"),
+            ("output_format", "output_format"),
+            ("codec_manifest_path", "codec_manifest_path"),
+            ("codec_grid_size", "codec_grid_size"),
+            ("auto_model_class", "auto_model_class"),
+            ("device", "device"),
+            ("dtype", "dtype"),
+            ("attn_implementation", "attn_implementation"),
+            ("enable_thinking", "enable_thinking"),
+            ("local_files_only", "local_files_only"),
+            ("trust_remote_code", "trust_remote_code"),
+            ("token_env", "token_env"),
+        ):
+            if config_key in model_config:
+                backend_kwargs[constructor_key] = model_config[config_key]
+        return TransformersTextBackend(**backend_kwargs)
 
     backend_class = LlamaCppModelBackend if backend_type == "llama_cpp" else GemmaModelBackend
     return backend_class(

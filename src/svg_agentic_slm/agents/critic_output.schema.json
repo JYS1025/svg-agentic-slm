@@ -1,20 +1,107 @@
 {
   "type": "object",
   "additionalProperties": false,
-  "required": ["status", "issues", "preserve"],
+  "required": ["evaluations", "issues"],
   "properties": {
-    "status": {"enum": ["pass", "revise"]},
+    "evaluations": {
+      "type": "array",
+      "minItems": 18,
+      "maxItems": 18,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["category", "type", "applicable", "score", "reason"],
+        "properties": {
+          "category": {"enum": ["semantic", "geometry", "layout", "appearance"]},
+          "type": {
+            "enum": [
+              "presence",
+              "count",
+              "identity",
+              "state",
+              "text_content",
+              "contour",
+              "proportion",
+              "topology",
+              "placement",
+              "scale",
+              "orientation",
+              "spacing",
+              "occlusion",
+              "framing",
+              "color",
+              "surface",
+              "stroke",
+              "typography"
+            ]
+          },
+          "applicable": {"type": "boolean"},
+          "score": {
+            "type": ["integer", "null"],
+            "minimum": 0,
+            "maximum": 4
+          },
+          "reason": {"type": "string", "minLength": 1}
+        },
+        "allOf": [
+          {
+            "if": {"properties": {"category": {"const": "semantic"}}, "required": ["category"]},
+            "then": {"properties": {"type": {"enum": ["presence", "count", "identity", "state", "text_content"]}}}
+          },
+          {
+            "if": {"properties": {"category": {"const": "geometry"}}, "required": ["category"]},
+            "then": {"properties": {"type": {"enum": ["contour", "proportion", "topology"]}}}
+          },
+          {
+            "if": {"properties": {"category": {"const": "layout"}}, "required": ["category"]},
+            "then": {"properties": {"type": {"enum": ["placement", "scale", "orientation", "spacing", "occlusion", "framing"]}}}
+          },
+          {
+            "if": {"properties": {"category": {"const": "appearance"}}, "required": ["category"]},
+            "then": {"properties": {"type": {"enum": ["color", "surface", "stroke", "typography"]}}}
+          },
+          {
+            "if": {"properties": {"applicable": {"const": true}}, "required": ["applicable"]},
+            "then": {"properties": {"score": {"type": "integer", "minimum": 0, "maximum": 4}}}
+          },
+          {
+            "if": {"properties": {"applicable": {"const": false}}, "required": ["applicable"]},
+            "then": {"properties": {"score": {"type": "null"}}}
+          }
+        ]
+      }
+    },
     "issues": {
       "type": "array",
       "maxItems": 3,
       "items": {
         "type": "object",
         "additionalProperties": false,
-        "required": ["category", "type", "severity", "scope", "target_ids", "observed", "expected", "fix"],
+        "required": ["category", "type", "scope", "target_ids", "observed", "expected", "fix"],
         "properties": {
-          "category": {"enum": ["content", "layout", "shape", "style"]},
-          "type": {"type": "string", "minLength": 1},
-          "severity": {"enum": ["critical", "major", "minor"]},
+          "category": {"enum": ["semantic", "geometry", "layout", "appearance"]},
+          "type": {
+            "enum": [
+              "presence",
+              "count",
+              "identity",
+              "state",
+              "text_content",
+              "contour",
+              "proportion",
+              "topology",
+              "placement",
+              "scale",
+              "orientation",
+              "spacing",
+              "occlusion",
+              "framing",
+              "color",
+              "surface",
+              "stroke",
+              "typography"
+            ]
+          },
           "scope": {"enum": ["global", "object", "part"]},
           "target_ids": {
             "type": "array",
@@ -25,24 +112,26 @@
           "observed": {"type": "string", "minLength": 1},
           "expected": {"type": "string", "minLength": 1},
           "fix": {"type": "string", "minLength": 1}
-        }
+        },
+        "allOf": [
+          {
+            "if": {"properties": {"category": {"const": "semantic"}}, "required": ["category"]},
+            "then": {"properties": {"type": {"enum": ["presence", "count", "identity", "state", "text_content"]}}}
+          },
+          {
+            "if": {"properties": {"category": {"const": "geometry"}}, "required": ["category"]},
+            "then": {"properties": {"type": {"enum": ["contour", "proportion", "topology"]}}}
+          },
+          {
+            "if": {"properties": {"category": {"const": "layout"}}, "required": ["category"]},
+            "then": {"properties": {"type": {"enum": ["placement", "scale", "orientation", "spacing", "occlusion", "framing"]}}}
+          },
+          {
+            "if": {"properties": {"category": {"const": "appearance"}}, "required": ["category"]},
+            "then": {"properties": {"type": {"enum": ["color", "surface", "stroke", "typography"]}}}
+          }
+        ]
       }
-    },
-    "preserve": {
-      "type": "array",
-      "maxItems": 3,
-      "uniqueItems": true,
-      "items": {"type": "string", "minLength": 1}
     }
-  },
-  "allOf": [
-    {
-      "if": {"properties": {"status": {"const": "pass"}}, "required": ["status"]},
-      "then": {"properties": {"issues": {"maxItems": 0}, "preserve": {"maxItems": 0}}}
-    },
-    {
-      "if": {"properties": {"status": {"const": "revise"}}, "required": ["status"]},
-      "then": {"properties": {"issues": {"minItems": 1}}}
-    }
-  ]
+  }
 }

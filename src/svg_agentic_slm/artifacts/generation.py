@@ -9,6 +9,19 @@ from pathlib import Path
 from typing import Any
 
 
+_SCORECARD_TYPES = {
+    "semantic": {"presence", "count", "identity", "state", "text_content"},
+    "geometry": {"contour", "proportion", "topology"},
+    "layout": {"placement", "scale", "orientation", "spacing", "occlusion", "framing"},
+    "appearance": {"color", "surface", "stroke", "typography"},
+}
+_SCORECARD_PAIRS = {
+    (category, issue_type)
+    for category, issue_types in _SCORECARD_TYPES.items()
+    for issue_type in issue_types
+}
+
+
 @dataclass
 class ModelCallArtifactRecord:
     """Typed model-call trace stored under a generation attempt."""
@@ -374,7 +387,7 @@ def _string_list(value: object) -> list[str]:
 def _schema_version(value: object) -> int:
     if not isinstance(value, int) or isinstance(value, bool) or value < 0:
         raise ValueError("schema_version must be a non-negative integer.")
-    if value > 2:
+    if value > 3:
         raise ValueError(f"Unsupported generation artifact schema_version: {value}")
     return value
 
@@ -429,7 +442,9 @@ def _validate_v1_payload(
         )
         _require_string(feedback.get("critic_type"), f"{prefix}.critic_type")
         critic_schema_version = feedback.get("critic_schema_version", 1)
-        if allow_v2_feedback and critic_schema_version >= 2:
+        if allow_v2_feedback and critic_schema_version >= 3:
+            _validate_v3_feedback(feedback, prefix)
+        elif allow_v2_feedback and critic_schema_version >= 2:
             _validate_v2_feedback(feedback, prefix)
         else:
             _require_string_list(feedback.get("issues"), f"{prefix}.issues")
@@ -447,7 +462,7 @@ def _validate_v1_payload(
 
 
 def _validate_v2_payload(payload: dict[str, Any]) -> None:
-    """Validate critic_v1 evidence and cross-record correlation for schema v2."""
+    """Validate structured Critic evidence and cross-record correlation."""
     metadata = _require_mapping(payload.get("metadata"), "metadata")
     generator = _require_mapping(metadata.get("generator"), "metadata.generator")
     attempts_value = generator.get("attempts")
@@ -470,7 +485,7 @@ def _validate_v2_payload(payload: dict[str, Any]) -> None:
     if not isinstance(feedback_items, list):
         raise ValueError("critic_feedback must be a list.")
     feedback_ids: set[str] = set()
-    latest_v2_feedback: dict[str, Any] | None = None
+    latest_structured_feedback: dict[str, Any] | None = None
     for index, feedback_value in enumerate(feedback_items):
         prefix = f"critic_feedback[{index}]"
         feedback = _require_mapping(feedback_value, prefix)
@@ -484,14 +499,20 @@ def _validate_v2_payload(payload: dict[str, Any]) -> None:
         critic_schema_version = feedback.get("critic_schema_version", 1)
         if not isinstance(critic_schema_version, int) or isinstance(critic_schema_version, bool):
             raise ValueError(f"{prefix}.critic_schema_version must be an integer.")
-        if critic_schema_version < 1 or critic_schema_version > 2:
+        if critic_schema_version < 1 or critic_schema_version > 3:
             raise ValueError(f"{prefix}.critic_schema_version is unsupported.")
         if critic_schema_version < 2:
-            if any(key in feedback for key in ("status", "legacy_issues", "preserve", "model_call_ids")):
+            structured_fields = (
+                "status",
+                "legacy_issues",
+                "preserve",
+                "model_call_ids",
+            )
+            if any(key in feedback for key in structured_fields):
                 raise ValueError(f"{prefix} uses critic_v1 fields with a legacy critic schema.")
             continue
 
-        latest_v2_feedback = feedback
+        latest_structured_feedback = feedback
         status = feedback.get("status")
         attempt = attempts[target_attempt_id]
         evidence = attempt.get("critic_evidence")
@@ -519,20 +540,193 @@ def _validate_v2_payload(payload: dict[str, Any]) -> None:
             if not target_ids.issubset(allowed_target_ids):
                 raise ValueError(f"{prefix} contains a target ID absent from Critic evidence.")
 
-    if payload.get("outcome") == "accepted" and latest_v2_feedback is not None:
+    if payload.get("outcome") == "accepted" and latest_structured_feedback is not None:
         final_attempt_id = _selected_attempt_id(payload) or attempts_value[-1].get(
             "attempt_id"
         )
         if (
-            latest_v2_feedback.get("target_attempt_id") != final_attempt_id
-            or latest_v2_feedback.get("status") != "pass"
+            latest_structured_feedback.get("target_attempt_id") != final_attempt_id
+            or latest_structured_feedback.get("status") != "pass"
         ):
-            raise ValueError("A schema-v2 accepted artifact requires pass feedback for the final attempt.")
+            raise ValueError(
+                "An accepted structured artifact requires pass feedback for the final "
+                "attempt."
+            )
+
+
+def _validate_v3_feedback(feedback: dict[str, Any], prefix: str) -> None:
+    if feedback.get("critic_schema_version") != 3:
+        raise ValueError(f"{prefix}.critic_schema_version must be 3.")
+    status = feedback.get("status")
+    _require_choice(status, f"{prefix}.status", {"pass", "revise", "invalid"})
+    issues = feedback.get("issues")
+    if not isinstance(issues, list) or len(issues) > 3:
+        raise ValueError(f"{prefix}.issues must be an array of at most 3 typed issues.")
+    issue_pairs: set[tuple[str, str]] = set()
+    for index, issue_value in enumerate(issues):
+        issue = _require_mapping(issue_value, f"{prefix}.issues[{index}]")
+        issue_pair = _validate_v3_issue(issue, f"{prefix}.issues[{index}]", status)
+        issue_pairs.add(issue_pair)
+
+    _require_string_list(feedback.get("legacy_issues"), f"{prefix}.legacy_issues")
+    metadata = _require_mapping(feedback.get("metadata"), f"{prefix}.metadata")
+    model_call_ids = feedback.get("model_call_ids")
+    if not isinstance(model_call_ids, list) or any(
+        not isinstance(item, str) or not item for item in model_call_ids
+    ):
+        raise ValueError(f"{prefix}.model_call_ids must contain non-empty strings.")
+
+    evaluations = feedback.get("evaluations")
+    if not isinstance(evaluations, list):
+        raise ValueError(f"{prefix}.evaluations must be an array.")
+    if status == "invalid":
+        if evaluations:
+            raise ValueError(f"{prefix}: invalid feedback cannot contain evaluations.")
+        if not issues:
+            raise ValueError(f"{prefix}: invalid feedback requires at least one issue.")
+        if (
+            feedback.get("score") != 0.0
+            or feedback.get("is_valid") is not False
+            or feedback.get("matches_instruction") is not False
+        ):
+            raise ValueError(f"{prefix}: invalid feedback requires score=0 and false flags.")
+        return
+
+    if len(evaluations) != len(_SCORECARD_PAIRS):
+        raise ValueError(f"{prefix}.evaluations must contain all 18 category-type pairs.")
+    evaluation_by_pair: dict[tuple[str, str], dict[str, Any]] = {}
+    for index, evaluation_value in enumerate(evaluations):
+        evaluation = _require_mapping(
+            evaluation_value,
+            f"{prefix}.evaluations[{index}]",
+        )
+        pair = _validate_v3_evaluation(
+            evaluation,
+            f"{prefix}.evaluations[{index}]",
+        )
+        if pair in evaluation_by_pair:
+            raise ValueError(f"{prefix}.evaluations contains a duplicate pair.")
+        evaluation_by_pair[pair] = evaluation
+    if set(evaluation_by_pair) != _SCORECARD_PAIRS:
+        raise ValueError(f"{prefix}.evaluations must cover every scorecard pair exactly once.")
+
+    threshold = metadata.get("score_threshold", 3.0)
+    if (
+        not isinstance(threshold, (int, float))
+        or isinstance(threshold, bool)
+        or not math.isfinite(float(threshold))
+        or not 0.0 <= float(threshold) <= 4.0
+    ):
+        raise ValueError(f"{prefix}.metadata.score_threshold must be between 0 and 4.")
+    applicable = [item for item in evaluations if item.get("applicable") is True]
+    if not applicable:
+        raise ValueError(f"{prefix}.evaluations requires at least one applicable entry.")
+    scores = [item.get("score") for item in applicable]
+    if any(not isinstance(score, int) or isinstance(score, bool) for score in scores):
+        raise ValueError(f"{prefix}.applicable evaluations require integer scores.")
+    numeric_scores = [int(score) for score in scores]
+    if float(feedback.get("score")) != float(min(numeric_scores)):
+        raise ValueError(f"{prefix}.score must equal the minimum applicable score.")
+    below_threshold = {
+        pair
+        for pair, evaluation in evaluation_by_pair.items()
+        if evaluation.get("applicable") is True
+        and int(evaluation["score"]) < float(threshold)
+    }
+    accepted = not below_threshold
+    if status != ("pass" if accepted else "revise"):
+        raise ValueError(f"{prefix}.status is inconsistent with score threshold.")
+    if feedback.get("is_valid") is not True:
+        raise ValueError(f"{prefix}: scorecard feedback requires is_valid=true.")
+    if feedback.get("matches_instruction") is not accepted:
+        raise ValueError(f"{prefix}.matches_instruction is inconsistent with its scores.")
+    if accepted and issues:
+        raise ValueError(f"{prefix}: passing scorecard feedback cannot contain issues.")
+    if not accepted and not issues:
+        raise ValueError(f"{prefix}: revising scorecard feedback requires issues.")
+    if any(pair not in below_threshold for pair in issue_pairs):
+        raise ValueError(f"{prefix}: issues must reference evaluations below threshold.")
+
+
+def _validate_v3_evaluation(
+    evaluation: dict[str, Any],
+    prefix: str,
+) -> tuple[str, str]:
+    required = {"category", "type", "applicable", "score", "reason"}
+    if set(evaluation) != required:
+        raise ValueError(f"{prefix} must contain exactly the scorecard evaluation fields.")
+    category = evaluation.get("category")
+    issue_type = evaluation.get("type")
+    if category not in _SCORECARD_TYPES or issue_type not in _SCORECARD_TYPES[category]:
+        raise ValueError(f"{prefix}.type is invalid for its category.")
+    applicable = evaluation.get("applicable")
+    _require_bool(applicable, f"{prefix}.applicable")
+    score = evaluation.get("score")
+    if applicable:
+        if not isinstance(score, int) or isinstance(score, bool) or not 0 <= score <= 4:
+            raise ValueError(f"{prefix}.score must be an integer from 0 to 4.")
+    elif score is not None:
+        raise ValueError(f"{prefix}.score must be null when not applicable.")
+    _require_string(evaluation.get("reason"), f"{prefix}.reason", non_empty=True)
+    return str(category), str(issue_type)
+
+
+def _validate_v3_issue(
+    issue: dict[str, Any],
+    prefix: str,
+    status: str,
+) -> tuple[str, str]:
+    required = {
+        "category", "type", "scope", "target_ids", "observed", "expected", "fix",
+    }
+    if set(issue) != required:
+        raise ValueError(f"{prefix} must contain exactly the scorecard issue fields.")
+    category = issue.get("category")
+    issue_type = issue.get("type")
+    if category == "validity":
+        if status != "invalid":
+            raise ValueError(f"{prefix}: validity category is reserved for invalid feedback.")
+    elif category not in _SCORECARD_TYPES or issue_type not in _SCORECARD_TYPES[category]:
+        raise ValueError(f"{prefix}.type is invalid for its category.")
+    _require_choice(issue.get("scope"), f"{prefix}.scope", {"global", "object", "part"})
+    targets = issue.get("target_ids")
+    if not isinstance(targets, list) or len(targets) > 4 or len(set(targets)) != len(targets):
+        raise ValueError(f"{prefix}.target_ids is invalid.")
+    if any(
+        not isinstance(item, str)
+        or len(item) != 5
+        or item[0] not in "sged"
+        or not item[1:].isdigit()
+        for item in targets
+    ):
+        raise ValueError(f"{prefix}.target_ids contains an invalid ID.")
+    missing_content = (
+        category == "semantic"
+        and issue_type in {"presence", "text_content"}
+    )
+    if (
+        not targets
+        and not missing_content
+        and issue.get("scope") != "global"
+        and category != "validity"
+    ):
+        raise ValueError(
+            f"{prefix}: empty targets require missing visible content or a global issue."
+        )
+    if category == "validity" and (issue.get("scope") != "global" or targets):
+        raise ValueError(f"{prefix}: validity issues must be global with no targets.")
+    for key in ("type", "observed", "expected", "fix"):
+        _require_string(issue.get(key), f"{prefix}.{key}", non_empty=True)
+    return str(category), str(issue_type)
 
 
 def _validate_v2_feedback(feedback: dict[str, Any], prefix: str) -> None:
     critic_schema_version = feedback.get("critic_schema_version")
-    if not isinstance(critic_schema_version, int) or isinstance(critic_schema_version, bool) or critic_schema_version < 2:
+    if (
+        not isinstance(critic_schema_version, int)
+        or isinstance(critic_schema_version, bool)
+        or critic_schema_version < 2
+    ):
         raise ValueError(f"{prefix}.critic_schema_version must be at least 2.")
     status = feedback.get("status")
     _require_choice(status, f"{prefix}.status", {"pass", "revise", "invalid"})
@@ -549,7 +743,11 @@ def _validate_v2_feedback(feedback: dict[str, Any], prefix: str) -> None:
     _require_string_list(feedback.get("legacy_issues"), f"{prefix}.legacy_issues")
     preserve = feedback.get("preserve")
     _require_string_list(preserve, f"{prefix}.preserve")
-    if len(preserve) > 3 or len(set(preserve)) != len(preserve) or any(not item.strip() for item in preserve):
+    if (
+        len(preserve) > 3
+        or len(set(preserve)) != len(preserve)
+        or any(not item.strip() for item in preserve)
+    ):
         raise ValueError(f"{prefix}.preserve must contain at most 3 unique non-empty strings.")
     metadata = feedback.get("metadata")
     if not isinstance(metadata, dict):
@@ -562,7 +760,11 @@ def _validate_v2_feedback(feedback: dict[str, Any], prefix: str) -> None:
     elif status == "revise":
         if not issues or feedback.get("matches_instruction") is not False:
             raise ValueError(f"{prefix}: revise requires issues and cannot be accepted.")
-    elif not issues or feedback.get("is_valid") is not False or feedback.get("matches_instruction") is not False:
+    elif (
+        not issues
+        or feedback.get("is_valid") is not False
+        or feedback.get("matches_instruction") is not False
+    ):
         raise ValueError(f"{prefix}: invalid requires issues and false acceptance booleans.")
 
 
@@ -580,10 +782,29 @@ def _validate_v2_issue(
     category = issue.get("category")
     issue_type = issue.get("type")
     allowed_types = {
-        "content": {"element_presence_or_count", "object_identity_or_state", "reference_or_instance", "text_or_label_content"},
-        "layout": {"viewport_or_clipping", "placement_or_transform", "relative_scale_alignment_or_spacing", "stacking_or_occlusion"},
-        "shape": {"contour_or_curve_geometry", "closure_or_part_connectivity", "topology_or_fill_region"},
-        "style": {"fill_or_paint_server", "stroke_or_marker", "visibility_opacity_or_compositing", "typography_or_glyph_appearance"},
+        "content": {
+            "element_presence_or_count",
+            "object_identity_or_state",
+            "reference_or_instance",
+            "text_or_label_content",
+        },
+        "layout": {
+            "viewport_or_clipping",
+            "placement_or_transform",
+            "relative_scale_alignment_or_spacing",
+            "stacking_or_occlusion",
+        },
+        "shape": {
+            "contour_or_curve_geometry",
+            "closure_or_part_connectivity",
+            "topology_or_fill_region",
+        },
+        "style": {
+            "fill_or_paint_server",
+            "stroke_or_marker",
+            "visibility_opacity_or_compositing",
+            "typography_or_glyph_appearance",
+        },
     }
     if category == "validity":
         if status != "invalid":
@@ -604,7 +825,12 @@ def _validate_v2_issue(
     ):
         raise ValueError(f"{prefix}.target_ids contains an invalid ID.")
     missing_object = category == "content" and issue_type == "element_presence_or_count"
-    if not targets and not missing_object and issue.get("scope") != "global" and category != "validity":
+    if (
+        not targets
+        and not missing_object
+        and issue.get("scope") != "global"
+        and category != "validity"
+    ):
         raise ValueError(f"{prefix}: empty targets require a missing object or global issue.")
     if category == "validity" and (
         issue.get("severity") != "critical" or issue.get("scope") != "global" or targets
@@ -624,13 +850,18 @@ def _validate_v2_attempt(attempt: dict[str, Any], prefix: str) -> set[str]:
             raise ValueError(f"{prefix}.critic_evidence.attempt_id does not match.")
         for name in ("png_ref", "labeled_svg_ref", "manifest_ref", "renderer"):
             _require_string(evidence.get(name), f"{prefix}.critic_evidence.{name}", non_empty=True)
-        _require_optional_string(evidence.get("renderer_version"), f"{prefix}.critic_evidence.renderer_version")
+        _require_optional_string(
+            evidence.get("renderer_version"),
+            f"{prefix}.critic_evidence.renderer_version",
+        )
         for name in ("width", "height"):
             value = evidence.get(name)
             if not isinstance(value, int) or isinstance(value, bool) or value <= 0:
                 raise ValueError(f"{prefix}.critic_evidence.{name} must be a positive integer.")
         diagnostics = evidence.get("diagnostics", [])
-        if not isinstance(diagnostics, list) or any(not isinstance(item, dict) for item in diagnostics):
+        if not isinstance(diagnostics, list) or any(
+            not isinstance(item, dict) for item in diagnostics
+        ):
             raise ValueError(f"{prefix}.critic_evidence.diagnostics must be an object array.")
 
     calls = attempt.get("critic_calls", [])
@@ -925,6 +1156,22 @@ def _validate_v1_acceptance(
             "matches_instruction=true."
         )
 
+    if final_feedback.get("critic_schema_version", 1) >= 3:
+        threshold = _v3_critic_score_threshold(runtime, final_feedback)
+        applicable_scores = [
+            evaluation.get("score")
+            for evaluation in final_feedback.get("evaluations", [])
+            if evaluation.get("applicable") is True
+        ]
+        if not applicable_scores or any(
+            not isinstance(score, int) or score < threshold
+            for score in applicable_scores
+        ):
+            raise ValueError(
+                "Every applicable Critic score must meet the configured score threshold."
+            )
+        return
+
     acceptance_score = _v1_critic_acceptance_score(runtime)
     if final_feedback["score"] < acceptance_score:
         raise ValueError(
@@ -941,6 +1188,36 @@ def _v1_critic_acceptance_score(runtime: dict[str, Any]) -> float:
         return 8.0
     value = orchestration.get("critic_acceptance_score", 8.0)
     _require_score(value, "runtime.generation_config.orchestration.critic_acceptance_score")
+    return float(value)
+
+
+def _v3_critic_score_threshold(
+    runtime: dict[str, Any],
+    feedback: dict[str, Any],
+) -> float:
+    generation_config = runtime.get("generation_config")
+    if isinstance(generation_config, dict):
+        orchestration = generation_config.get("orchestration")
+        if isinstance(orchestration, dict) and "critic_score_threshold" in orchestration:
+            value = orchestration["critic_score_threshold"]
+            if (
+                not isinstance(value, (int, float))
+                or isinstance(value, bool)
+                or not 0.0 <= float(value) <= 4.0
+            ):
+                raise ValueError(
+                    "runtime.generation_config.orchestration.critic_score_threshold "
+                    "must be between 0 and 4."
+                )
+            return float(value)
+    metadata = feedback.get("metadata")
+    value = metadata.get("score_threshold", 3.0) if isinstance(metadata, dict) else 3.0
+    if (
+        not isinstance(value, (int, float))
+        or isinstance(value, bool)
+        or not 0.0 <= float(value) <= 4.0
+    ):
+        raise ValueError("critic_feedback.metadata.score_threshold must be between 0 and 4.")
     return float(value)
 
 

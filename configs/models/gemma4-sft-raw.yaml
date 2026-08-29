@@ -1,0 +1,33 @@
+# Raw-XML QLoRA inference profile. Training writes the adapter and tokenizer
+# directories below; use model_path instead after merging the adapter.
+model:
+  backend_type: "transformers_text"
+  model_id: "google/gemma-4-12B-it-qat-q4_0-unquantized"
+  revision: "b6ed86275a6a5735884e208bfed95b445a684ca2"
+  adapter_path: "outputs/sft/gemma4_raw/adapter"
+  tokenizer_path: "outputs/sft/gemma4_raw/tokenizer"
+  output_format: "raw_xml"
+  auto_model_class: "multimodal_lm"
+  device: "cuda:0"
+  dtype: "bfloat16"
+  attn_implementation: "sdpa"
+  enable_thinking: false
+  local_files_only: false
+  trust_remote_code: false
+
+critic_model:
+  backend_type: "transformers_vlm"
+  model_id: "google/gemma-4-12B-it-qat-q4_0-unquantized"
+  revision: "b6ed86275a6a5735884e208bfed95b445a684ca2"
+  auto_model_class: "multimodal_lm"
+  device: "cuda:1"
+  dtype: "bfloat16"
+  attn_implementation: "sdpa"
+  max_new_tokens: 2048
+  do_sample: false
+  enable_thinking: false
+  local_files_only: false
+  trust_remote_code: false
+  render_width: 512
+  render_height: 512
+  background_color: "#ffffff"

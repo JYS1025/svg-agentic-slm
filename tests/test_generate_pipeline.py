@@ -102,6 +102,29 @@ def test_build_generation_runtime_from_sibling_configs(tmp_path: Path) -> None:
     assert runtime.config_paths["paths"].endswith("paths.yaml")
     assert runtime.orchestrator._max_no_improvement_rounds == 3
     assert runtime.orchestrator._min_critic_score_improvement == 0.25
+    assert runtime.orchestrator._generator._enable_revision_rag is False
+
+
+def test_build_generation_runtime_enables_revision_rag_from_override(
+    tmp_path: Path,
+) -> None:
+    output_dir = tmp_path / "outputs" / "generations"
+    _write_generation_config_bundle(tmp_path, output_dir)
+
+    runtime = build_generation_runtime(
+        config_path=tmp_path / "generation.yaml",
+        prompt="Draw a green triangle.",
+        enable_rag=True,
+        overrides={
+            "generation": {
+                "orchestration": {
+                    "enable_revision_rag": True,
+                }
+            }
+        },
+    )
+
+    assert runtime.orchestrator._generator._enable_revision_rag is True
 
 
 def test_build_generation_runtime_uses_explicit_model_profile(tmp_path: Path) -> None:
@@ -239,7 +262,7 @@ def test_generate_command_persists_svg_and_metadata(tmp_path: Path) -> None:
     assert "<circle" in svg_files[0].read_text(encoding="utf-8")
 
     metadata = json.loads(json_files[0].read_text(encoding="utf-8"))
-    assert metadata["schema_version"] == 2
+    assert metadata["schema_version"] == 3
     assert metadata["run_id"].startswith("run_")
     assert metadata["instruction"] == "Draw a blue circle."
     assert metadata["outcome"] == "accepted"

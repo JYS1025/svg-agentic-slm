@@ -392,6 +392,62 @@ def test_v2_reader_accepts_selected_best_before_rolled_back_revision(
     assert record.attempts[-1].outcome == "rolled_back"
 
 
+def test_v3_reader_accepts_complete_scorecard_feedback(tmp_path: Path) -> None:
+    (tmp_path / "sample.svg").write_text("<svg/>", encoding="utf-8")
+    payload = _v1_payload("sample.svg")
+    payload["schema_version"] = 3
+    payload["stop_reason"] = "critic_acceptance_threshold_met"
+    payload["runtime"] = {
+        "enable_critic": True,
+        "generation_config": {
+            "orchestration": {
+                "critic_score_threshold": 3.0,
+            }
+        },
+    }
+    attempts = payload["metadata"]["generator"]["attempts"]  # type: ignore[index]
+    attempt = attempts[0]  # type: ignore[index]
+    attempt["stop_reason"] = "critic_acceptance_threshold_met"
+    attempt["critic_evidence"] = {
+        "attempt_id": "attempt-1",
+        "png_ref": "critic.png",
+        "labeled_svg_ref": "critic.svg",
+        "manifest_ref": "critic.json",
+        "renderer": "cairosvg",
+        "renderer_version": "test",
+        "width": 256,
+        "height": 256,
+        "diagnostics": [],
+    }
+    attempt["critic_calls"] = [
+        {
+            "critic_call_id": "critic-call-1",
+            "feedback_id": "feedback-1",
+            "retry_index": 0,
+            "prompt_ref": "critic.prompt.txt",
+            "system_prompt_ref": None,
+            "raw_output_ref": "critic.raw.txt",
+            "response_format_ref": "critic.schema.json",
+            "validation_ref": "critic.validation.json",
+            "validation_success": True,
+            "validation_error": None,
+            "generation_parameters": {},
+        }
+    ]
+    payload["critic_feedback"] = [
+        _v3_scorecard_feedback_payload("feedback-1", "attempt-1")
+    ]
+    metadata_path = tmp_path / "sample.json"
+    metadata_path.write_text(json.dumps(payload), encoding="utf-8")
+
+    record = load_generation_artifact(metadata_path)
+
+    assert record.schema_version == 3
+    assert record.outcome == "accepted"
+    assert len(record.critic_feedback[0]["evaluations"]) == 18
+    assert record.critic_feedback[0]["score"] == 3.0
+
+
 @pytest.mark.parametrize(
     ("feedback_updates", "message"),
     [
@@ -558,4 +614,58 @@ def _feedback_payload(
         "issues": [],
         "suggestions": [],
         "critic_type": "test",
+    }
+
+
+def _v3_scorecard_feedback_payload(
+    feedback_id: str,
+    target_attempt_id: str,
+) -> dict[str, object]:
+    taxonomy = {
+        "semantic": ["presence", "count", "identity", "state", "text_content"],
+        "geometry": ["contour", "proportion", "topology"],
+        "layout": [
+            "placement",
+            "scale",
+            "orientation",
+            "spacing",
+            "occlusion",
+            "framing",
+        ],
+        "appearance": ["color", "surface", "stroke", "typography"],
+    }
+    evaluations = [
+        {
+            "category": category,
+            "type": issue_type,
+            "applicable": True,
+            "score": 3,
+            "reason": "The visible property meets the configured threshold.",
+        }
+        for category, issue_types in taxonomy.items()
+        for issue_type in issue_types
+    ]
+    return {
+        "feedback_id": feedback_id,
+        "target_attempt_id": target_attempt_id,
+        "score": 3.0,
+        "is_valid": True,
+        "matches_instruction": True,
+        "status": "pass",
+        "evaluations": evaluations,
+        "issues": [],
+        "legacy_issues": [],
+        "suggestions": [],
+        "critic_type": "vlm",
+        "critic_schema_version": 3,
+        "metadata": {
+            "score_threshold": 3.0,
+            "evidence_provenance": [
+                {
+                    "attempt_id": target_attempt_id,
+                    "target_ids": [],
+                }
+            ],
+        },
+        "model_call_ids": ["critic-call-1"],
     }

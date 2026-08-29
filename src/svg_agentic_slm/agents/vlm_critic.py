@@ -8,35 +8,37 @@ import json
 import logging
 import re
 from importlib.resources import files
-from typing import Protocol, cast
+from typing import Literal, Protocol, cast
 from uuid import uuid4
 
 from svg_agentic_slm.agents.base import BaseCritic
 from svg_agentic_slm.agents.schemas import (
+    CRITIC_ISSUE_TYPES,
+    CRITIC_SCORECARD_PAIRS,
     CriticCallTrace,
     CriticCategory,
+    CriticEvaluation,
     CriticFeedback,
     CriticInput,
     CriticIssue,
     CriticScope,
-    CriticSeverity,
-    CriticStatus,
     CriticTraceError,
     validate_critic_feedback,
 )
 from svg_agentic_slm.models.schemas import ModelResponse
 from svg_agentic_slm.prompts.vlm_critic import (
     VLM_CRITIC_PROMPT_VERSION,
+    build_vlm_critic_evaluation_retry_prompt,
     build_vlm_critic_format_repair_prompt,
     build_vlm_critic_prompt,
 )
+from svg_agentic_slm.prompts.system_prompts import get_svg_vlm_critic_system_prompt
 from svg_agentic_slm.svg.labeler import CriticLabeler
 from svg_agentic_slm.svg.validator import SVGValidator
 
 logger = logging.getLogger(__name__)
 
-VLM_CRITIC_VERSION = "vlm-critic-v2-grounded"
-_SYSTEM_PROMPT = ""
+VLM_CRITIC_VERSION = "vlm-critic-v5-evidence-retry"
 _FORMAT_REPAIR_IMAGE = base64.b64decode(
     "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII="
 )
@@ -44,46 +46,14 @@ _TARGET_ID_RE = re.compile(r"^[sged][0-9]{4}$")
 _ISSUE_KEYS = {
     "category",
     "type",
-    "severity",
     "scope",
     "target_ids",
     "observed",
     "expected",
     "fix",
 }
-_ISSUE_TAXONOMY: dict[str, frozenset[str]] = {
-    "content": frozenset(
-        {
-            "element_presence_or_count",
-            "object_identity_or_state",
-            "reference_or_instance",
-            "text_or_label_content",
-        }
-    ),
-    "layout": frozenset(
-        {
-            "viewport_or_clipping",
-            "placement_or_transform",
-            "relative_scale_alignment_or_spacing",
-            "stacking_or_occlusion",
-        }
-    ),
-    "shape": frozenset(
-        {
-            "contour_or_curve_geometry",
-            "closure_or_part_connectivity",
-            "topology_or_fill_region",
-        }
-    ),
-    "style": frozenset(
-        {
-            "fill_or_paint_server",
-            "stroke_or_marker",
-            "visibility_opacity_or_compositing",
-            "typography_or_glyph_appearance",
-        }
-    ),
-}
+_EVALUATION_KEYS = {"category", "type", "applicable", "score", "reason"}
+_ISSUE_TAXONOMY = CRITIC_ISSUE_TYPES
 _CRITIC_SCHEMA = json.loads(
     files("svg_agentic_slm.agents")
     .joinpath("critic_output.schema.json")
@@ -105,6 +75,7 @@ class VisionModel(Protocol):
         prompt: str,
         image_bytes: bytes,
         *,
+        system_prompt: str,
         mime_type: str,
         max_new_tokens: int,
         do_sample: bool,
@@ -135,7 +106,8 @@ class VLMCritic(BaseCritic):
         render_width: int = 512,
         render_height: int = 512,
         background_color: str = "#ffffff",
-        max_new_tokens: int = 384,
+        max_new_tokens: int = 2048,
+        score_threshold: float = 3.0,
     ) -> None:
         if render_width <= 0 or render_height <= 0:
             raise ValueError("VLM critic render dimensions must be positive.")
@@ -143,12 +115,19 @@ class VLMCritic(BaseCritic):
             raise ValueError("VLM critic background_color must not be empty.")
         if max_new_tokens <= 0:
             raise ValueError("VLM critic max_new_tokens must be positive.")
+        if (
+            not isinstance(score_threshold, (int, float))
+            or isinstance(score_threshold, bool)
+            or not 0.0 <= float(score_threshold) <= 4.0
+        ):
+            raise ValueError("VLM critic score_threshold must be between 0 and 4.")
         self._model = model
         self._renderer = renderer
         self._render_width = render_width
         self._render_height = render_height
         self._background_color = background_color
         self._max_new_tokens = max_new_tokens
+        self._score_threshold = float(score_threshold)
         self._validator = SVGValidator()
         self._labeler = CriticLabeler()
 
@@ -167,31 +146,45 @@ class VLMCritic(BaseCritic):
             )
 
         allowed_target_ids = sorted(value.labeling.elements)
+        system_prompt = get_svg_vlm_critic_system_prompt(
+            score_threshold=self._score_threshold
+        )
         calls: list[CriticCallTrace] = []
         retry_error: str | None = None
         previous_response: str | None = None
         previous_payload: dict[str, object] | None = None
+        retry_kind: Literal["format_repair", "full_evaluation"] | None = None
 
         for retry_index in range(2):
-            prompt = (
-                build_vlm_critic_prompt(
+            if retry_index == 0:
+                prompt = build_vlm_critic_prompt(
                     value.instruction,
                     labeled_svg=value.labeling.labeled_svg,
                     allowed_target_ids=allowed_target_ids,
+                    score_threshold=self._score_threshold,
                 )
-                if retry_index == 0
-                else build_vlm_critic_format_repair_prompt(
+            elif retry_kind == "format_repair":
+                prompt = build_vlm_critic_format_repair_prompt(
                     previous_response or "",
                     retry_error or "Unknown contract error.",
                 )
-            )
+            else:
+                prompt = build_vlm_critic_evaluation_retry_prompt(
+                    value.instruction,
+                    retry_error or "Unknown contract error.",
+                    labeled_svg=value.labeling.labeled_svg,
+                    allowed_target_ids=allowed_target_ids,
+                    score_threshold=self._score_threshold,
+                )
+            format_repair_only = retry_index > 0 and retry_kind == "format_repair"
             response = self._model.generate_with_image(
                 prompt,
                 (
-                    bytes(value.render_png)
-                    if retry_index == 0
-                    else _FORMAT_REPAIR_IMAGE
+                    _FORMAT_REPAIR_IMAGE
+                    if format_repair_only
+                    else bytes(value.render_png)
                 ),
+                system_prompt=system_prompt,
                 mime_type="image/png",
                 max_new_tokens=self._max_new_tokens,
                 do_sample=False,
@@ -204,7 +197,7 @@ class VLMCritic(BaseCritic):
                 retry_index=retry_index,
                 response=response,
                 prompt=prompt,
-                system_prompt=_SYSTEM_PROMPT,
+                system_prompt=system_prompt,
                 response_format=copy.deepcopy(_CRITIC_RESPONSE_FORMAT),
                 generation_parameters={
                     "max_new_tokens": self._max_new_tokens,
@@ -212,23 +205,41 @@ class VLMCritic(BaseCritic):
                     "mime_type": "image/png",
                     "render_width": value.render_width,
                     "render_height": value.render_height,
-                    "format_repair_only": retry_index > 0,
+                    "format_repair_only": format_repair_only,
+                    "full_evaluation_retry": (
+                        retry_index > 0 and retry_kind == "full_evaluation"
+                    ),
                 },
             )
             parsed_payload: dict[str, object] | None = None
             try:
                 parsed_payload = _parse_json_object(response.text)
-                if retry_index > 0 and previous_payload is not None:
+                if format_repair_only and previous_payload is not None:
                     _validate_format_repair(previous_payload, parsed_payload)
-                status, issues, preserve = _parse_critic_contract(
+                evaluations, issues = _parse_critic_contract(
                     parsed_payload,
                     allowed_target_ids=set(allowed_target_ids),
+                    score_threshold=self._score_threshold,
+                )
+                feedback = _contract_feedback(
+                    evaluations=evaluations,
+                    issues=issues,
+                    score_threshold=self._score_threshold,
+                    attempt_id=value.attempt_id,
+                    response=response,
+                    model_calls=[*calls, trace],
+                    allowed_target_ids=allowed_target_ids,
                 )
             except (AttributeError, KeyError, TypeError, ValueError) as exc:
                 retry_error = f"{type(exc).__name__}: {exc}"
                 previous_response = response.text
                 if retry_index == 0:
                     previous_payload = parsed_payload
+                    retry_kind = (
+                        "format_repair"
+                        if _has_complete_judgment_fields(parsed_payload)
+                        else "full_evaluation"
+                    )
                 trace.validation_error = retry_error
                 calls.append(trace)
                 logger.warning(
@@ -239,22 +250,14 @@ class VLMCritic(BaseCritic):
                 if retry_index == 0:
                     continue
                 raise CriticTraceError(
-                    "VLM critic response violated the critic_v1 contract after "
-                    f"format repair: {retry_error}",
+                    "VLM critic response violated the scorecard contract after "
+                    f"one contract retry: {retry_error}",
                     calls,
                 )
 
             trace.validation_success = True
             calls.append(trace)
-            return _contract_feedback(
-                status=status,
-                issues=issues,
-                preserve=preserve,
-                attempt_id=value.attempt_id,
-                response=response,
-                model_calls=calls,
-                allowed_target_ids=allowed_target_ids,
-            )
+            return feedback
 
         raise AssertionError("Grounded VLM retry loop terminated unexpectedly.")
 
@@ -371,12 +374,20 @@ def _parse_json_object(raw_response: str) -> dict[str, object]:
     return payload
 
 
+def _has_complete_judgment_fields(
+    payload: dict[str, object] | None,
+) -> bool:
+    """Return whether serialization repair can preserve a complete judgment."""
+    return payload is not None and {"evaluations", "issues"}.issubset(payload)
+
+
 def _parse_critic_contract(
     payload: dict[str, object],
     *,
     allowed_target_ids: set[str],
-) -> tuple[CriticStatus, list[CriticIssue], list[str]]:
-    expected_keys = {"status", "issues", "preserve"}
+    score_threshold: float,
+) -> tuple[list[CriticEvaluation], list[CriticIssue]]:
+    expected_keys = {"evaluations", "issues"}
     if set(payload) != expected_keys:
         missing = sorted(expected_keys - set(payload))
         unexpected = sorted(set(payload) - expected_keys)
@@ -386,14 +397,32 @@ def _parse_critic_contract(
         if unexpected:
             details.append("unexpected=" + ",".join(unexpected))
         raise ValueError(
-            "VLM critic response must contain exactly status, issues, preserve"
+            "VLM critic response must contain exactly evaluations and issues"
             + (": " + "; ".join(details) if details else "")
         )
 
-    status_value = payload["status"]
-    if status_value not in ("pass", "revise"):
-        raise ValueError("VLM critic status must be pass or revise.")
-    status = cast(CriticStatus, status_value)
+    raw_evaluations = payload["evaluations"]
+    if not isinstance(raw_evaluations, list):
+        raise ValueError("VLM critic evaluations must be an array.")
+    if len(raw_evaluations) != len(CRITIC_SCORECARD_PAIRS):
+        raise ValueError("VLM critic evaluations must contain all 18 category-type pairs.")
+    evaluations = [_parse_evaluation(item) for item in raw_evaluations]
+    evaluation_by_pair: dict[tuple[str, str], CriticEvaluation] = {}
+    for evaluation in evaluations:
+        pair = (evaluation.category, evaluation.type)
+        if pair in evaluation_by_pair:
+            raise ValueError("VLM critic evaluations contain a duplicate category-type pair.")
+        evaluation_by_pair[pair] = evaluation
+    if set(evaluation_by_pair) != CRITIC_SCORECARD_PAIRS:
+        raise ValueError("VLM critic must evaluate every category-type pair exactly once.")
+    applicable = [item for item in evaluations if item.applicable]
+    if not applicable:
+        raise ValueError("VLM critic must mark at least one evaluation as applicable.")
+    below_threshold = {
+        (item.category, item.type)
+        for item in applicable
+        if item.score is not None and item.score < score_threshold
+    }
 
     raw_issues = payload["issues"]
     if not isinstance(raw_issues, list):
@@ -404,19 +433,53 @@ def _parse_critic_contract(
         _parse_issue(item, allowed_target_ids=allowed_target_ids)
         for item in raw_issues
     ]
-    preserve = _require_unique_nonempty_strings(
-        payload["preserve"],
-        field_name="preserve",
-        maximum=3,
-    )
+    if not below_threshold and issues:
+        raise ValueError("VLM critic issues must be empty when every score meets threshold.")
+    if below_threshold and not issues:
+        raise ValueError("VLM critic must report at least one issue below threshold.")
+    for issue in issues:
+        if (issue.category, issue.type) not in below_threshold:
+            raise ValueError(
+                "Each VLM critic issue must reference an applicable evaluation below threshold."
+            )
+    return evaluations, issues
 
-    if status == "pass" and issues:
-        raise ValueError("status=pass requires issues=[].")
-    if status == "pass" and preserve:
-        raise ValueError("status=pass requires preserve=[].")
-    if status == "revise" and not issues:
-        raise ValueError("status=revise requires at least one issue.")
-    return status, issues, preserve
+
+def _parse_evaluation(value: object) -> CriticEvaluation:
+    if not isinstance(value, dict) or set(value) != _EVALUATION_KEYS:
+        raise ValueError(
+            "Each VLM critic evaluation must contain exactly: "
+            + ", ".join(sorted(_EVALUATION_KEYS))
+        )
+    category_value = value["category"]
+    if not isinstance(category_value, str) or category_value not in _ISSUE_TAXONOMY:
+        raise ValueError("VLM critic evaluation category is outside the scorecard taxonomy.")
+    category = cast(CriticCategory, category_value)
+    issue_type_value = value["type"]
+    if (
+        not isinstance(issue_type_value, str)
+        or issue_type_value not in _ISSUE_TAXONOMY[category]
+    ):
+        raise ValueError(
+            f"VLM critic evaluation type is invalid for category '{category}'."
+        )
+    applicable = value["applicable"]
+    if not isinstance(applicable, bool):
+        raise ValueError("VLM critic evaluation applicable must be a boolean.")
+    score = value["score"]
+    if applicable:
+        if not isinstance(score, int) or isinstance(score, bool) or not 0 <= score <= 4:
+            raise ValueError("Applicable VLM critic scores must be integers from 0 to 4.")
+    elif score is not None:
+        raise ValueError("Not-applicable VLM critic scores must be null.")
+    reason = _require_nonempty_string(value["reason"], "reason")
+    return CriticEvaluation(
+        category=category,
+        type=issue_type_value,
+        applicable=applicable,
+        score=cast(int | None, score),
+        reason=reason,
+    )
 
 
 def _validate_format_repair(
@@ -424,7 +487,7 @@ def _validate_format_repair(
     repaired: dict[str, object],
 ) -> None:
     """Reject a repair that changes any existing judgment-contract field."""
-    for field_name in ("status", "issues", "preserve"):
+    for field_name in ("evaluations", "issues"):
         if field_name in previous and repaired.get(field_name) != previous[field_name]:
             raise ValueError(
                 "VLM critic format repair changed the existing "
@@ -445,7 +508,7 @@ def _parse_issue(
 
     category_value = value["category"]
     if not isinstance(category_value, str) or category_value not in _ISSUE_TAXONOMY:
-        raise ValueError("VLM critic issue category is outside the critic_v1 taxonomy.")
+        raise ValueError("VLM critic issue category is outside the scorecard taxonomy.")
     category = cast(CriticCategory, category_value)
 
     issue_type_value = value["type"]
@@ -456,11 +519,6 @@ def _parse_issue(
         raise ValueError(
             f"VLM critic issue type is invalid for category '{category}'."
         )
-
-    severity_value = value["severity"]
-    if severity_value not in ("critical", "major", "minor"):
-        raise ValueError("VLM critic issue severity must be critical, major, or minor.")
-    severity = cast(CriticSeverity, severity_value)
 
     scope_value = value["scope"]
     if scope_value not in ("global", "object", "part"):
@@ -490,12 +548,12 @@ def _parse_issue(
         not target_ids
         and scope != "global"
         and not (
-            category == "content"
-            and issue_type_value == "element_presence_or_count"
+            category == "semantic"
+            and issue_type_value in {"presence", "text_content"}
         )
     ):
         raise ValueError(
-            "Empty target_ids is allowed only for global issues or missing objects/parts."
+            "Empty target_ids is allowed only for global issues or missing visible content."
         )
 
     observed = _require_nonempty_string(value["observed"], "observed")
@@ -504,7 +562,6 @@ def _parse_issue(
     return CriticIssue(
         category=category,
         type=issue_type_value,
-        severity=severity,
         scope=scope,
         target_ids=target_ids,
         observed=observed,
@@ -539,9 +596,9 @@ def _require_unique_nonempty_strings(
 
 def _contract_feedback(
     *,
-    status: CriticStatus,
+    evaluations: list[CriticEvaluation],
     issues: list[CriticIssue],
-    preserve: list[str],
+    score_threshold: float,
     attempt_id: str,
     response: ModelResponse,
     model_calls: list[CriticCallTrace],
@@ -549,20 +606,21 @@ def _contract_feedback(
 ) -> CriticFeedback:
     legacy_issues = [_legacy_issue_text(issue) for issue in issues]
     legacy_suggestions = [_legacy_suggestion_text(issue) for issue in issues]
-    if status == "pass":
-        score = 10.0
-        is_valid = True
-        matches_instruction = True
-    else:
-        severity_scores = {"critical": 2.0, "major": 5.0, "minor": 7.0}
-        score = min(severity_scores[issue.severity] for issue in issues)
-        is_valid = not any(issue.severity == "critical" for issue in issues)
-        matches_instruction = False
+    applicable_scores = [
+        evaluation.score
+        for evaluation in evaluations
+        if evaluation.applicable and evaluation.score is not None
+    ]
+    if not applicable_scores:
+        raise ValueError("VLM scorecard requires at least one applicable score.")
+    score = float(min(applicable_scores))
+    matches_instruction = all(value >= score_threshold for value in applicable_scores)
+    status = "pass" if matches_instruction else "revise"
 
     return validate_critic_feedback(
         CriticFeedback(
             score=score,
-            is_valid=is_valid,
+            is_valid=True,
             matches_instruction=matches_instruction,
             issues=legacy_issues,
             suggestions=legacy_suggestions,
@@ -573,13 +631,14 @@ def _contract_feedback(
             model_revision=response.model_revision,
             prompt_version=VLM_CRITIC_PROMPT_VERSION,
             status=status,
+            evaluations=evaluations,
             structured_issues=issues,
-            preserve=preserve,
-            schema_version=2,
+            schema_version=3,
             metadata={
                 "attempt_id": attempt_id,
                 "allowed_target_ids": allowed_target_ids,
-                "contract": "critic_v1",
+                "contract": "critic_scorecard_v1",
+                "score_threshold": score_threshold,
             },
             model_calls=model_calls,
         )
@@ -600,11 +659,10 @@ def _invalid_feedback(
         CriticIssue(
             category="validity",
             type=stage,
-            severity="critical",
             scope="global",
             target_ids=[],
             observed=message,
-            expected="The critic input and response must satisfy the critic_v1 contract.",
+            expected="The critic input and response must satisfy the scorecard contract.",
             fix="Correct the reported contract or evidence failure before accepting this attempt.",
         )
         for message in details[:3]
@@ -626,12 +684,11 @@ def _invalid_feedback(
             prompt_version=VLM_CRITIC_PROMPT_VERSION,
             status="invalid",
             structured_issues=structured,
-            preserve=[],
-            schema_version=2,
+            schema_version=3,
             metadata={
                 "attempt_id": attempt_id,
                 "stage": stage,
-                "contract": "critic_v1",
+                "contract": "critic_scorecard_v1",
             },
             model_calls=list(model_calls or []),
         )
@@ -641,7 +698,7 @@ def _invalid_feedback(
 def _legacy_issue_text(issue: CriticIssue) -> str:
     targets = ",".join(issue.target_ids) if issue.target_ids else "global_or_missing"
     return (
-        f"[{issue.severity}/{issue.category}/{issue.type}] targets={targets}; "
+        f"[{issue.category}/{issue.type}] targets={targets}; "
         f"observed={issue.observed}; expected={issue.expected}"
     )
 

@@ -133,7 +133,7 @@ def _persist_generation_artifacts_locked(
             git_provenance=git_provenance,
         )
         metadata_payload = {
-            "schema_version": 2,
+            "schema_version": 3,
             "run_id": run_id,
             "instruction": result.instruction,
             "svg_path": _relative_artifact_reference(
@@ -159,7 +159,8 @@ def _persist_generation_artifacts_locked(
                         getattr(runtime, "critic_model_config", None)
                     )
                     if runtime.enable_critic
-                    and runtime.critic_type in {"llm", "both", "vlm", "rule_vlm"}
+                    and runtime.critic_type
+                    in {"llm", "both", "vlm", "rule_vlm", "critic_v1"}
                     else None
                 ),
                 "rag_config": runtime.rag_config if runtime.enable_rag else {},
@@ -547,7 +548,24 @@ def _serialize_feedback(feedback: CriticFeedback) -> dict[str, Any]:
         "model_revision": feedback.model_revision,
         "prompt_version": feedback.prompt_version,
     }
-    if isinstance(critic_schema_version, int) and critic_schema_version >= 2:
+    if isinstance(critic_schema_version, int) and critic_schema_version >= 3:
+        model_calls = list(getattr(feedback, "model_calls", []))
+        payload.update(
+            {
+                "status": feedback.status,
+                "evaluations": [
+                    _serialize_dataclass_value(item) for item in feedback.evaluations
+                ],
+                "issues": [
+                    _serialize_dataclass_value(item) for item in structured_issues
+                ],
+                "legacy_issues": list(feedback.issues),
+                "critic_schema_version": critic_schema_version,
+                "metadata": _redact_sensitive_config(feedback.metadata),
+                "model_call_ids": [call.critic_call_id for call in model_calls],
+            }
+        )
+    elif isinstance(critic_schema_version, int) and critic_schema_version >= 2:
         model_calls = list(getattr(feedback, "model_calls", []))
         payload.update(
             {

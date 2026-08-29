@@ -6,6 +6,7 @@ and running language model backends. Model-specific details
 not leaked into agent or orchestration code.
 """
 
+from svg_agentic_slm.models.transformers_text_backend import TransformersTextBackend
 from svg_agentic_slm.models.transformers_vlm_backend import TransformersVLMBackend
 
-__all__ = ["TransformersVLMBackend"]
+__all__ = ["TransformersTextBackend", "TransformersVLMBackend"]

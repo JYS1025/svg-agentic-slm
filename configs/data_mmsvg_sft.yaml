@@ -1,0 +1,53 @@
+prepare_mmsvg_sft:
+  # Replace only these Elice-local paths after mounting the dataset instance.
+  sources:
+    icon:
+      paths:
+        - "/path/to/elice/MMSVG-Icon/**/*.parquet"
+      dataset_id: "OmniSVG/MMSVG-Icon"
+      dataset_revision: null
+    illustration:
+      paths:
+        - "/path/to/elice/MMSVG-Illustration/**/*.parquet"
+      dataset_id: "OmniSVG/MMSVG-Illustration"
+      dataset_revision: null
+
+  output_dir: "./data/processed/mmsvg_sft_20k"
+  seed: 42
+  batch_size: 1024
+
+  split:
+    train_per_domain: 9000
+    validation_per_domain: 500
+    test_per_domain: 500
+
+  filters:
+    min_description_words: 2
+    max_description_words: 80
+    require_detail: true
+    min_svg_char_length: 32
+    max_svg_char_length: 8192
+    max_svg_token_length: 8192
+    # Fail closed: CairoSVG must successfully render every selected target.
+    require_renderable: true
+
+  fields:
+    id: ["id", "item_id", "row_id", "index"]
+    description: ["description", "caption", "text"]
+    detail: ["detail", "detailed_description"]
+    svg: ["svg", "svg_code", "output_svg"]
+
+  tokenizer:
+    model_id: "google/gemma-4-12B-it-qat-q4_0-unquantized"
+    revision: "b6ed86275a6a5735884e208bfed95b445a684ca2"
+    local_files_only: true
+    trust_remote_code: false
+
+  # JSON/JSONL records can contain IDs, canonical SVG hashes, and captions.
+  exclusion_manifests:
+    - "/path/to/elice/exclusions/mmsvgbench.jsonl"
+    - "/path/to/elice/exclusions/vectorgym_vg_text.jsonl"
+
+  # Optional metadata-only JSONL. Add dataset_type if record IDs overlap across domains:
+  # {"dataset_type": "icon", "record_id": "...", "retrieved_item_ids": ["...", "...", "..."]}
+  rag_results_path: null
