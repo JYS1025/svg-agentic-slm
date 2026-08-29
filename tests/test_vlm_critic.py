@@ -126,8 +126,8 @@ def test_vlm_retry_is_format_repair_of_previous_judgment_only() -> None:
     assert feedback.model_calls[1].validation_success is True
     repair_prompt = model.prompts[1]
     assert "Do not re-evaluate" in repair_prompt
-    assert "<auxiliary_semantic_similarity_json>" in model.prompts[0]
-    assert "<auxiliary_semantic_similarity_json>" not in repair_prompt
+    assert "<auxiliary_siglip2_score>" in model.prompts[0]
+    assert "<auxiliary_siglip2_score>" not in repair_prompt
     assert invalid_response in json.loads(
         repair_prompt.split("<previous_response_json>\n", 1)[1].split(
             "\n</previous_response_json>", 1
@@ -180,7 +180,7 @@ def test_vlm_unusable_response_retries_full_evaluation_with_original_image() -> 
     assert feedback.model_calls[1].generation_parameters["format_repair_only"] is False
 
 
-def test_vlm_exposes_similarity_as_auxiliary_evidence_on_visual_evaluations() -> None:
+def test_vlm_exposes_only_explained_similarity_score_on_visual_evaluations() -> None:
     model = _VisionModel(["not json", json.dumps(_scorecard_payload())])
     critic = VLMCritic(model, _UnusedRenderer())  # type: ignore[arg-type]
 
@@ -188,12 +188,31 @@ def test_vlm_exposes_similarity_as_auxiliary_evidence_on_visual_evaluations() ->
 
     assert feedback.status == "pass"
     for prompt in model.prompts:
-        assert "<auxiliary_semantic_similarity_json>" in prompt
-        assert '"metric": "siglip2_pair_probability"' in prompt
-        assert '"score": 0.731059' in prompt
-        assert '"raw_logit": 1.0' in prompt
+        section = prompt.split("<auxiliary_siglip2_score>\n", 1)[1].split(
+            "\n</auxiliary_siglip2_score>", 1
+        )[0]
+        assert section == (
+            "Score: 0.731059\n"
+            "Range: 0.0 to 1.0\n"
+            "Meaning: A higher score indicates stronger global semantic compatibility "
+            "between the original instruction and the rendered image. A lower score "
+            "indicates weaker compatibility."
+        )
+        for excluded in (
+            "attempt_id",
+            "metric",
+            "model_id",
+            "model_revision",
+            "raw_logit",
+            "text_template",
+        ):
+            assert excluded not in section
     assert "not ground truth" in model.system_prompts[0]
     assert "not calibrated to the 0 through 4" in model.system_prompts[0]
+    assert "ranges from 0.0 to 1.0" in model.system_prompts[0]
+    assert "higher score means stronger global semantic compatibility" in (
+        model.system_prompts[0]
+    )
 
 
 def test_vlm_rejects_similarity_for_a_different_rendered_png() -> None:
@@ -283,6 +302,17 @@ def test_vlm_prompt_separates_static_contract_from_task_input() -> None:
     assert "OUTPUT JSON FORMAT" not in user_prompt
     assert "ISSUE TAXONOMY" not in user_prompt
     assert "Rules:" not in user_prompt
+
+
+@pytest.mark.parametrize("score", [-0.1, 1.1, float("nan"), True])
+def test_vlm_prompt_rejects_invalid_similarity_score(score: object) -> None:
+    with pytest.raises(ValueError, match="between 0 and 1"):
+        build_vlm_critic_prompt(
+            "Draw a circle.",
+            labeled_svg="<svg/>",
+            allowed_target_ids=[],
+            similarity_score=score,  # type: ignore[arg-type]
+        )
 
 
 def test_vlm_accepts_scorecard_and_targeted_issue() -> None:

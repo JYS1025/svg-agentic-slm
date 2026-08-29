@@ -5,8 +5,9 @@
 from __future__ import annotations
 
 import json
+import math
 
-VLM_CRITIC_PROMPT_VERSION = "vlm-critic-grounded-v7-siglip2-evidence"
+VLM_CRITIC_PROMPT_VERSION = "vlm-critic-grounded-v8-siglip2-score"
 
 
 _OUTPUT_CONTRACT = """OUTPUT JSON FORMAT
@@ -245,11 +246,13 @@ def build_vlm_critic_system_prompt(score_threshold: float = 3.0) -> str:
         "the configured threshold and make each correction actionable for the Generator.\n"
         "6. Ground each issue to the most specific allowed target IDs that the Generator "
         "should modify. Use an empty target list only when the contract permits it.\n"
-        "7. Treat auxiliary image-text similarity as a fallible global semantic cue. "
-        "It is not ground truth, is not calibrated to the 0 through 4 scale, and cannot "
-        "establish count, geometry, layout, color, or rendering quality. Never copy it "
-        "mechanically into evaluation scores. When it conflicts with the visible image, "
-        "use the visible image as primary evidence.\n"
+        "7. The auxiliary SigLIP2 score ranges from 0.0 to 1.0. A higher score means "
+        "stronger global semantic compatibility between the original instruction and "
+        "the rendered image, while a lower score means weaker compatibility. Treat it "
+        "only as a fallible global semantic cue. It is not ground truth, is not calibrated "
+        "to the 0 through 4 scale, and cannot establish count, geometry, layout, color, "
+        "or rendering quality. Never copy it mechanically into evaluation scores. When "
+        "it conflicts with the visible image, use the visible image as primary evidence.\n"
         "8. Return only one JSON object that follows the output contract. Do not return "
         "markdown, code fences, explanations, or additional keys.\n\n"
         f"{_OUTPUT_CONTRACT}\n\n"
@@ -264,12 +267,12 @@ def build_vlm_critic_prompt(
     labeled_svg: str | None = None,
     allowed_target_ids: list[str] | None = None,
     score_threshold: float = 3.0,
-    similarity_evidence: dict[str, object] | None = None,
+    similarity_score: float | None = None,
 ) -> str:
     """Build the task-specific user prompt used with a rendered SVG image."""
     _validate_score_threshold(score_threshold)
     target_ids = list(dict.fromkeys(allowed_target_ids or []))
-    similarity_section = _build_similarity_evidence_section(similarity_evidence)
+    similarity_section = _build_similarity_score_section(similarity_score)
     return (
         "Evaluate the attached rendered SVG image against the original instruction.\n\n"
         "<original_instruction_json>\n"
@@ -292,7 +295,7 @@ def build_vlm_critic_evaluation_retry_prompt(
     labeled_svg: str | None = None,
     allowed_target_ids: list[str] | None = None,
     score_threshold: float = 3.0,
-    similarity_evidence: dict[str, object] | None = None,
+    similarity_score: float | None = None,
 ) -> str:
     """Retry a full image-grounded evaluation after an unusable response."""
     return (
@@ -307,30 +310,31 @@ def build_vlm_critic_evaluation_retry_prompt(
             labeled_svg=labeled_svg,
             allowed_target_ids=allowed_target_ids,
             score_threshold=score_threshold,
-            similarity_evidence=similarity_evidence,
+            similarity_score=similarity_score,
         )
     )
 
 
-def _build_similarity_evidence_section(
-    similarity_evidence: dict[str, object] | None,
+def _build_similarity_score_section(
+    similarity_score: float | None,
 ) -> str:
-    if similarity_evidence is None:
+    if similarity_score is None:
         return ""
-    if not isinstance(similarity_evidence, dict) or not similarity_evidence:
-        raise ValueError("similarity_evidence must be a non-empty mapping or None.")
-    if any(not isinstance(key, str) for key in similarity_evidence):
-        raise TypeError("similarity_evidence keys must be strings.")
-    payload = json.dumps(
-        similarity_evidence,
-        ensure_ascii=False,
-        sort_keys=True,
-        allow_nan=False,
-    )
+    if (
+        not isinstance(similarity_score, (int, float))
+        or isinstance(similarity_score, bool)
+        or not math.isfinite(float(similarity_score))
+        or not 0.0 <= float(similarity_score) <= 1.0
+    ):
+        raise ValueError("similarity_score must be finite and between 0 and 1.")
     return (
-        "<auxiliary_semantic_similarity_json>\n"
-        f"{payload}\n"
-        "</auxiliary_semantic_similarity_json>\n\n"
+        "<auxiliary_siglip2_score>\n"
+        f"Score: {float(similarity_score):.6f}\n"
+        "Range: 0.0 to 1.0\n"
+        "Meaning: A higher score indicates stronger global semantic compatibility "
+        "between the original instruction and the rendered image. A lower score "
+        "indicates weaker compatibility.\n"
+        "</auxiliary_siglip2_score>\n\n"
     )
 
 

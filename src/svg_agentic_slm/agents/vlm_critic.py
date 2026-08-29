@@ -27,7 +27,7 @@ from svg_agentic_slm.agents.schemas import (
     validate_critic_feedback,
 )
 from svg_agentic_slm.models.image_text_similarity import (
-    image_text_similarity_prompt_payload,
+    image_text_similarity_prompt_score,
     validate_image_text_similarity_evidence,
 )
 from svg_agentic_slm.models.schemas import ModelResponse
@@ -43,7 +43,7 @@ from svg_agentic_slm.svg.validator import SVGValidator
 
 logger = logging.getLogger(__name__)
 
-VLM_CRITIC_VERSION = "vlm-critic-v6-siglip2-evidence"
+VLM_CRITIC_VERSION = "vlm-critic-v7-siglip2-score"
 _FORMAT_REPAIR_IMAGE = base64.b64decode(
     "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII="
 )
@@ -151,8 +151,8 @@ class VLMCritic(BaseCritic):
             )
 
         allowed_target_ids = sorted(value.labeling.elements)
-        similarity_payload = (
-            image_text_similarity_prompt_payload(value.similarity_evidence)
+        similarity_score = (
+            image_text_similarity_prompt_score(value.similarity_evidence)
             if value.similarity_evidence is not None
             else None
         )
@@ -172,7 +172,7 @@ class VLMCritic(BaseCritic):
                     labeled_svg=value.labeling.labeled_svg,
                     allowed_target_ids=allowed_target_ids,
                     score_threshold=self._score_threshold,
-                    similarity_evidence=similarity_payload,
+                    similarity_score=similarity_score,
                 )
             elif retry_kind == "format_repair":
                 prompt = build_vlm_critic_format_repair_prompt(
@@ -186,7 +186,7 @@ class VLMCritic(BaseCritic):
                     labeled_svg=value.labeling.labeled_svg,
                     allowed_target_ids=allowed_target_ids,
                     score_threshold=self._score_threshold,
-                    similarity_evidence=similarity_payload,
+                    similarity_score=similarity_score,
                 )
             format_repair_only = retry_index > 0 and retry_kind == "format_repair"
             response = self._model.generate_with_image(

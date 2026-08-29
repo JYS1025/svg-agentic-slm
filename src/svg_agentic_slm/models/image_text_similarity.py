@@ -95,20 +95,12 @@ def validate_image_text_similarity_evidence(
     return value
 
 
-def image_text_similarity_prompt_payload(
+def image_text_similarity_prompt_score(
     evidence: ImageTextSimilarityEvidence,
-) -> dict[str, object]:
-    """Return the trusted subset of similarity evidence exposed to the Critic."""
+) -> float:
+    """Return only the rounded 0-1 score exposed to the Critic prompt."""
     value = validate_image_text_similarity_evidence(evidence)
-    return {
-        "attempt_id": value.attempt_id,
-        "metric": value.metric,
-        "score": round(float(value.score), 6),
-        "raw_logit": round(float(value.raw_logit), 6),
-        "model_id": value.model_id,
-        "model_revision": value.model_revision,
-        "text_template": value.text_template,
-    }
+    return round(float(value.score), 6)
 
 
 def _is_finite_number(value: object) -> bool:
