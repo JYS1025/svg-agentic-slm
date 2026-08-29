@@ -13,7 +13,8 @@ if TYPE_CHECKING:
     from svg_agentic_slm.rag.schemas import RetrievedExample
 
 INITIAL_PROMPT_VERSION = "text-to-svg-v3-omnisvg-aligned"
-REVISION_PROMPT_VERSION = "svg-revision-v3-omnisvg-aligned"
+REVISION_PROMPT_VERSION = "svg-revision-v4-targeted-json"
+VALIDITY_REVISION_PROMPT_VERSION = "svg-revision-v1-validity-repair"
 
 
 def build_text_to_svg_prompt(
@@ -74,31 +75,61 @@ def build_retrieval_context(
 def build_revision_prompt(
     instruction: str,
     previous_svg: str,
-    feedback: str,
+    required_changes_json: str,
 ) -> str:
     """Build a prompt for revising a previously generated SVG.
 
     Args:
         instruction: The original natural language description.
         previous_svg: The SVG code from the previous generation attempt.
-        feedback: Critic feedback describing issues to fix.
+        required_changes_json: JSON array of Critic issues to fix.
 
     Returns:
         The formatted revision prompt string.
-
-    # TODO: Consider adding the original RAG examples to revision prompts.
     """
     return (
-        f"Original instruction: {instruction}\n\n"
-        f"Previous SVG output:\n{previous_svg}\n\n"
-        f"Feedback from reviewer:\n{feedback}\n\n"
-        "Silently identify the components that already satisfy the instruction and "
-        "preserve them. Change only what is required by specific, actionable feedback. "
-        "Do not add objects, text, decoration, or stylistic changes that are absent "
-        "from the original instruction and actionable feedback. Preserve semantic ids "
-        "for unchanged components and keep every id unique. Maintain clear "
-        "back-to-front layers, integer in-viewBox coordinates where practical, and "
-        "simple primitives or short paths. Keep coordinates, colors, key shapes, "
-        "spatial relationships, and visual composition precise. Return only one "
-        "complete standalone SVG document with no explanation or markdown."
+        "<original_instruction>\n"
+        f"{instruction}\n"
+        "</original_instruction>\n\n"
+        "<previous_labeled_svg>\n"
+        f"{previous_svg}\n"
+        "</previous_labeled_svg>\n\n"
+        "<required_changes_json>\n"
+        f"{required_changes_json}\n"
+        "</required_changes_json>\n\n"
+        "Apply every required change and no unrelated visual changes.\n"
+        "Return the entire corrected standalone SVG document."
+    )
+
+
+def build_validity_revision_prompt(
+    instruction: str,
+    previous_output: str,
+    validity_feedback_json: str,
+    *,
+    previous_output_truncated: bool = False,
+) -> str:
+    """Build a structural repair prompt without target-based edit constraints."""
+    truncation_note = (
+        "The previous output was truncated before inclusion because it exceeded the "
+        "allowed SVG length.\n\n"
+        if previous_output_truncated
+        else ""
+    )
+    return (
+        "<original_instruction>\n"
+        f"{instruction}\n"
+        "</original_instruction>\n\n"
+        "<previous_invalid_output>\n"
+        f"{previous_output}\n"
+        "</previous_invalid_output>\n\n"
+        "<validity_feedback_json>\n"
+        f"{validity_feedback_json}\n"
+        "</validity_feedback_json>\n\n"
+        f"{truncation_note}"
+        "The previous output failed SVG generation or validity checks. Correct every "
+        "reported validity problem. Rebuild the document structure when necessary. "
+        "Preserve requested visual content that can be safely recovered, but do not "
+        "perform unrelated visual-quality revisions.\n"
+        "Return one complete, valid, safe, standalone SVG document."
     )

@@ -263,12 +263,23 @@ def build_generation_runtime(
 
     orchestration_config = generation_config.get("orchestration", {})
     rag_enabled = enable_rag or orchestration_config.get("enable_rag", False)
+    enable_revision_rag = orchestration_config.get("enable_revision_rag", False)
+    if not isinstance(enable_revision_rag, bool):
+        raise TypeError("enable_revision_rag must be a boolean.")
     critic_enabled = enable_critic or orchestration_config.get("enable_critic", False)
     critic_type = (
         orchestration_config.get("critic_type", "critic_v1")
         if critic_enabled
         else None
     )
+    critic_score_threshold = orchestration_config.get("critic_score_threshold", 3.0)
+    if (
+        not isinstance(critic_score_threshold, (int, float))
+        or isinstance(critic_score_threshold, bool)
+        or not 0.0 <= float(critic_score_threshold) <= 4.0
+    ):
+        raise ValueError("critic_score_threshold must be between 0 and 4.")
+    critic_score_threshold = float(critic_score_threshold)
     if critic_type not in {
         None,
         "rule",
@@ -347,6 +358,7 @@ def build_generation_runtime(
             12000,
         ),
         max_context_tokens=svg_settings.get("max_context_tokens"),
+        enable_revision_rag=enable_revision_rag,
     )
     validator = SVGValidator()
     critic = (
@@ -355,6 +367,7 @@ def build_generation_runtime(
             validator,
             critic_model_backend,
             critic_model_config=critic_model_config,
+            score_threshold=critic_score_threshold,
         )
         if critic_enabled
         else None
@@ -395,6 +408,7 @@ def build_generation_runtime(
             "critic_acceptance_score",
             8.0,
         ),
+        critic_score_threshold=critic_score_threshold,
         critic_labeler=critic_labeler,
         smoke_render_gate=smoke_render_gate,
         require_visual_evidence=grounded_visual_critic,
@@ -476,6 +490,7 @@ def _build_critic(
     model_backend: BaseModelBackend,
     *,
     critic_model_config: dict[str, Any] | None = None,
+    score_threshold: float = 3.0,
 ) -> BaseCritic:
     if critic_type == "rule":
         return RuleBasedCritic(validator)
@@ -498,11 +513,10 @@ def _build_critic(
             render_width=settings.get("render_width", 512),
             render_height=settings.get("render_height", 512),
             background_color=settings.get("background_color", "#ffffff"),
-            max_new_tokens=settings.get("max_new_tokens", 384),
+            max_new_tokens=settings.get("max_new_tokens", 2048),
+            score_threshold=score_threshold,
         )
-        if critic_type == "vlm":
-            return vlm_critic
-        return CompositeCritic([RuleBasedCritic(validator), vlm_critic])
+        return vlm_critic
     raise ValueError(f"Unsupported critic_type: {critic_type}")
 
 

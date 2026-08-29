@@ -12,8 +12,11 @@ import pytest
 from svg_agentic_slm.agents.base import BaseCritic, BaseGenerator
 from svg_agentic_slm.agents.orchestrator import SVGGenerationOrchestrator
 from svg_agentic_slm.agents.schemas import (
+    CRITIC_ISSUE_TYPES,
+    CriticEvaluation,
     CriticFeedback,
     CriticFeedbackEvent,
+    CriticIssue,
     CriticTraceError,
     GenerationRequest,
     GenerationResult,
@@ -248,6 +251,61 @@ class RevisionContractFailingCritic(BaseCritic):
         )
 
 
+def _scorecard_feedback(
+    *,
+    scale_score: int,
+    threshold: float = 3.0,
+) -> CriticFeedback:
+    evaluations = [
+        CriticEvaluation(
+            category=category,  # type: ignore[arg-type]
+            type=issue_type,
+            applicable=True,
+            score=scale_score if (category, issue_type) == ("layout", "scale") else 4,
+            reason="Visible scorecard assessment.",
+        )
+        for category, issue_types in CRITIC_ISSUE_TYPES.items()
+        for issue_type in issue_types
+    ]
+    passing = scale_score >= threshold
+    issues = [] if passing else [
+        CriticIssue(
+            category="layout",
+            type="scale",
+            scope="global",
+            target_ids=[],
+            observed="The complete object is too small.",
+            expected="The object should occupy most of the canvas.",
+            fix="Increase the complete object scale.",
+        )
+    ]
+    return CriticFeedback(
+        score=float(min(item.score for item in evaluations if item.score is not None)),
+        is_valid=True,
+        matches_instruction=passing,
+        issues=[item.observed for item in issues],
+        suggestions=[item.fix for item in issues],
+        critic_type="scorecard",
+        status="pass" if passing else "revise",
+        evaluations=evaluations,
+        structured_issues=issues,
+        schema_version=3,
+        metadata={"score_threshold": threshold},
+    )
+
+
+class SequentialScorecardCritic(BaseCritic):
+    def __init__(self, scale_scores: list[int]) -> None:
+        self._scale_scores = iter(scale_scores)
+
+    @property
+    def name(self) -> str:
+        return "SequentialScorecardCritic"
+
+    def critique(self, instruction: str, svg_content: str) -> CriticFeedback:
+        return _scorecard_feedback(scale_score=next(self._scale_scores))
+
+
 def test_orchestrator_instantiation() -> None:
     """Test that the orchestrator can be created with stub components."""
     orchestrator = SVGGenerationOrchestrator(
@@ -302,6 +360,145 @@ def test_orchestrator_correlates_feedback_and_revision() -> None:
     assert result.feedback_events[0].target_attempt_id == "attempt-initial"
     assert result.attempts[1].parent_attempt_id == "attempt-initial"
     assert result.attempts[1].metadata["outcome"] == "accepted"
+
+
+def test_scorecard_accepts_only_when_every_applicable_score_meets_threshold() -> None:
+    orchestrator = SVGGenerationOrchestrator(
+        generator=StubGenerator(),
+        validator=StubValidator(),
+        critic=SequentialScorecardCritic([3]),
+        critic_score_threshold=3.0,
+    )
+
+    result = orchestrator.run(GenerationRequest(instruction="Draw a square."))
+
+    assert result.revision_count == 0
+    assert result.feedback_events[0].feedback.status == "pass"
+    assert result.attempts[0].metadata["outcome"] == "accepted"
+
+
+def test_scorecard_revises_until_all_applicable_scores_meet_threshold() -> None:
+    generator = RevisingGenerator()
+    orchestrator = SVGGenerationOrchestrator(
+        generator=generator,
+        validator=StubValidator(),
+        critic=SequentialScorecardCritic([2, 3]),
+        critic_score_threshold=3.0,
+        max_revisions=1,
+    )
+
+    result = orchestrator.run(GenerationRequest(instruction="Draw a circle."))
+
+    assert result.revision_count == 1
+    assert [event.feedback.status for event in result.feedback_events] == ["revise", "pass"]
+    assert result.attempts[-1].metadata["outcome"] == "accepted"
+
+
+def test_visual_critic_is_not_called_when_svg_validity_gate_fails() -> None:
+    class InvalidValidator(BaseValidator):
+        def validate(self, svg_content: str) -> SVGValidationResult:
+            return SVGValidationResult(
+                is_valid=False,
+                has_svg_tag=True,
+                has_closing_tag=True,
+                is_well_formed_xml=False,
+                errors=["Malformed SVG."],
+            )
+
+    class FailIfCalledCritic(BaseCritic):
+        def __init__(self) -> None:
+            self.calls = 0
+
+        @property
+        def name(self) -> str:
+            return "FailIfCalledCritic"
+
+        def critique(self, instruction: str, svg_content: str) -> CriticFeedback:
+            self.calls += 1
+            raise AssertionError("The VLM Critic must not run after failed validity.")
+
+    critic = FailIfCalledCritic()
+    orchestrator = SVGGenerationOrchestrator(
+        generator=StubGenerator(),
+        validator=InvalidValidator(),
+        critic=critic,
+        require_visual_evidence=True,
+        max_revisions=0,
+    )
+
+    result = orchestrator.run(GenerationRequest(instruction="Draw a square."))
+
+    assert critic.calls == 0
+    assert result.feedback_events[0].feedback.status == "invalid"
+    assert result.feedback_events[0].feedback.critic_type == "critic_evidence_gate"
+
+
+def test_generator_output_failure_receives_feedback_and_validity_revision() -> None:
+    class InitialFailureGenerator(BaseGenerator):
+        def __init__(self) -> None:
+            self.revision_feedback: CriticFeedbackEvent | None = None
+
+        @property
+        def name(self) -> str:
+            return "InitialFailureGenerator"
+
+        def generate(self, request: GenerationRequest, context=None) -> GeneratorOutput:
+            return GeneratorOutput(
+                attempt_id="attempt-failed",
+                mode="initial",
+                svg="",
+                raw_output="No SVG was produced.",
+                status="failed",
+                prompt_version="test-initial-failure",
+                error="svg_extraction_failed",
+            )
+
+        def revise(
+            self,
+            request: GenerationRequest,
+            previous: GeneratorOutput,
+            feedback: CriticFeedbackEvent,
+            context=None,
+        ) -> GeneratorOutput:
+            self.revision_feedback = feedback
+            return GeneratorOutput(
+                attempt_id="attempt-recovered",
+                mode="revision",
+                svg='<svg xmlns="http://www.w3.org/2000/svg"><circle/></svg>',
+                raw_output="<svg><circle/></svg>",
+                status="succeeded",
+                prompt_version="test-validity-revision",
+                parent_attempt_id=previous.attempt_id,
+                trigger_feedback_id=feedback.feedback_id,
+            )
+
+    class CountingCritic(StubCritic):
+        def __init__(self) -> None:
+            self.calls = 0
+
+        def critique(self, instruction: str, svg_content: str) -> CriticFeedback:
+            self.calls += 1
+            return super().critique(instruction, svg_content)
+
+    generator = InitialFailureGenerator()
+    critic = CountingCritic()
+    orchestrator = SVGGenerationOrchestrator(
+        generator=generator,
+        validator=SequentialValidator(),
+        critic=critic,
+        max_revisions=1,
+    )
+
+    result = orchestrator.run(GenerationRequest(instruction="Draw a circle."))
+
+    assert result.revision_count == 1
+    assert result.generated_svg == result.attempts[-1].svg
+    assert result.feedback_events[0].feedback.status == "invalid"
+    assert result.feedback_events[0].feedback.metadata["evidence_provenance"][0][
+        "stage"
+    ] == "generator_output_failure"
+    assert generator.revision_feedback is result.feedback_events[0]
+    assert critic.calls == 1
 
 
 def test_orchestrator_revises_invalid_svg_even_when_critic_score_is_high() -> None:

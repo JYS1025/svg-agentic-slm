@@ -26,7 +26,7 @@ critic_model:
   device: "cuda:1"
   dtype: "bfloat16"
   attn_implementation: "sdpa"
-  max_new_tokens: 384
+  max_new_tokens: 2048
   do_sample: false
   enable_thinking: false
   local_files_only: false

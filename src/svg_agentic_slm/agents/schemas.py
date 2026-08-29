@@ -15,42 +15,57 @@ from svg_agentic_slm.models.schemas import ModelResponse
 from svg_agentic_slm.svg.schemas import SVGDiagnostic, SVGLabelingResult
 
 CriticStatus = Literal["pass", "revise", "invalid"]
-CriticCategory = Literal["validity", "content", "layout", "shape", "style"]
-CriticSeverity = Literal["critical", "major", "minor"]
+CriticCategory = Literal["validity", "semantic", "geometry", "layout", "appearance"]
 CriticScope = Literal["global", "object", "part"]
 
-_CRITIC_ISSUE_TYPES: dict[str, set[str]] = {
-    "content": {
-        "element_presence_or_count",
-        "object_identity_or_state",
-        "reference_or_instance",
-        "text_or_label_content",
-    },
-    "layout": {
-        "viewport_or_clipping",
-        "placement_or_transform",
-        "relative_scale_alignment_or_spacing",
-        "stacking_or_occlusion",
-    },
-    "shape": {
-        "contour_or_curve_geometry",
-        "closure_or_part_connectivity",
-        "topology_or_fill_region",
-    },
-    "style": {
-        "fill_or_paint_server",
-        "stroke_or_marker",
-        "visibility_opacity_or_compositing",
-        "typography_or_glyph_appearance",
-    },
+CRITIC_ISSUE_TYPES: dict[str, frozenset[str]] = {
+    "semantic": frozenset({
+        "presence",
+        "count",
+        "identity",
+        "state",
+        "text_content",
+    }),
+    "geometry": frozenset({
+        "contour",
+        "proportion",
+        "topology",
+    }),
+    "layout": frozenset({
+        "placement",
+        "scale",
+        "orientation",
+        "spacing",
+        "occlusion",
+        "framing",
+    }),
+    "appearance": frozenset({
+        "color",
+        "surface",
+        "stroke",
+        "typography",
+    }),
 }
+CRITIC_SCORECARD_PAIRS = frozenset(
+    (category, issue_type)
+    for category, issue_types in CRITIC_ISSUE_TYPES.items()
+    for issue_type in issue_types
+)
+
+
+@dataclass(frozen=True)
+class CriticEvaluation:
+    category: CriticCategory
+    type: str
+    applicable: bool
+    score: int | None
+    reason: str
 
 
 @dataclass(frozen=True)
 class CriticIssue:
     category: CriticCategory
     type: str
-    severity: CriticSeverity
     scope: CriticScope
     target_ids: list[str]
     observed: str
@@ -183,7 +198,7 @@ class CriticFeedback:
     """Structured feedback from a critic agent.
 
     Attributes:
-        score: Overall quality score (1-10).
+        score: Minimum applicable score for scorecard feedback, or a legacy 0-10 score.
         is_valid: Whether the critic considers the SVG valid.
         matches_instruction: Whether the SVG matches the instruction.
         issues: List of identified issues.
@@ -204,7 +219,9 @@ class CriticFeedback:
     model_revision: str | None = None
     prompt_version: str | None = None
     status: CriticStatus | None = None
+    evaluations: list[CriticEvaluation] = field(default_factory=list)
     structured_issues: list[CriticIssue] = field(default_factory=list)
+    # Retained only for reading and composing legacy schema-v2 feedback.
     preserve: list[str] = field(default_factory=list)
     schema_version: int = 1
     metadata: dict[str, Any] = field(default_factory=dict)
@@ -246,6 +263,10 @@ def validate_critic_feedback(value: object) -> CriticFeedback:
         raise ValueError("CriticFeedback.status is required for schema version 2 or newer.")
     if value.status is not None and value.schema_version < 2:
         raise ValueError("Structured CriticFeedback.status requires schema version 2 or newer.")
+    if value.schema_version < 3 and value.evaluations:
+        raise ValueError("CriticFeedback.evaluations requires schema version 3 or newer.")
+    if not isinstance(value.metadata, dict):
+        raise TypeError("CriticFeedback.metadata must be a dictionary.")
     if len(value.structured_issues) > 3:
         raise ValueError("CriticFeedback.structured_issues may contain at most 3 issues.")
     issue_keys: set[tuple[str, str, tuple[str, ...]]] = set()
@@ -255,29 +276,30 @@ def validate_critic_feedback(value: object) -> CriticFeedback:
         if issue_key in issue_keys:
             raise ValueError("CriticFeedback.structured_issues contains a duplicate issue.")
         issue_keys.add(issue_key)
-    if len(value.preserve) > 3 or len(set(value.preserve)) != len(value.preserve):
-        raise ValueError("CriticFeedback.preserve must contain at most 3 unique entries.")
-    if any(not item.strip() for item in value.preserve):
-        raise ValueError("CriticFeedback.preserve entries must be non-empty.")
-    if value.status == "pass":
-        if value.structured_issues or value.preserve:
-            raise ValueError("pass feedback cannot contain issues or preserve entries.")
-        if not value.is_valid or not value.matches_instruction:
-            raise ValueError("Only pass feedback may represent an accepted Critic result.")
-    elif value.status == "revise":
-        if not value.structured_issues:
-            raise ValueError("revise feedback must contain at least one structured issue.")
-        if value.matches_instruction:
-            raise ValueError("revise feedback cannot be marked as instruction-matching.")
-    elif value.status == "invalid":
-        if not value.structured_issues:
-            raise ValueError("invalid feedback must contain at least one structured issue.")
-        if value.is_valid or value.matches_instruction:
-            raise ValueError("invalid feedback cannot be valid or instruction-matching.")
-    elif value.structured_issues or value.preserve or value.model_calls:
-        raise ValueError("Structured Critic fields require schema version 2 feedback.")
-    if not isinstance(value.metadata, dict):
-        raise TypeError("CriticFeedback.metadata must be a dictionary.")
+    if value.schema_version >= 3:
+        _validate_scorecard_feedback(value)
+    else:
+        if len(value.preserve) > 3 or len(set(value.preserve)) != len(value.preserve):
+            raise ValueError("CriticFeedback.preserve must contain at most 3 unique entries.")
+        if any(not item.strip() for item in value.preserve):
+            raise ValueError("CriticFeedback.preserve entries must be non-empty.")
+        if value.status == "pass":
+            if value.structured_issues or value.preserve:
+                raise ValueError("pass feedback cannot contain issues or preserve entries.")
+            if not value.is_valid or not value.matches_instruction:
+                raise ValueError("Only pass feedback may represent an accepted Critic result.")
+        elif value.status == "revise":
+            if not value.structured_issues:
+                raise ValueError("revise feedback must contain at least one structured issue.")
+            if value.matches_instruction:
+                raise ValueError("revise feedback cannot be marked as instruction-matching.")
+        elif value.status == "invalid":
+            if not value.structured_issues:
+                raise ValueError("invalid feedback must contain at least one structured issue.")
+            if value.is_valid or value.matches_instruction:
+                raise ValueError("invalid feedback cannot be valid or instruction-matching.")
+        elif value.structured_issues or value.preserve or value.model_calls:
+            raise ValueError("Structured Critic fields require schema version 2 feedback.")
     call_ids: set[str] = set()
     for call in value.model_calls:
         if not isinstance(call, CriticCallTrace):
@@ -287,7 +309,11 @@ def validate_critic_feedback(value: object) -> CriticFeedback:
         if call.critic_call_id in call_ids:
             raise ValueError("CriticFeedback.model_calls contains a duplicate call ID.")
         call_ids.add(call.critic_call_id)
-        if not isinstance(call.retry_index, int) or isinstance(call.retry_index, bool) or call.retry_index < 0:
+        if (
+            not isinstance(call.retry_index, int)
+            or isinstance(call.retry_index, bool)
+            or call.retry_index < 0
+        ):
             raise ValueError("CriticCallTrace.retry_index must be a non-negative integer.")
         if not isinstance(call.response, ModelResponse):
             raise TypeError("CriticCallTrace.response must be ModelResponse.")
@@ -318,6 +344,102 @@ def validate_critic_feedback(value: object) -> CriticFeedback:
     return value
 
 
+def _validate_scorecard_feedback(value: CriticFeedback) -> None:
+    if value.preserve:
+        raise ValueError("Scorecard feedback does not support preserve entries.")
+    if value.status == "invalid":
+        if value.evaluations:
+            raise ValueError("Invalid scorecard feedback cannot contain evaluations.")
+        if not value.structured_issues:
+            raise ValueError("Invalid scorecard feedback requires at least one issue.")
+        if value.score != 0.0 or value.is_valid or value.matches_instruction:
+            raise ValueError("Invalid scorecard feedback requires score=0 and false flags.")
+        return
+    if value.status not in {"pass", "revise"}:
+        raise ValueError("Scorecard feedback status must be pass, revise, or invalid.")
+    if not value.is_valid:
+        raise ValueError("Pass or revise scorecard feedback requires a valid SVG.")
+
+    threshold = value.metadata.get("score_threshold", 3.0)
+    if (
+        not isinstance(threshold, (int, float))
+        or isinstance(threshold, bool)
+        or not math.isfinite(float(threshold))
+        or not 0.0 <= float(threshold) <= 4.0
+    ):
+        raise ValueError("Scorecard metadata.score_threshold must be between 0 and 4.")
+
+    if len(value.evaluations) != len(CRITIC_SCORECARD_PAIRS):
+        raise ValueError("Scorecard feedback must contain all 18 category-type evaluations.")
+    evaluation_pairs: set[tuple[str, str]] = set()
+    evaluation_by_pair: dict[tuple[str, str], CriticEvaluation] = {}
+    for evaluation in value.evaluations:
+        _validate_critic_evaluation(evaluation)
+        pair = (evaluation.category, evaluation.type)
+        if pair in evaluation_pairs:
+            raise ValueError("Scorecard feedback contains a duplicate category-type evaluation.")
+        evaluation_pairs.add(pair)
+        evaluation_by_pair[pair] = evaluation
+    if evaluation_pairs != CRITIC_SCORECARD_PAIRS:
+        raise ValueError("Scorecard feedback must evaluate every category-type pair exactly once.")
+
+    applicable = [item for item in value.evaluations if item.applicable]
+    if not applicable:
+        raise ValueError("Scorecard feedback requires at least one applicable evaluation.")
+    scores = [item.score for item in applicable]
+    if any(score is None for score in scores):
+        raise ValueError("Applicable scorecard evaluations require scores.")
+    numeric_scores = [int(score) for score in scores if score is not None]
+    minimum_score = min(numeric_scores)
+    if float(value.score) != float(minimum_score):
+        raise ValueError("CriticFeedback.score must equal the minimum applicable score.")
+
+    below_threshold = {
+        (item.category, item.type)
+        for item in applicable
+        if item.score is not None and item.score < float(threshold)
+    }
+    accepted = not below_threshold
+    expected_status = "pass" if accepted else "revise"
+    if value.status != expected_status:
+        raise ValueError("Scorecard status is inconsistent with the configured threshold.")
+    if value.matches_instruction != accepted:
+        raise ValueError("Scorecard matches_instruction is inconsistent with its scores.")
+    if accepted and value.structured_issues:
+        raise ValueError("Passing scorecard feedback cannot contain issues.")
+    if not accepted and not value.structured_issues:
+        raise ValueError("Revising scorecard feedback requires at least one issue.")
+    for issue in value.structured_issues:
+        pair = (issue.category, issue.type)
+        if pair not in below_threshold:
+            raise ValueError(
+                "Each scorecard issue must reference an applicable evaluation below threshold."
+            )
+        if pair not in evaluation_by_pair:
+            raise ValueError("Scorecard issue references an unknown category-type pair.")
+
+
+def _validate_critic_evaluation(value: object) -> None:
+    if not isinstance(value, CriticEvaluation):
+        raise TypeError("CriticFeedback.evaluations must contain CriticEvaluation values.")
+    allowed_types = CRITIC_ISSUE_TYPES.get(value.category)
+    if allowed_types is None or value.type not in allowed_types:
+        raise ValueError("CriticEvaluation.type is not valid for its category.")
+    if not isinstance(value.applicable, bool):
+        raise TypeError("CriticEvaluation.applicable must be a boolean.")
+    if value.applicable:
+        if (
+            not isinstance(value.score, int)
+            or isinstance(value.score, bool)
+            or not 0 <= value.score <= 4
+        ):
+            raise ValueError("Applicable CriticEvaluation.score must be an integer from 0 to 4.")
+    elif value.score is not None:
+        raise ValueError("Not-applicable CriticEvaluation.score must be None.")
+    if not isinstance(value.reason, str) or not value.reason.strip():
+        raise ValueError("CriticEvaluation.reason must be non-empty.")
+
+
 def _validate_string_list(value: object, field_name: str) -> None:
     if not isinstance(value, list) or any(not isinstance(item, str) for item in value):
         raise TypeError(f"{field_name} must be a list of strings.")
@@ -329,14 +451,12 @@ def _validate_critic_issue(value: object, *, allow_validity: bool) -> None:
     if value.category == "validity":
         if not allow_validity:
             raise ValueError("validity issues are reserved for invalid Critic feedback.")
-        if value.severity != "critical" or value.scope != "global" or value.target_ids:
-            raise ValueError("validity issues must be critical, global, and have no targets.")
+        if value.scope != "global" or value.target_ids:
+            raise ValueError("validity issues must be global and have no targets.")
     else:
-        allowed_types = _CRITIC_ISSUE_TYPES.get(value.category)
+        allowed_types = CRITIC_ISSUE_TYPES.get(value.category)
         if allowed_types is None or value.type not in allowed_types:
             raise ValueError("CriticIssue.type is not valid for its category.")
-    if value.severity not in {"critical", "major", "minor"}:
-        raise ValueError("CriticIssue.severity is invalid.")
     if value.scope not in {"global", "object", "part"}:
         raise ValueError("CriticIssue.scope is invalid.")
     if (
@@ -352,11 +472,17 @@ def _validate_critic_issue(value: object, *, allow_validity: bool) -> None:
         )
     ):
         raise ValueError("CriticIssue.target_ids contains invalid or duplicate IDs.")
-    missing_object = (
-        value.category == "content" and value.type == "element_presence_or_count"
+    missing_content = (
+        value.category == "semantic"
+        and value.type in {"presence", "text_content"}
     )
-    if not value.target_ids and not missing_object and value.scope != "global" and value.category != "validity":
-        raise ValueError("Empty target_ids require a missing object or global issue.")
+    if (
+        not value.target_ids
+        and not missing_content
+        and value.scope != "global"
+        and value.category != "validity"
+    ):
+        raise ValueError("Empty target_ids require missing visible content or a global issue.")
     for field_name in ("type", "observed", "expected", "fix"):
         field_value = getattr(value, field_name)
         if not isinstance(field_value, str) or not field_value.strip():
