@@ -115,6 +115,26 @@ def test_backend_factory_skips_chroma_corpus_when_requested(
     )
 
 
+def test_backend_factory_forwards_chroma_document_field(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(generation, "ChromaRetriever", _FactoryProduct)
+
+    retriever = generation.build_rag_retriever(
+        {
+            "backend": "chromadb",
+            "chromadb": {
+                "precomputed_embeddings": True,
+                "document_field": "detail",
+            },
+        },
+        index_chroma_corpus=False,
+    )
+
+    assert isinstance(retriever, _FactoryProduct)
+    assert retriever.kwargs["document_field"] == "detail"
+
+
 def test_backend_factory_rejects_unknown_backend_and_invalid_nested_config() -> None:
     with pytest.raises(ValueError, match="Unsupported RAG backend"):
         generation.build_rag_retriever({"backend": "pinecone"})

@@ -43,6 +43,7 @@ data/processed/*
 !data/examples/
 !data/rag_corpus/
 data/chroma_db/
+data/chroma_db_detail/
 data/qdrant_storage/
 
 # Model artifacts

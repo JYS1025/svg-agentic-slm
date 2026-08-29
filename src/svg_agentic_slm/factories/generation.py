@@ -678,6 +678,7 @@ def build_rag_retriever(
             dataset_roots=dataset_roots,
             precomputed_embeddings=bool(settings.get("precomputed_embeddings", False)),
             overfetch_factor=int(settings.get("overfetch_factor", 5)),
+            document_field=settings.get("document_field", "description"),
         )
         corpus_path = settings.get("corpus_path")
         if index_chroma_corpus and corpus_path:
