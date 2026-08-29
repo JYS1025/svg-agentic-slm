@@ -13,6 +13,7 @@ from svg_agentic_slm.agents.schemas import GenerationRequest
 from svg_agentic_slm.cli.overrides import parse_override_items, set_nested_override
 from svg_agentic_slm.factories.generation import (
     build_generation_runtime,
+    close_generation_runtime,
     persist_generation_artifacts,
 )
 from svg_agentic_slm.rag.schemas import RetrievedExample
@@ -115,6 +116,7 @@ def generate(
     console.print(f"RAG: {'enabled' if effective_rag else 'disabled'}")
     console.print(f"Critic: {'enabled' if enable_critic else 'disabled'}")
 
+    runtime = None
     try:
         cli_overrides = parse_override_items(overrides)
         if rag_backend is not None:
@@ -156,6 +158,14 @@ def generate(
     except Exception as e:
         console.print(f"[bold red]Generation failed: {e}[/bold red]")
         raise typer.Exit(code=1)
+    finally:
+        if runtime is not None:
+            try:
+                close_generation_runtime(runtime)
+            except Exception as exc:
+                console.print(
+                    f"[bold yellow]Runtime cleanup warning: {exc}[/bold yellow]"
+                )
 
     console.print("\n[bold green]Generated SVG:[/bold green]")
     console.print(result.generated_svg)

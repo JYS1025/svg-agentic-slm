@@ -7,6 +7,8 @@ pattern works correctly.
 
 from __future__ import annotations
 
+import hashlib
+
 import pytest
 
 from svg_agentic_slm.agents.base import BaseCritic, BaseGenerator
@@ -22,7 +24,11 @@ from svg_agentic_slm.agents.schemas import (
     GenerationResult,
     GeneratorOutput,
 )
+from svg_agentic_slm.models.image_text_similarity import (
+    ImageTextSimilarityEvidence,
+)
 from svg_agentic_slm.svg.base import BaseValidator
+from svg_agentic_slm.svg.gates import SmokeRenderResult
 from svg_agentic_slm.svg.schemas import SVGValidationResult
 
 
@@ -431,6 +437,88 @@ def test_visual_critic_is_not_called_when_svg_validity_gate_fails() -> None:
     assert critic.calls == 0
     assert result.feedback_events[0].feedback.status == "invalid"
     assert result.feedback_events[0].feedback.critic_type == "critic_evidence_gate"
+
+
+def test_visual_critic_receives_siglip2_evidence_for_the_exact_smoke_render() -> None:
+    png = b"\x89PNG\r\n\x1a\nexact-smoke-render"
+
+    class RecordingSmokeRenderGate:
+        width = 320
+        height = 240
+
+        def evaluate(self, svg: str) -> SmokeRenderResult:
+            assert svg.startswith("<svg")
+            return SmokeRenderResult(
+                success=True,
+                png=png,
+                renderer_version="test-renderer",
+            )
+
+    class RecordingSimilarityScorer:
+        def __init__(self) -> None:
+            self.calls: list[tuple[str, bytes, str]] = []
+
+        def score(
+            self,
+            instruction: str,
+            image_png: bytes,
+            *,
+            attempt_id: str,
+        ) -> ImageTextSimilarityEvidence:
+            self.calls.append((instruction, image_png, attempt_id))
+            return ImageTextSimilarityEvidence(
+                attempt_id=attempt_id,
+                metric="siglip2_pair_probability",
+                score=0.75,
+                raw_logit=1.0986123,
+                model_id="google/siglip2-base-patch16-224",
+                model_revision="a" * 40,
+                text_template="This is a photo of {instruction}.",
+                text_input=f"This is a photo of {instruction}.",
+                image_sha256=hashlib.sha256(image_png).hexdigest(),
+                device="cuda:1",
+                dtype="bfloat16",
+                latency_seconds=0.125,
+            )
+
+    class RecordingVisualCritic(BaseCritic):
+        def __init__(self) -> None:
+            self.input = None
+
+        @property
+        def name(self) -> str:
+            return "RecordingVisualCritic"
+
+        def critique(self, instruction: str, svg_content: str) -> CriticFeedback:
+            raise AssertionError("The visual critic must receive CriticInput.")
+
+        def critique_attempt(self, value) -> CriticFeedback:
+            self.input = value
+            return _scorecard_feedback(scale_score=4)
+
+    scorer = RecordingSimilarityScorer()
+    critic = RecordingVisualCritic()
+    orchestrator = SVGGenerationOrchestrator(
+        generator=StubGenerator(),
+        validator=StubValidator(),
+        critic=critic,
+        similarity_scorer=scorer,  # type: ignore[arg-type]
+        smoke_render_gate=RecordingSmokeRenderGate(),  # type: ignore[arg-type]
+        require_visual_evidence=True,
+        max_revisions=0,
+    )
+
+    result = orchestrator.run(GenerationRequest(instruction="Draw a square."))
+
+    attempt = result.attempts[0]
+    assert scorer.calls == [("Draw a square.", png, attempt.attempt_id)]
+    assert critic.input.render_png is png
+    assert critic.input.similarity_evidence is attempt.critic_evidence.similarity_evidence
+    provenance = result.feedback_events[0].feedback.metadata["evidence_provenance"][0]
+    assert provenance["similarity_evidence"]["score"] == 0.75
+    assert provenance["similarity_evidence"]["image_sha256"] == hashlib.sha256(png).hexdigest()
+    assert attempt.metadata["timing"]["similarity_latency_seconds"] == 0.125
+    assert result.metadata["timing"]["similarity_latency_seconds"] >= 0.125
 
 
 def test_generator_output_failure_receives_feedback_and_validity_revision() -> None:

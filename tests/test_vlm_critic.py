@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 from pathlib import Path
 
@@ -13,9 +14,12 @@ from svg_agentic_slm.agents.schemas import (
     CriticTraceError,
 )
 from svg_agentic_slm.agents.vlm_critic import _CRITIC_RESPONSE_FORMAT, VLMCritic
+from svg_agentic_slm.models.image_text_similarity import (
+    ImageTextSimilarityEvidence,
+)
 from svg_agentic_slm.models.schemas import ModelResponse
-from svg_agentic_slm.prompts.vlm_critic import build_vlm_critic_prompt
 from svg_agentic_slm.prompts.system_prompts import get_svg_vlm_critic_system_prompt
+from svg_agentic_slm.prompts.vlm_critic import build_vlm_critic_prompt
 from svg_agentic_slm.svg.labeler import CriticLabeler
 
 
@@ -40,7 +44,9 @@ class _UnusedRenderer:
         raise AssertionError("critique_attempt must use supplied evidence")
 
 
-def _critic_input() -> CriticInput:
+def _critic_input(
+    similarity_evidence: ImageTextSimilarityEvidence | None = None,
+) -> CriticInput:
     svg = (
         '<svg xmlns="http://www.w3.org/2000/svg">'
         '<circle id="circle" cx="10" cy="10" r="5"/>'
@@ -52,6 +58,24 @@ def _critic_input() -> CriticInput:
         canonical_svg=svg,
         render_png=b"png-evidence",
         labeling=CriticLabeler().label(svg, "attempt-1"),
+        similarity_evidence=similarity_evidence,
+    )
+
+
+def _similarity_evidence() -> ImageTextSimilarityEvidence:
+    return ImageTextSimilarityEvidence(
+        attempt_id="attempt-1",
+        metric="siglip2_pair_probability",
+        score=0.7310586,
+        raw_logit=1.0,
+        model_id="google/siglip2-base-patch16-224",
+        model_revision="a" * 40,
+        text_template="This is a photo of {instruction}.",
+        text_input="This is a photo of Draw a circle..",
+        image_sha256=hashlib.sha256(b"png-evidence").hexdigest(),
+        device="cuda:1",
+        dtype="bfloat16",
+        latency_seconds=0.125,
     )
 
 
@@ -92,7 +116,7 @@ def test_vlm_retry_is_format_repair_of_previous_judgment_only() -> None:
     model = _VisionModel([invalid_response, repaired_response])
     critic = VLMCritic(model, _UnusedRenderer())  # type: ignore[arg-type]
 
-    feedback = critic.critique_attempt(_critic_input())
+    feedback = critic.critique_attempt(_critic_input(_similarity_evidence()))
 
     assert feedback.status == "pass"
     assert feedback.score == 4.0
@@ -102,6 +126,8 @@ def test_vlm_retry_is_format_repair_of_previous_judgment_only() -> None:
     assert feedback.model_calls[1].validation_success is True
     repair_prompt = model.prompts[1]
     assert "Do not re-evaluate" in repair_prompt
+    assert "<auxiliary_semantic_similarity_json>" in model.prompts[0]
+    assert "<auxiliary_semantic_similarity_json>" not in repair_prompt
     assert invalid_response in json.loads(
         repair_prompt.split("<previous_response_json>\n", 1)[1].split(
             "\n</previous_response_json>", 1
@@ -152,6 +178,33 @@ def test_vlm_unusable_response_retries_full_evaluation_with_original_image() -> 
     assert "<original_instruction_json>" in model.prompts[1]
     assert feedback.model_calls[1].generation_parameters["full_evaluation_retry"] is True
     assert feedback.model_calls[1].generation_parameters["format_repair_only"] is False
+
+
+def test_vlm_exposes_similarity_as_auxiliary_evidence_on_visual_evaluations() -> None:
+    model = _VisionModel(["not json", json.dumps(_scorecard_payload())])
+    critic = VLMCritic(model, _UnusedRenderer())  # type: ignore[arg-type]
+
+    feedback = critic.critique_attempt(_critic_input(_similarity_evidence()))
+
+    assert feedback.status == "pass"
+    for prompt in model.prompts:
+        assert "<auxiliary_semantic_similarity_json>" in prompt
+        assert '"metric": "siglip2_pair_probability"' in prompt
+        assert '"score": 0.731059' in prompt
+        assert '"raw_logit": 1.0' in prompt
+    assert "not ground truth" in model.system_prompts[0]
+    assert "not calibrated to the 0 through 4" in model.system_prompts[0]
+
+
+def test_vlm_rejects_similarity_for_a_different_rendered_png() -> None:
+    evidence = _similarity_evidence()
+    evidence = ImageTextSimilarityEvidence(**{**evidence.__dict__, "image_sha256": "0" * 64})
+    critic = VLMCritic(_VisionModel([]), _UnusedRenderer())  # type: ignore[arg-type]
+
+    feedback = critic.critique_attempt(_critic_input(evidence))
+
+    assert feedback.status == "invalid"
+    assert "does not match its rendered PNG" in feedback.issues[0]
 
 
 def test_vlm_missing_judgment_field_retries_with_visual_evidence() -> None:

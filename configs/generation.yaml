@@ -22,6 +22,7 @@ generation:
     enable_rag: false
     enable_revision_rag: false  # Reuse retrieved RAG context in revision prompts
     enable_critic: false
+    enable_similarity_evidence: false  # Add SigLIP2 image-text evidence to critic prompts
     max_revision_rounds: 2
     critic_acceptance_score: 8.0  # Legacy 0-10 critics only
     critic_score_threshold: 3.0  # Every applicable critic_v1 score must meet this value

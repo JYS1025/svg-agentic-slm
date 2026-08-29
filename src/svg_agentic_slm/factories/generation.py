@@ -42,12 +42,16 @@ from svg_agentic_slm.cli.overrides import merge_nested_dicts
 from svg_agentic_slm.models.base import BaseModelBackend
 from svg_agentic_slm.models.gemma_loader import GemmaModelBackend
 from svg_agentic_slm.models.generation_config import GenerationConfig
+from svg_agentic_slm.models.image_text_similarity import (
+    BaseImageTextSimilarityScorer,
+)
 from svg_agentic_slm.models.llama_cpp_backend import (
     DEFAULT_MODEL_FILE,
     DEFAULT_MODEL_ID,
     LlamaCppModelBackend,
 )
 from svg_agentic_slm.models.openai_compatible_backend import OpenAICompatibleBackend
+from svg_agentic_slm.models.siglip2_similarity import Siglip2SimilarityScorer
 from svg_agentic_slm.models.transformers_text_backend import TransformersTextBackend
 from svg_agentic_slm.models.transformers_vlm_backend import TransformersVLMBackend
 from svg_agentic_slm.rag.base import BaseRetriever
@@ -91,6 +95,8 @@ class GenerationRuntime:
     render_config: dict[str, Any]
     run_id: str
     critic_model_config: dict[str, Any] | None = None
+    similarity_model_config: dict[str, Any] | None = None
+    similarity_scorer: BaseImageTextSimilarityScorer | None = None
     critic_model_backend: BaseModelBackend | None = None
     execution_command: list[str] | None = None
     benchmark_hash: str | None = None
@@ -234,7 +240,7 @@ def build_generation_runtime(
     if overrides:
         model_overrides = {
             key: overrides[key]
-            for key in ("model", "critic_model")
+            for key in ("model", "critic_model", "similarity_model")
             if key in overrides
         }
         if model_overrides:
@@ -244,15 +250,24 @@ def build_generation_runtime(
 
     model_config = model_wrapper.get("model", {})
     critic_model_config = model_wrapper.get("critic_model")
+    similarity_model_config = model_wrapper.get("similarity_model")
     if not isinstance(model_config, dict):
         raise ValueError("model must be a mapping.")
     if critic_model_config is not None and not isinstance(critic_model_config, dict):
         raise ValueError("critic_model must be a mapping when provided.")
+    if similarity_model_config is not None and not isinstance(
+        similarity_model_config, dict
+    ):
+        raise ValueError("similarity_model must be a mapping when provided.")
     if critic_model_config == {}:
         raise ValueError("critic_model must not be empty when provided.")
+    if similarity_model_config == {}:
+        raise ValueError("similarity_model must not be empty when provided.")
     validate_model_config_security(model_config)
     if critic_model_config is not None:
         validate_model_config_security(critic_model_config)
+    if similarity_model_config is not None:
+        validate_model_config_security(similarity_model_config)
     rag_config = rag_wrapper.get("rag", {})
     validate_rag_config_security(rag_config)
     paths_config = paths_wrapper.get("paths", {})
@@ -267,6 +282,9 @@ def build_generation_runtime(
     if not isinstance(enable_revision_rag, bool):
         raise TypeError("enable_revision_rag must be a boolean.")
     critic_enabled = enable_critic or orchestration_config.get("enable_critic", False)
+    similarity_enabled = orchestration_config.get("enable_similarity_evidence", False)
+    if not isinstance(similarity_enabled, bool):
+        raise TypeError("enable_similarity_evidence must be a boolean.")
     critic_type = (
         orchestration_config.get("critic_type", "critic_v1")
         if critic_enabled
@@ -299,6 +317,15 @@ def build_generation_runtime(
             raise ValueError(
                 f"critic_type={critic_type!r} requires "
                 "critic_model.backend_type='transformers_vlm'."
+            )
+    if similarity_enabled:
+        if not critic_enabled or not grounded_visual_critic:
+            raise ValueError(
+                "Similarity evidence requires an enabled grounded visual critic."
+            )
+        if similarity_model_config is None:
+            raise ValueError(
+                "enable_similarity_evidence=true requires a nonempty similarity_model."
             )
 
     output_dir = Path(paths_config.get("outputs", {}).get("generations", "./outputs/generations"))
@@ -350,6 +377,27 @@ def build_generation_runtime(
             raise
         critic_model_backend = separate_critic_backend
 
+    similarity_scorer: BaseImageTextSimilarityScorer | None = None
+    if similarity_enabled:
+        try:
+            similarity_scorer = _build_similarity_scorer(similarity_model_config or {})
+            similarity_scorer.load_model()
+        except Exception:
+            seen: set[int] = set()
+            for component in (similarity_scorer, critic_model_backend, model_backend):
+                if component is None or id(component) in seen:
+                    continue
+                seen.add(id(component))
+                unload = getattr(component, "unload_model", None)
+                if callable(unload):
+                    try:
+                        unload()
+                    except Exception:
+                        logger.exception(
+                            "Failed to unload a model after similarity setup failure."
+                        )
+            raise
+
     generator = GeneratorAgent(
         model_backend,
         max_svg_length=svg_settings.get("max_svg_length", 8192),
@@ -398,6 +446,7 @@ def build_generation_runtime(
         renderer=renderer,
         critic=critic,
         rag_agent=rag_agent,
+        similarity_scorer=similarity_scorer,
         max_revisions=orchestration_config.get("max_revision_rounds", 2),
         output_dir=output_dir,
         render_output_path=artifact_paths["render"],
@@ -440,6 +489,8 @@ def build_generation_runtime(
         generation_config=generation_config,
         model_config=model_config,
         critic_model_config=critic_model_config,
+        similarity_model_config=similarity_model_config,
+        similarity_scorer=similarity_scorer,
         critic_model_backend=(
             critic_model_backend if critic_model_backend is not model_backend else None
         ),
@@ -462,6 +513,10 @@ def build_generation_runtime(
 
 def close_generation_runtime(runtime: GenerationRuntime) -> None:
     """Release model resources owned by an assembled generation runtime."""
+    if runtime.similarity_scorer is not None:
+        similarity_unload = getattr(runtime.similarity_scorer, "unload_model", None)
+        if callable(similarity_unload):
+            similarity_unload()
     if (
         runtime.critic_model_backend is not None
         and runtime.critic_model_backend is not runtime.model_backend
@@ -518,6 +573,49 @@ def _build_critic(
         )
         return vlm_critic
     raise ValueError(f"Unsupported critic_type: {critic_type}")
+
+
+def _build_similarity_scorer(
+    similarity_model_config: dict[str, Any],
+) -> BaseImageTextSimilarityScorer:
+    if not all(isinstance(key, str) for key in similarity_model_config):
+        raise ValueError("Similarity model config keys must be strings.")
+    backend_type = str(
+        similarity_model_config.get("backend_type", "siglip2")
+    ).strip().lower()
+    if backend_type != "siglip2":
+        raise ValueError(f"Unsupported similarity backend_type: {backend_type}")
+    supported_keys = {
+        "attn_implementation",
+        "backend_type",
+        "device",
+        "dtype",
+        "local_files_only",
+        "model_id",
+        "revision",
+        "text_template",
+        "token_env",
+        "trust_remote_code",
+    }
+    unknown_keys = set(similarity_model_config) - supported_keys
+    if unknown_keys:
+        names = ", ".join(sorted(unknown_keys))
+        raise ValueError(f"Unknown similarity model config option(s): {names}")
+    kwargs: dict[str, Any] = {}
+    for config_key, constructor_key in (
+        ("model_id", "model_id"),
+        ("revision", "model_revision"),
+        ("device", "device"),
+        ("dtype", "dtype"),
+        ("attn_implementation", "attn_implementation"),
+        ("local_files_only", "local_files_only"),
+        ("trust_remote_code", "trust_remote_code"),
+        ("token_env", "token_env"),
+        ("text_template", "text_template"),
+    ):
+        if config_key in similarity_model_config:
+            kwargs[constructor_key] = similarity_model_config[config_key]
+    return Siglip2SimilarityScorer(**kwargs)
 
 
 def _build_model_backend(

@@ -11,6 +11,7 @@ import math
 from dataclasses import dataclass, field
 from typing import Any, Literal
 
+from svg_agentic_slm.models.image_text_similarity import ImageTextSimilarityEvidence
 from svg_agentic_slm.models.schemas import ModelResponse
 from svg_agentic_slm.svg.schemas import SVGDiagnostic, SVGLabelingResult
 
@@ -82,6 +83,7 @@ class CriticInput:
     labeling: SVGLabelingResult
     render_width: int = 256
     render_height: int = 256
+    similarity_evidence: ImageTextSimilarityEvidence | None = None
 
 
 @dataclass
@@ -94,6 +96,7 @@ class CriticEvidence:
     renderer_version: str | None = None
     width: int = 256
     height: int = 256
+    similarity_evidence: ImageTextSimilarityEvidence | None = None
 
 
 @dataclass

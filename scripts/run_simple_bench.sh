@@ -63,8 +63,8 @@ run_case() {
     --output "${output}" \
     --rag \
     --critic \
-    --no-render \
     --set generation.orchestration.critic_type=critic_v1 \
+    --set generation.orchestration.enable_similarity_evidence=true \
     --set generation.orchestration.max_revision_rounds=2 \
     --print-generator-parameters; then
     printf '[saved] %s\n' "${output}"

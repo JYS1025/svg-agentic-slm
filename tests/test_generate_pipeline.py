@@ -26,6 +26,7 @@ from svg_agentic_slm.factories.generation import (
     GenerationArtifacts,
     _resolve_artifact_paths,
     build_generation_runtime,
+    close_generation_runtime,
     persist_generation_artifacts,
 )
 from svg_agentic_slm.models.schemas import ModelResponse
@@ -221,6 +222,107 @@ def test_runtime_loads_separate_model_only_for_llm_critic(
 
     assert [model_id for model_id, _ in built] == ["generator-model", "critic-model"]
     assert runtime.critic_model_config == {"model_id": "critic-model"}
+
+
+def test_runtime_builds_optional_siglip2_evidence_scorer(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    output_dir = tmp_path / "outputs" / "generations"
+    _write_generation_config_bundle(tmp_path, output_dir)
+    model_path = tmp_path / "model.yaml"
+    model_path.write_text(
+        yaml.safe_dump(
+            {
+                "model": {"model_id": "generator-model"},
+                "critic_model": {
+                    "backend_type": "transformers_vlm",
+                    "model_id": "critic-model",
+                },
+                "similarity_model": {
+                    "backend_type": "siglip2",
+                    "model_id": "google/siglip2-base-patch16-224",
+                    "revision": "a" * 40,
+                    "device": "cuda:1",
+                    "dtype": "bfloat16",
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    class FakeSimilarityScorer:
+        def __init__(self) -> None:
+            self.load_calls = 0
+            self.unload_calls = 0
+
+        def load_model(self) -> None:
+            self.load_calls += 1
+
+        def unload_model(self) -> None:
+            self.unload_calls += 1
+
+    scorer = FakeSimilarityScorer()
+    observed_config: dict[str, object] = {}
+
+    def build_scorer(config: dict[str, object]):
+        observed_config.update(config)
+        return scorer
+
+    monkeypatch.setattr(
+        "svg_agentic_slm.factories.generation._build_similarity_scorer",
+        build_scorer,
+    )
+    monkeypatch.setattr(
+        "svg_agentic_slm.factories.generation._build_critic",
+        lambda *args, **kwargs: _MalformedBooleanCritic(),
+    )
+
+    runtime = build_generation_runtime(
+        config_path=tmp_path / "generation.yaml",
+        prompt="Draw a circle.",
+        enable_critic=True,
+        overrides={
+            "generation": {
+                "orchestration": {
+                    "critic_type": "critic_v1",
+                    "enable_similarity_evidence": True,
+                }
+            }
+        },
+    )
+
+    assert scorer.load_calls == 1
+    assert runtime.similarity_scorer is scorer
+    assert runtime.orchestrator._similarity_scorer is scorer
+    assert observed_config == {
+        "backend_type": "siglip2",
+        "model_id": "google/siglip2-base-patch16-224",
+        "revision": "a" * 40,
+        "device": "cuda:1",
+        "dtype": "bfloat16",
+    }
+
+    close_generation_runtime(runtime)
+    assert scorer.unload_calls == 1
+
+
+def test_similarity_evidence_requires_grounded_visual_critic(tmp_path: Path) -> None:
+    output_dir = tmp_path / "outputs" / "generations"
+    _write_generation_config_bundle(tmp_path, output_dir)
+
+    with pytest.raises(ValueError, match="grounded visual critic"):
+        build_generation_runtime(
+            config_path=tmp_path / "generation.yaml",
+            prompt="Draw a circle.",
+            enable_critic=True,
+            overrides={
+                "generation": {
+                    "orchestration": {"enable_similarity_evidence": True}
+                },
+                "similarity_model": {"backend_type": "siglip2"},
+            },
+        )
 
 
 def test_composite_critic_validates_each_child_before_aggregation() -> None:

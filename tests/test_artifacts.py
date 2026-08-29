@@ -418,6 +418,20 @@ def test_v3_reader_accepts_complete_scorecard_feedback(tmp_path: Path) -> None:
         "width": 256,
         "height": 256,
         "diagnostics": [],
+        "similarity_evidence": {
+            "attempt_id": "attempt-1",
+            "metric": "siglip2_pair_probability",
+            "score": 0.75,
+            "raw_logit": 1.0986123,
+            "model_id": "google/siglip2-base-patch16-224",
+            "model_revision": "a" * 40,
+            "text_template": "This is a photo of {instruction}.",
+            "text_input": "This is a photo of Draw a square..",
+            "image_sha256": "a" * 64,
+            "device": "cuda:1",
+            "dtype": "bfloat16",
+            "latency_seconds": 0.125,
+        },
     }
     attempt["critic_calls"] = [
         {
@@ -437,6 +451,9 @@ def test_v3_reader_accepts_complete_scorecard_feedback(tmp_path: Path) -> None:
     payload["critic_feedback"] = [
         _v3_scorecard_feedback_payload("feedback-1", "attempt-1")
     ]
+    payload["critic_feedback"][0]["metadata"]["evidence_provenance"][0]["similarity_evidence"] = (
+        attempt["critic_evidence"]["similarity_evidence"]
+    )
     metadata_path = tmp_path / "sample.json"
     metadata_path.write_text(json.dumps(payload), encoding="utf-8")
 
@@ -446,6 +463,12 @@ def test_v3_reader_accepts_complete_scorecard_feedback(tmp_path: Path) -> None:
     assert record.outcome == "accepted"
     assert len(record.critic_feedback[0]["evaluations"]) == 18
     assert record.critic_feedback[0]["score"] == 3.0
+    assert (
+        record.critic_feedback[0]["metadata"]["evidence_provenance"][0]["similarity_evidence"][
+            "score"
+        ]
+        == 0.75
+    )
 
 
 @pytest.mark.parametrize(

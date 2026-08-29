@@ -13,6 +13,7 @@ import hashlib
 import logging
 import time
 from collections.abc import Callable
+from dataclasses import asdict
 from pathlib import Path
 from typing import TYPE_CHECKING
 from uuid import uuid4
@@ -30,12 +31,18 @@ from svg_agentic_slm.agents.schemas import (
     GeneratorOutput,
     validate_critic_feedback,
 )
+from svg_agentic_slm.models.image_text_similarity import (
+    validate_image_text_similarity_evidence,
+)
 from svg_agentic_slm.svg.gates import SmokeRenderGate
 from svg_agentic_slm.svg.labeler import CriticLabeler
 
 if TYPE_CHECKING:
     from svg_agentic_slm.agents.base import BaseCritic, BaseGenerator
     from svg_agentic_slm.agents.rag_agent import RAGAgent
+    from svg_agentic_slm.models.image_text_similarity import (
+        BaseImageTextSimilarityScorer,
+    )
     from svg_agentic_slm.rag.schemas import RetrievedExample
     from svg_agentic_slm.svg.base import BaseRenderer, BaseValidator
     from svg_agentic_slm.svg.schemas import SVGValidationResult
@@ -75,6 +82,7 @@ class SVGGenerationOrchestrator:
         renderer: BaseRenderer | None = None,
         critic: BaseCritic | None = None,
         rag_agent: RAGAgent | None = None,
+        similarity_scorer: BaseImageTextSimilarityScorer | None = None,
         max_revisions: int = 2,
         output_dir: str | Path = "./outputs/generations",
         render_output_path: str | Path | None = None,
@@ -108,6 +116,7 @@ class SVGGenerationOrchestrator:
         self._renderer = renderer
         self._critic = critic
         self._rag_agent = rag_agent
+        self._similarity_scorer = similarity_scorer
         self._max_revisions = max_revisions
         self._output_dir = Path(output_dir)
         self._render_output_path = Path(render_output_path) if render_output_path else None
@@ -156,6 +165,7 @@ class SVGGenerationOrchestrator:
             "rag_latency_seconds": 0.0,
             "generator_latency_seconds": 0.0,
             "critic_latency_seconds": 0.0,
+            "similarity_latency_seconds": 0.0,
             "validation_latency_seconds": 0.0,
             "render_latency_seconds": 0.0,
         }
@@ -218,9 +228,11 @@ class SVGGenerationOrchestrator:
             except CriticTraceError as exc:
                 elapsed = time.perf_counter() - stage_started
                 evidence_render_latency = _critic_evidence_render_latency(current)
+                similarity_latency = _critic_similarity_latency(current)
                 timing["render_latency_seconds"] += evidence_render_latency
+                timing["similarity_latency_seconds"] += similarity_latency
                 timing["critic_latency_seconds"] += max(
-                    0.0, elapsed - evidence_render_latency
+                    0.0, elapsed - evidence_render_latency - similarity_latency
                 )
                 stop_reason_override = "critic_contract_failure"
                 current.metadata["outcome"] = "critic_contract_failure"
@@ -233,9 +245,11 @@ class SVGGenerationOrchestrator:
                 break
             elapsed = time.perf_counter() - stage_started
             evidence_render_latency = _critic_evidence_render_latency(current)
+            similarity_latency = _critic_similarity_latency(current)
             timing["render_latency_seconds"] += evidence_render_latency
+            timing["similarity_latency_seconds"] += similarity_latency
             timing["critic_latency_seconds"] += max(
-                0.0, elapsed - evidence_render_latency
+                0.0, elapsed - evidence_render_latency - similarity_latency
             )
             latest_feedback_event = CriticFeedbackEvent(
                 feedback_id=f"feedback_{uuid4().hex}",
@@ -387,6 +401,7 @@ class SVGGenerationOrchestrator:
         }
         result.metadata["critic"] = {
             "enabled": self._critic is not None,
+            "similarity_evidence_enabled": self._similarity_scorer is not None,
             "feedback_count": len(result.critic_feedback),
             "acceptance_score": self._critic_acceptance_score,
             "score_threshold": self._critic_score_threshold,
@@ -510,6 +525,19 @@ class SVGGenerationOrchestrator:
                 messages=[f"{type(exc).__name__}: {exc}"],
             )
 
+        similarity_evidence = None
+        if self._similarity_scorer is not None:
+            similarity_evidence = validate_image_text_similarity_evidence(
+                self._similarity_scorer.score(
+                    request.instruction,
+                    render_result.png,
+                    attempt_id=attempt.attempt_id,
+                )
+            )
+            attempt.metadata.setdefault("timing", {})[
+                "similarity_latency_seconds"
+            ] = round(float(similarity_evidence.latency_seconds), 6)
+
         evidence = CriticEvidence(
             attempt_id=attempt.attempt_id,
             png=render_result.png,
@@ -519,6 +547,7 @@ class SVGGenerationOrchestrator:
             renderer_version=render_result.renderer_version,
             width=self._smoke_render_gate.width,
             height=self._smoke_render_gate.height,
+            similarity_evidence=similarity_evidence,
         )
         attempt.critic_evidence = evidence
         critic_input = CriticInput(
@@ -529,6 +558,7 @@ class SVGGenerationOrchestrator:
             labeling=evidence.labeling,
             render_width=evidence.width,
             render_height=evidence.height,
+            similarity_evidence=evidence.similarity_evidence,
         )
         try:
             feedback = validate_critic_feedback(self._critic.critique_attempt(critic_input))
@@ -565,6 +595,16 @@ def _critic_evidence_render_latency(attempt: GeneratorOutput) -> float:
     if not isinstance(timing, dict):
         return 0.0
     value = timing.get("critic_evidence_render_latency_seconds", 0.0)
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return 0.0
+    return max(0.0, float(value))
+
+
+def _critic_similarity_latency(attempt: GeneratorOutput) -> float:
+    timing = attempt.metadata.get("timing", {})
+    if not isinstance(timing, dict):
+        return 0.0
+    value = timing.get("similarity_latency_seconds", 0.0)
     if isinstance(value, bool) or not isinstance(value, (int, float)):
         return 0.0
     return max(0.0, float(value))
@@ -629,6 +669,8 @@ def _attach_evidence_provenance(
         ).hexdigest(),
         "target_ids": sorted(evidence.labeling.elements),
     }
+    if evidence.similarity_evidence is not None:
+        record["similarity_evidence"] = asdict(evidence.similarity_evidence)
     raw_provenance = feedback.metadata.get("evidence_provenance", [])
     provenance = list(raw_provenance) if isinstance(raw_provenance, list) else []
     if record not in provenance:

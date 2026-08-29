@@ -35,3 +35,16 @@ critic_model:
   render_width: 512
   render_height: 512
   background_color: "#ffffff"
+
+# Optional auxiliary image-text evidence for critic_v1. Enable it through
+# generation.orchestration.enable_similarity_evidence.
+similarity_model:
+  backend_type: "siglip2"
+  model_id: "google/siglip2-base-patch16-224"
+  revision: "75de2d55ec2d0b4efc50b3e9ad70dba96a7b2fa2"
+  device: "cuda:1"
+  dtype: "bfloat16"
+  attn_implementation: "sdpa"
+  local_files_only: false
+  trust_remote_code: false
+  text_template: "This is a photo of {instruction}."

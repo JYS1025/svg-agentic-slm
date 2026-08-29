@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import base64
 import copy
+import hashlib
 import json
 import logging
 import re
@@ -25,20 +26,24 @@ from svg_agentic_slm.agents.schemas import (
     CriticTraceError,
     validate_critic_feedback,
 )
+from svg_agentic_slm.models.image_text_similarity import (
+    image_text_similarity_prompt_payload,
+    validate_image_text_similarity_evidence,
+)
 from svg_agentic_slm.models.schemas import ModelResponse
+from svg_agentic_slm.prompts.system_prompts import get_svg_vlm_critic_system_prompt
 from svg_agentic_slm.prompts.vlm_critic import (
     VLM_CRITIC_PROMPT_VERSION,
     build_vlm_critic_evaluation_retry_prompt,
     build_vlm_critic_format_repair_prompt,
     build_vlm_critic_prompt,
 )
-from svg_agentic_slm.prompts.system_prompts import get_svg_vlm_critic_system_prompt
 from svg_agentic_slm.svg.labeler import CriticLabeler
 from svg_agentic_slm.svg.validator import SVGValidator
 
 logger = logging.getLogger(__name__)
 
-VLM_CRITIC_VERSION = "vlm-critic-v5-evidence-retry"
+VLM_CRITIC_VERSION = "vlm-critic-v6-siglip2-evidence"
 _FORMAT_REPAIR_IMAGE = base64.b64decode(
     "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII="
 )
@@ -146,6 +151,11 @@ class VLMCritic(BaseCritic):
             )
 
         allowed_target_ids = sorted(value.labeling.elements)
+        similarity_payload = (
+            image_text_similarity_prompt_payload(value.similarity_evidence)
+            if value.similarity_evidence is not None
+            else None
+        )
         system_prompt = get_svg_vlm_critic_system_prompt(
             score_threshold=self._score_threshold
         )
@@ -162,6 +172,7 @@ class VLMCritic(BaseCritic):
                     labeled_svg=value.labeling.labeled_svg,
                     allowed_target_ids=allowed_target_ids,
                     score_threshold=self._score_threshold,
+                    similarity_evidence=similarity_payload,
                 )
             elif retry_kind == "format_repair":
                 prompt = build_vlm_critic_format_repair_prompt(
@@ -175,6 +186,7 @@ class VLMCritic(BaseCritic):
                     labeled_svg=value.labeling.labeled_svg,
                     allowed_target_ids=allowed_target_ids,
                     score_threshold=self._score_threshold,
+                    similarity_evidence=similarity_payload,
                 )
             format_repair_only = retry_index > 0 and retry_kind == "format_repair"
             response = self._model.generate_with_image(
@@ -344,6 +356,19 @@ def _validate_critic_input(value: object) -> str | None:
         return "CriticInput labeling does not match its attempt_id."
     if not value.labeling.labeled_svg.strip():
         return "CriticInput labeling must contain a labeled SVG."
+    if value.similarity_evidence is not None:
+        try:
+            similarity = validate_image_text_similarity_evidence(value.similarity_evidence)
+        except (TypeError, ValueError) as exc:
+            return f"CriticInput similarity evidence is invalid: {exc}"
+        if similarity.attempt_id != value.attempt_id:
+            return "CriticInput similarity evidence does not match its attempt_id."
+        image_sha256 = hashlib.sha256(bytes(value.render_png)).hexdigest()
+        if similarity.image_sha256 != image_sha256:
+            return (
+                "CriticInput similarity evidence does not match its rendered PNG."
+            )
+
     malformed_ids = sorted(
         target_id
         for target_id in value.labeling.elements

@@ -10,12 +10,12 @@ import re
 import shutil
 import subprocess
 import time
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from dataclasses import asdict, dataclass, is_dataclass
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any, Callable, Protocol
+from typing import Any, Protocol
 from uuid import uuid4
 
 from svg_agentic_slm.agents.schemas import CriticFeedback, GenerationResult
@@ -33,6 +33,7 @@ class GenerationArtifactRuntime(Protocol):
     generation_config: dict[str, Any]
     model_config: dict[str, Any]
     critic_model_config: dict[str, Any] | None
+    similarity_model_config: dict[str, Any] | None
     rag_config: dict[str, Any]
     config_paths: dict[str, str]
     enable_rag: bool
@@ -161,6 +162,13 @@ def _persist_generation_artifacts_locked(
                     if runtime.enable_critic
                     and runtime.critic_type
                     in {"llm", "both", "vlm", "rule_vlm", "critic_v1"}
+                    else None
+                ),
+                "similarity_model_config": (
+                    _redact_sensitive_config(
+                        getattr(runtime, "similarity_model_config", None)
+                    )
+                    if getattr(runtime, "similarity_scorer", None) is not None
                     else None
                 ),
                 "rag_config": runtime.rag_config if runtime.enable_rag else {},
@@ -409,6 +417,11 @@ def _persist_critic_evidence(
         record["diagnostics"] = [
             _serialize_dataclass_value(item) for item in diagnostics
         ]
+    similarity_evidence = getattr(evidence, "similarity_evidence", None)
+    if similarity_evidence is not None:
+        record["similarity_evidence"] = _serialize_dataclass_value(
+            similarity_evidence
+        )
     return record
 
 

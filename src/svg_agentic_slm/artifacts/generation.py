@@ -4,10 +4,10 @@ from __future__ import annotations
 
 import json
 import math
+import re
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
-
 
 _SCORECARD_TYPES = {
     "semantic": {"presence", "count", "identity", "state", "text_content"},
@@ -863,6 +863,13 @@ def _validate_v2_attempt(attempt: dict[str, Any], prefix: str) -> set[str]:
             not isinstance(item, dict) for item in diagnostics
         ):
             raise ValueError(f"{prefix}.critic_evidence.diagnostics must be an object array.")
+        similarity = evidence.get("similarity_evidence")
+        if similarity is not None:
+            _validate_similarity_evidence_payload(
+                similarity,
+                f"{prefix}.critic_evidence.similarity_evidence",
+                attempt_id,
+            )
 
     calls = attempt.get("critic_calls", [])
     if not isinstance(calls, list):
@@ -910,10 +917,55 @@ def _feedback_evidence_target_ids(
         targets = record.get("target_ids", [])
         if not isinstance(targets, list) or any(not isinstance(item, str) for item in targets):
             raise ValueError(f"{prefix}.metadata.evidence_provenance target_ids is invalid.")
+        similarity = record.get("similarity_evidence")
+        if similarity is not None:
+            _validate_similarity_evidence_payload(
+                similarity,
+                f"{prefix}.metadata.evidence_provenance[{index}].similarity_evidence",
+                attempt_id,
+            )
         result.update(targets)
     if feedback.get("status") in {"pass", "revise"} and not matched:
         raise ValueError(f"{prefix} lacks attempt-correlated evidence provenance.")
     return result
+
+
+def _validate_similarity_evidence_payload(
+    value: object,
+    prefix: str,
+    attempt_id: object,
+) -> None:
+    evidence = _require_mapping(value, prefix)
+    if evidence.get("attempt_id") != attempt_id:
+        raise ValueError(f"{prefix}.attempt_id does not match.")
+    _require_choice(
+        evidence.get("metric"),
+        f"{prefix}.metric",
+        {"siglip2_pair_probability"},
+    )
+    score = _require_number(evidence.get("score"), f"{prefix}.score")
+    if not 0.0 <= score <= 1.0:
+        raise ValueError(f"{prefix}.score must be between 0 and 1.")
+    _require_number(evidence.get("raw_logit"), f"{prefix}.raw_logit")
+    for name in (
+        "model_id",
+        "text_template",
+        "text_input",
+        "image_sha256",
+        "device",
+        "dtype",
+    ):
+        _require_string(evidence.get(name), f"{prefix}.{name}", non_empty=True)
+    _require_optional_string(evidence.get("model_revision"), f"{prefix}.model_revision")
+    image_sha256 = evidence.get("image_sha256")
+    if not isinstance(image_sha256, str) or re.fullmatch(r"[0-9a-f]{64}", image_sha256) is None:
+        raise ValueError(f"{prefix}.image_sha256 must be a lowercase SHA-256.")
+    latency = _require_number(
+        evidence.get("latency_seconds"),
+        f"{prefix}.latency_seconds",
+    )
+    if latency < 0.0:
+        raise ValueError(f"{prefix}.latency_seconds must be non-negative.")
 
 
 def _validate_v1_attempt(
