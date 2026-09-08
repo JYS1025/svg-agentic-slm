@@ -13,11 +13,13 @@ import hashlib
 import logging
 import time
 from collections.abc import Callable
+from dataclasses import asdict
 from pathlib import Path
 from typing import TYPE_CHECKING
 from uuid import uuid4
 
 from svg_agentic_slm.agents.schemas import (
+    CRITIC_SCORECARD_PAIRS,
     CriticEvidence,
     CriticFeedback,
     CriticFeedbackEvent,
@@ -29,12 +31,18 @@ from svg_agentic_slm.agents.schemas import (
     GeneratorOutput,
     validate_critic_feedback,
 )
+from svg_agentic_slm.models.image_text_similarity import (
+    validate_image_text_similarity_evidence,
+)
 from svg_agentic_slm.svg.gates import SmokeRenderGate
 from svg_agentic_slm.svg.labeler import CriticLabeler
 
 if TYPE_CHECKING:
     from svg_agentic_slm.agents.base import BaseCritic, BaseGenerator
     from svg_agentic_slm.agents.rag_agent import RAGAgent
+    from svg_agentic_slm.models.image_text_similarity import (
+        BaseImageTextSimilarityScorer,
+    )
     from svg_agentic_slm.rag.schemas import RetrievedExample
     from svg_agentic_slm.svg.base import BaseRenderer, BaseValidator
     from svg_agentic_slm.svg.schemas import SVGValidationResult
@@ -74,6 +82,7 @@ class SVGGenerationOrchestrator:
         renderer: BaseRenderer | None = None,
         critic: BaseCritic | None = None,
         rag_agent: RAGAgent | None = None,
+        similarity_scorer: BaseImageTextSimilarityScorer | None = None,
         max_revisions: int = 2,
         output_dir: str | Path = "./outputs/generations",
         render_output_path: str | Path | None = None,
@@ -81,6 +90,7 @@ class SVGGenerationOrchestrator:
         render_height: int = 256,
         render_format: str = "png",
         critic_acceptance_score: float = 8.0,
+        critic_score_threshold: float = 3.0,
         critic_labeler: CriticLabeler | None = None,
         smoke_render_gate: SmokeRenderGate | None = None,
         require_visual_evidence: bool = False,
@@ -91,6 +101,12 @@ class SVGGenerationOrchestrator:
             raise ValueError("max_revisions must be non-negative.")
         if not 0.0 <= critic_acceptance_score <= 10.0:
             raise ValueError("critic_acceptance_score must be between 0 and 10.")
+        if (
+            not isinstance(critic_score_threshold, (int, float))
+            or isinstance(critic_score_threshold, bool)
+            or not 0.0 <= float(critic_score_threshold) <= 4.0
+        ):
+            raise ValueError("critic_score_threshold must be between 0 and 4.")
         if max_no_improvement_rounds <= 0:
             raise ValueError("max_no_improvement_rounds must be positive.")
         if min_critic_score_improvement < 0:
@@ -100,6 +116,7 @@ class SVGGenerationOrchestrator:
         self._renderer = renderer
         self._critic = critic
         self._rag_agent = rag_agent
+        self._similarity_scorer = similarity_scorer
         self._max_revisions = max_revisions
         self._output_dir = Path(output_dir)
         self._render_output_path = Path(render_output_path) if render_output_path else None
@@ -107,6 +124,7 @@ class SVGGenerationOrchestrator:
         self._render_height = render_height
         self._render_format = render_format
         self._critic_acceptance_score = critic_acceptance_score
+        self._critic_score_threshold = float(critic_score_threshold)
         self._critic_labeler = critic_labeler or CriticLabeler()
         self._smoke_render_gate = smoke_render_gate or SmokeRenderGate(
             width=render_width,
@@ -147,6 +165,7 @@ class SVGGenerationOrchestrator:
             "rag_latency_seconds": 0.0,
             "generator_latency_seconds": 0.0,
             "critic_latency_seconds": 0.0,
+            "similarity_latency_seconds": 0.0,
             "validation_latency_seconds": 0.0,
             "render_latency_seconds": 0.0,
         }
@@ -197,20 +216,23 @@ class SVGGenerationOrchestrator:
         best_attempt = current if current.status == "succeeded" and validation.is_valid else None
         best_validation = validation if best_attempt is not None else None
         best_score: float | None = None
+        best_rank: tuple[float, int, float] | None = None
         no_improvement_rounds = 0
         stop_reason_override: str | None = None
         latest_feedback_event: CriticFeedbackEvent | None = None
 
-        while self._critic is not None and current.status == "succeeded":
+        while self._critic is not None:
             stage_started = time.perf_counter()
             try:
                 feedback = self._critique_attempt(request, current, validation)
             except CriticTraceError as exc:
                 elapsed = time.perf_counter() - stage_started
                 evidence_render_latency = _critic_evidence_render_latency(current)
+                similarity_latency = _critic_similarity_latency(current)
                 timing["render_latency_seconds"] += evidence_render_latency
+                timing["similarity_latency_seconds"] += similarity_latency
                 timing["critic_latency_seconds"] += max(
-                    0.0, elapsed - evidence_render_latency
+                    0.0, elapsed - evidence_render_latency - similarity_latency
                 )
                 stop_reason_override = "critic_contract_failure"
                 current.metadata["outcome"] = "critic_contract_failure"
@@ -223,9 +245,11 @@ class SVGGenerationOrchestrator:
                 break
             elapsed = time.perf_counter() - stage_started
             evidence_render_latency = _critic_evidence_render_latency(current)
+            similarity_latency = _critic_similarity_latency(current)
             timing["render_latency_seconds"] += evidence_render_latency
+            timing["similarity_latency_seconds"] += similarity_latency
             timing["critic_latency_seconds"] += max(
-                0.0, elapsed - evidence_render_latency
+                0.0, elapsed - evidence_render_latency - similarity_latency
             )
             latest_feedback_event = CriticFeedbackEvent(
                 feedback_id=f"feedback_{uuid4().hex}",
@@ -236,29 +260,49 @@ class SVGGenerationOrchestrator:
             result.feedback_events.append(latest_feedback_event)
             logger.info("Critic feedback: score=%.1f", feedback.score)
 
-            accepted = validation.is_valid and _feedback_meets_acceptance(
-                latest_feedback_event, self._critic_acceptance_score
+            attempt_is_valid = current.status == "succeeded" and validation.is_valid
+            accepted = attempt_is_valid and _feedback_meets_acceptance(
+                latest_feedback_event,
+                self._critic_acceptance_score,
+                self._critic_score_threshold,
             )
-            if validation.is_valid:
+            if attempt_is_valid:
                 score = float(feedback.score)
+                rank = _feedback_selection_rank(
+                    feedback,
+                    score_threshold=self._critic_score_threshold,
+                )
                 if best_attempt is current:
                     best_score = score
-                elif best_attempt is None or best_score is None:
+                    best_rank = rank
+                elif best_attempt is None or best_score is None or best_rank is None:
                     best_attempt = current
                     best_validation = validation
                     best_score = score
+                    best_rank = rank
                     no_improvement_rounds = 0
                 else:
                     score_delta = score - best_score
-                    if score_delta < 0:
+                    regressed = (
+                        rank < best_rank
+                        if feedback.schema_version >= 3
+                        else score_delta < 0
+                    )
+                    improved = (
+                        rank > best_rank
+                        if feedback.schema_version >= 3
+                        else score_delta >= self._min_critic_score_improvement
+                    )
+                    if regressed:
                         current.metadata["outcome"] = "rolled_back"
                         stop_reason_override = "critic_score_regressed_rollback"
                         current.metadata["stop_reason"] = stop_reason_override
                         break
-                    if accepted or score_delta >= self._min_critic_score_improvement:
+                    if accepted or improved:
                         best_attempt = current
                         best_validation = validation
                         best_score = score
+                        best_rank = rank
                         no_improvement_rounds = 0
                     else:
                         no_improvement_rounds += 1
@@ -276,8 +320,14 @@ class SVGGenerationOrchestrator:
             if accepted or result.revision_count >= self._max_revisions:
                 break
 
-            current.metadata["outcome"] = "rejected"
-            current.metadata["stop_reason"] = "critic_revision_requested"
+            current.metadata["outcome"] = (
+                "failed" if current.status == "failed" else "rejected"
+            )
+            current.metadata["stop_reason"] = (
+                current.error
+                if current.status == "failed" and current.error
+                else "critic_revision_requested"
+            )
             stage_started = time.perf_counter()
             current = _coerce_generator_output(
                 self._generator.revise(
@@ -310,6 +360,9 @@ class SVGGenerationOrchestrator:
             "best_critic_score": best_score,
             "no_improvement_rounds": no_improvement_rounds,
         }
+        if best_rank is not None and latest_feedback_event is not None:
+            if latest_feedback_event.feedback.schema_version >= 3:
+                result.metadata["selection"]["best_critic_rank"] = list(best_rank)
 
         render_success = False
         render_error: str | None = None
@@ -348,8 +401,10 @@ class SVGGenerationOrchestrator:
         }
         result.metadata["critic"] = {
             "enabled": self._critic is not None,
+            "similarity_evidence_enabled": self._similarity_scorer is not None,
             "feedback_count": len(result.critic_feedback),
             "acceptance_score": self._critic_acceptance_score,
+            "score_threshold": self._critic_score_threshold,
             "max_no_improvement_rounds": self._max_no_improvement_rounds,
             "min_critic_score_improvement": self._min_critic_score_improvement,
         }
@@ -366,7 +421,9 @@ class SVGGenerationOrchestrator:
         elif selected_validation.is_valid and (
             latest_feedback_event is None
             or _feedback_meets_acceptance(
-                latest_feedback_event, self._critic_acceptance_score
+                latest_feedback_event,
+                self._critic_acceptance_score,
+                self._critic_score_threshold,
             )
         ):
             selected.metadata["outcome"] = "accepted"
@@ -377,6 +434,7 @@ class SVGGenerationOrchestrator:
             validation_is_valid=validation.is_valid,
             feedback_event=latest_feedback_event,
             acceptance_score=self._critic_acceptance_score,
+            score_threshold=self._critic_score_threshold,
             revision_count=result.revision_count,
             max_revisions=self._max_revisions,
         )
@@ -419,9 +477,16 @@ class SVGGenerationOrchestrator:
         """Build immutable visual evidence and invoke the typed Critic boundary."""
         if self._critic is None:
             raise RuntimeError("Critic evidence requested without a configured Critic.")
-        if not self._require_visual_evidence:
-            return validate_critic_feedback(
-                self._critic.critique(request.instruction, attempt.svg)
+        if attempt.status == "failed":
+            messages = [
+                f"Generator output failure: {attempt.error or 'unknown generator failure'}."
+            ]
+            if validation.errors:
+                messages.extend(validation.errors)
+            return _invalid_evidence_feedback(
+                attempt.attempt_id,
+                stage="generator_output_failure",
+                messages=messages,
             )
         if not validation.is_valid:
             messages = list(validation.errors) or ["SVG validation failed."]
@@ -429,6 +494,10 @@ class SVGGenerationOrchestrator:
                 attempt.attempt_id,
                 stage="svg_validation_failure",
                 messages=messages,
+            )
+        if not self._require_visual_evidence:
+            return validate_critic_feedback(
+                self._critic.critique(request.instruction, attempt.svg)
             )
 
         evidence_render_started_at = time.perf_counter()
@@ -456,6 +525,19 @@ class SVGGenerationOrchestrator:
                 messages=[f"{type(exc).__name__}: {exc}"],
             )
 
+        similarity_evidence = None
+        if self._similarity_scorer is not None:
+            similarity_evidence = validate_image_text_similarity_evidence(
+                self._similarity_scorer.score(
+                    request.instruction,
+                    render_result.png,
+                    attempt_id=attempt.attempt_id,
+                )
+            )
+            attempt.metadata.setdefault("timing", {})[
+                "similarity_latency_seconds"
+            ] = round(float(similarity_evidence.latency_seconds), 6)
+
         evidence = CriticEvidence(
             attempt_id=attempt.attempt_id,
             png=render_result.png,
@@ -465,6 +547,7 @@ class SVGGenerationOrchestrator:
             renderer_version=render_result.renderer_version,
             width=self._smoke_render_gate.width,
             height=self._smoke_render_gate.height,
+            similarity_evidence=similarity_evidence,
         )
         attempt.critic_evidence = evidence
         critic_input = CriticInput(
@@ -475,6 +558,7 @@ class SVGGenerationOrchestrator:
             labeling=evidence.labeling,
             render_width=evidence.width,
             render_height=evidence.height,
+            similarity_evidence=evidence.similarity_evidence,
         )
         try:
             feedback = validate_critic_feedback(self._critic.critique_attempt(critic_input))
@@ -516,6 +600,16 @@ def _critic_evidence_render_latency(attempt: GeneratorOutput) -> float:
     return max(0.0, float(value))
 
 
+def _critic_similarity_latency(attempt: GeneratorOutput) -> float:
+    timing = attempt.metadata.get("timing", {})
+    if not isinstance(timing, dict):
+        return 0.0
+    value = timing.get("similarity_latency_seconds", 0.0)
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return 0.0
+    return max(0.0, float(value))
+
+
 def _invalid_evidence_feedback(
     attempt_id: str,
     *,
@@ -527,7 +621,6 @@ def _invalid_evidence_feedback(
     issue = CriticIssue(
         category="validity",
         type=stage,
-        severity="critical",
         scope="global",
         target_ids=[],
         observed=observed,
@@ -545,7 +638,7 @@ def _invalid_evidence_feedback(
             critic_version="critic-evidence-gate-v1",
             status="invalid",
             structured_issues=[issue],
-            schema_version=2,
+            schema_version=3,
             metadata={
                 "evidence_provenance": [
                     {
@@ -576,6 +669,8 @@ def _attach_evidence_provenance(
         ).hexdigest(),
         "target_ids": sorted(evidence.labeling.elements),
     }
+    if evidence.similarity_evidence is not None:
+        record["similarity_evidence"] = asdict(evidence.similarity_evidence)
     raw_provenance = feedback.metadata.get("evidence_provenance", [])
     provenance = list(raw_provenance) if isinstance(raw_provenance, list) else []
     if record not in provenance:
@@ -599,12 +694,36 @@ def _coerce_generator_output(value: GeneratorOutput | str) -> GeneratorOutput:
     raise TypeError("Generator must return GeneratorOutput.")
 
 
+def _feedback_selection_rank(
+    feedback: CriticFeedback,
+    *,
+    score_threshold: float,
+) -> tuple[float, int, float]:
+    if feedback.schema_version < 3:
+        score = float(feedback.score)
+        return (score, 0, score)
+    scores = [
+        float(evaluation.score)
+        for evaluation in feedback.evaluations
+        if evaluation.applicable and evaluation.score is not None
+    ]
+    if not scores:
+        return (0.0, -len(CRITIC_SCORECARD_PAIRS), 0.0)
+    below_threshold_count = sum(score < score_threshold for score in scores)
+    return (
+        min(scores),
+        -below_threshold_count,
+        sum(scores) / len(scores),
+    )
+
+
 def _stop_reason(
     *,
     current: GeneratorOutput,
     validation_is_valid: bool,
     feedback_event: CriticFeedbackEvent | None,
     acceptance_score: float,
+    score_threshold: float,
     revision_count: int,
     max_revisions: int,
 ) -> str:
@@ -614,7 +733,7 @@ def _stop_reason(
         return "validation_failed"
     if feedback_event is None:
         return "generator_only_complete"
-    if _feedback_meets_acceptance(feedback_event, acceptance_score):
+    if _feedback_meets_acceptance(feedback_event, acceptance_score, score_threshold):
         return "critic_acceptance_threshold_met"
     if revision_count >= max_revisions:
         return "max_revisions_reached"
@@ -628,8 +747,22 @@ def _stop_reason(
 def _feedback_meets_acceptance(
     feedback_event: CriticFeedbackEvent,
     acceptance_score: float,
+    score_threshold: float = 3.0,
 ) -> bool:
     feedback = feedback_event.feedback
+    if feedback.schema_version >= 3:
+        applicable_scores = [
+            evaluation.score
+            for evaluation in feedback.evaluations
+            if evaluation.applicable and evaluation.score is not None
+        ]
+        return (
+            bool(applicable_scores)
+            and all(score >= score_threshold for score in applicable_scores)
+            and feedback.status == "pass"
+            and feedback.is_valid
+            and feedback.matches_instruction
+        )
     if feedback.schema_version >= 2:
         return (
             feedback.status == "pass"

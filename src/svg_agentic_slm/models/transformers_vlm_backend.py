@@ -168,15 +168,32 @@ class TransformersVLMBackend(BaseModelBackend):
             normalized_prompt = _validate_prompt(prompt)
             normalized_mime = _validate_mime_type(mime_type)
             system_prompt = kwargs.pop("system_prompt", None)
+            normalized_system_prompt: str | None = None
             if system_prompt is not None:
-                system_prompt = _require_nonempty_string(system_prompt, "system_prompt")
-                normalized_prompt = f"{system_prompt}\n\n{normalized_prompt}"
-                normalized_prompt = _validate_prompt(normalized_prompt)
+                normalized_system_prompt = _validate_prompt(system_prompt)
+                if (
+                    len(normalized_system_prompt) + len(normalized_prompt)
+                    > _MAX_PROMPT_CHARACTERS
+                ):
+                    raise ValueError(
+                        "Combined system and user prompts exceed "
+                        f"{_MAX_PROMPT_CHARACTERS} characters."
+                    )
             options = self._resolve_generation_options(kwargs)
             image = _decode_image(image_bytes, normalized_mime)
             image_width, image_height = image.size
 
-            messages = [
+            messages = []
+            if normalized_system_prompt is not None:
+                messages.append(
+                    {
+                        "role": "system",
+                        "content": [
+                            {"type": "text", "text": normalized_system_prompt}
+                        ],
+                    }
+                )
+            messages.append(
                 {
                     "role": "user",
                     "content": [
@@ -184,7 +201,7 @@ class TransformersVLMBackend(BaseModelBackend):
                         {"type": "text", "text": normalized_prompt},
                     ],
                 }
-            ]
+            )
             template_kwargs: dict[str, Any] = {
                 "add_generation_prompt": True,
                 "tokenize": True,

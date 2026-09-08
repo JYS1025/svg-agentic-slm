@@ -1,0 +1,35 @@
+{
+  "format_version": 1,
+  "created_at": "2026-08-24T06:59:19.344914+00:00",
+  "purpose": "MMSVG SFT sample IDs only",
+  "sampling": {
+    "method": "numpy.default_rng(seed).permutation(total_rows)[:sample_size]",
+    "seed": 42,
+    "sample_size_per_dataset": 10000,
+    "source_order": "lexicographically sorted Parquet shard paths, then row order within each shard"
+  },
+  "datasets": {
+    "icon": {
+      "repo_id": "OmniSVG/MMSVG-Icon",
+      "revision": "8b1980d64000138d9fd14c3bfbd592edcc4b0be9",
+      "local_source": "/home/elicer/svg-agentic-slm/data/raw/mmsvg_icon_v2/data",
+      "source_shards": 91,
+      "total_rows": 904011,
+      "sample_rows": 10000,
+      "sample_unique_ids": 10000,
+      "output_file": "mmsvg_icon_sft_10000_ids.txt",
+      "output_sha256": "bf017a997880265f5d5861bdcfa17473990ff79219b34681be83a505df0082cc"
+    },
+    "illustration": {
+      "repo_id": "OmniSVG/MMSVG-Illustration",
+      "revision": "6d81c98ae9bc1f4e1fca80cea496a73cb7f150c1",
+      "local_source": "/home/elicer/svg-agentic-slm/data/raw/mmsvg_illustration_v2/data",
+      "source_shards": 26,
+      "total_rows": 255412,
+      "sample_rows": 10000,
+      "sample_unique_ids": 10000,
+      "output_file": "mmsvg_illustration_sft_10000_ids.txt",
+      "output_sha256": "645d3b53bd22dca63a27058a738856d47522c8d84d388025eb5fb43bcabaa7df"
+    }
+  }
+}

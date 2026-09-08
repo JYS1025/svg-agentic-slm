@@ -26,6 +26,8 @@ class ChromaRetriever(BaseRetriever):
         embedding_model: Chroma's built-in MiniLM model, or a model supported by
             ``SentenceTransformerEmbeddingFunction``.
         similarity_threshold: Minimum cosine similarity to return.
+        document_field: MMSVG text field encoded by a precomputed collection.
+            ``description`` remains the default; ``detail`` is also supported.
     """
 
     _BATCH_SIZE = 256
@@ -44,6 +46,7 @@ class ChromaRetriever(BaseRetriever):
         dataset_roots: Mapping[str, str | Path] | None = None,
         precomputed_embeddings: bool = False,
         overfetch_factor: int = 5,
+        document_field: str = "description",
     ) -> None:
         if not 0.0 <= similarity_threshold <= 1.0:
             raise ValueError("similarity_threshold must be between 0 and 1.")
@@ -55,6 +58,13 @@ class ChromaRetriever(BaseRetriever):
             raise ValueError("precomputed embeddings require embedding_revision.")
         if precomputed_embeddings and not (query_instruction or "").strip():
             raise ValueError("precomputed embeddings require query_instruction.")
+        normalized_document_field = str(document_field).strip().casefold()
+        if normalized_document_field not in {"description", "detail"}:
+            raise ValueError("document_field must be 'description' or 'detail'.")
+        if not precomputed_embeddings and normalized_document_field != "description":
+            raise ValueError(
+                "document_field='detail' is only supported for precomputed embeddings."
+            )
         self._collection_name = collection_name
         self._persist_directory = persist_directory
         self._embedding_model = embedding_model
@@ -65,6 +75,7 @@ class ChromaRetriever(BaseRetriever):
         self._device = device
         self._precomputed_embeddings = precomputed_embeddings
         self._overfetch_factor = overfetch_factor
+        self._document_field = normalized_document_field
         self._dataset_roots = {
             str(dataset_type).strip().casefold(): Path(root).resolve()
             for dataset_type, root in (dataset_roots or {}).items()
@@ -219,8 +230,8 @@ class ChromaRetriever(BaseRetriever):
 
             raw_document = documents[index] if index < len(documents) else None
             document = "" if raw_document is None else str(raw_document).strip()
-            description = (
-                document if self._precomputed_embeddings else str(metadata.get("description", ""))
+            description = "" if self._precomputed_embeddings else str(
+                metadata.get("description", "")
             )
             content = str(metadata.pop("svg_content", ""))
             if self._precomputed_embeddings:
@@ -230,9 +241,9 @@ class ChromaRetriever(BaseRetriever):
                     logger.warning("Skipped mismatched MMSVG Chroma ID: %s", record_id)
                     continue
                 try:
-                    content = self._resolve_svg_pointer(
+                    description, content = self._resolve_svg_pointer(
                         metadata,
-                        expected_description=description,
+                        expected_document=document,
                     )
                 except Exception as exc:
                     logger.warning("Skipped invalid MMSVG pointer for %s: %s", record_id, exc)
@@ -303,8 +314,8 @@ class ChromaRetriever(BaseRetriever):
         expected = {
             "index_schema_version": 1,
             "collection_name": self._collection_name,
-            "document_field": "description",
-            "document_template": "{description}",
+            "document_field": self._document_field,
+            "document_template": f"{{{self._document_field}}}",
             "embedding_model": self._embedding_model,
             "embedding_revision": self._embedding_revision,
             "embedding_dimension": self._embedding_dimension,
@@ -318,7 +329,7 @@ class ChromaRetriever(BaseRetriever):
         collection_metadata = collection.metadata or {}
         collection_expected = {
             "index_schema_version": 1,
-            "document_field": "description",
+            "document_field": self._document_field,
             "embedding_model": self._embedding_model,
             "embedding_revision": self._embedding_revision,
             "embedding_dimension": self._embedding_dimension,
@@ -416,8 +427,8 @@ class ChromaRetriever(BaseRetriever):
         self,
         metadata: dict[str, Any],
         *,
-        expected_description: str,
-    ) -> str:
+        expected_document: str,
+    ) -> tuple[str, str]:
         dataset_type = str(metadata.get("dataset_type", "")).strip().casefold()
         shard = str(metadata.get("shard", "")).strip()
         record_id = str(metadata.get("record_id", "")).strip()
@@ -460,9 +471,10 @@ class ChromaRetriever(BaseRetriever):
         cache_key = (shard_path, row_group_index)
         table = self._row_group_cache.get(cache_key)
         if table is None:
+            columns = list(dict.fromkeys(["id", "description", self._document_field, "svg"]))
             table = parquet_file.read_row_group(
                 row_group_index,
-                columns=["id", "description", "svg"],
+                columns=columns,
                 use_threads=True,
             )
             self._row_group_cache[cache_key] = table
@@ -474,16 +486,21 @@ class ChromaRetriever(BaseRetriever):
         local_index = row_index - row_start
         actual_id = str(table.column("id")[local_index].as_py()).strip()
         actual_description = str(table.column("description")[local_index].as_py()).strip()
+        actual_document = str(
+            table.column(self._document_field)[local_index].as_py()
+        ).strip()
         svg_content = str(table.column("svg")[local_index].as_py()).strip()
         if actual_id != record_id:
             raise ValueError("Parquet record ID does not match Chroma metadata.")
-        if actual_description != expected_description.strip():
-            raise ValueError("Parquet description does not match the indexed document.")
+        if actual_document != expected_document.strip():
+            raise ValueError(
+                f"Parquet {self._document_field} does not match the indexed document."
+            )
         if not svg_content:
             raise ValueError("Parquet SVG payload is empty.")
         if len(svg_content) > self._MAX_SVG_CHARACTERS:
             raise ValueError("Parquet SVG payload exceeds the safety limit.")
-        return svg_content
+        return actual_description, svg_content
 
     def _source_identity(
         self,

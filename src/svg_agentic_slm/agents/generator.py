@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import logging
 from dataclasses import asdict
 from typing import TYPE_CHECKING, Literal
@@ -20,9 +21,11 @@ from svg_agentic_slm.prompts.system_prompts import get_svg_generator_system_prom
 from svg_agentic_slm.prompts.text_to_svg import (
     INITIAL_PROMPT_VERSION,
     REVISION_PROMPT_VERSION,
+    VALIDITY_REVISION_PROMPT_VERSION,
     build_retrieval_context,
     build_revision_prompt,
     build_text_to_svg_prompt,
+    build_validity_revision_prompt,
 )
 from svg_agentic_slm.rag.context import ContextSelection, select_context_by_tokens
 from svg_agentic_slm.svg.labeler import strip_reserved_labels
@@ -49,6 +52,7 @@ class GeneratorAgent(BaseGenerator):
         max_svg_length: int = 8192,
         max_context_characters: int = 12000,
         max_context_tokens: int | None = None,
+        enable_revision_rag: bool = False,
     ) -> None:
         if max_svg_length <= 0:
             raise ValueError("max_svg_length must be positive.")
@@ -56,6 +60,8 @@ class GeneratorAgent(BaseGenerator):
             raise ValueError("max_context_characters must be non-negative.")
         if max_context_tokens is not None and max_context_tokens < 0:
             raise ValueError("max_context_tokens must be non-negative.")
+        if not isinstance(enable_revision_rag, bool):
+            raise TypeError("enable_revision_rag must be a boolean.")
         self._model = model_backend
         self._max_svg_length = max_svg_length
         self._max_context_characters = max_context_characters
@@ -64,6 +70,7 @@ class GeneratorAgent(BaseGenerator):
             if max_context_tokens is not None
             else max_context_characters // 4
         )
+        self._enable_revision_rag = enable_revision_rag
 
     @property
     def name(self) -> str:
@@ -101,25 +108,48 @@ class GeneratorAgent(BaseGenerator):
         """Revise a previous attempt using feedback that targets it."""
         if feedback.target_attempt_id != previous.attempt_id:
             raise ValueError("Feedback target does not match the previous Generator attempt.")
-        context_selection = self._select_context(context or [])
+        revision_context = (context or []) if self._enable_revision_rag else []
+        context_selection = self._select_context(revision_context)
         selected_context = context_selection.items
-        previous_svg = _revision_input_svg(previous, feedback.feedback)
-        revision = build_revision_prompt(
-            instruction=request.instruction,
-            previous_svg=previous_svg,
-            feedback=_format_feedback(feedback.feedback),
+        validity_repair = (
+            previous.status == "failed"
+            or feedback.feedback.status == "invalid"
+            or not feedback.feedback.is_valid
         )
+        revision_input_truncated = False
+        if validity_repair:
+            previous_output, revision_input_truncated = _validity_revision_input(
+                previous,
+                maximum=self._max_svg_length,
+            )
+            revision = build_validity_revision_prompt(
+                instruction=request.instruction,
+                previous_output=previous_output,
+                validity_feedback_json=_format_required_changes_json(feedback.feedback),
+                previous_output_truncated=revision_input_truncated,
+            )
+            prompt_version = VALIDITY_REVISION_PROMPT_VERSION
+        else:
+            previous_svg = _revision_input_svg(previous, feedback.feedback)
+            revision = build_revision_prompt(
+                instruction=request.instruction,
+                previous_svg=previous_svg,
+                required_changes_json=_format_required_changes_json(feedback.feedback),
+            )
+            prompt_version = REVISION_PROMPT_VERSION
         context_prefix = build_retrieval_context(selected_context)
         prompt = f"{context_prefix}\n\n{revision}" if selected_context else revision
         return self._invoke(
             request=request,
             prompt=prompt,
             mode="revision",
-            prompt_version=REVISION_PROMPT_VERSION,
+            prompt_version=prompt_version,
             context=selected_context,
             context_selection=context_selection,
             parent_attempt_id=previous.attempt_id,
             trigger_feedback_id=feedback.feedback_id,
+            validity_repair=validity_repair,
+            revision_input_truncated=revision_input_truncated,
         )
 
     def _invoke(
@@ -133,12 +163,17 @@ class GeneratorAgent(BaseGenerator):
         context_selection: ContextSelection,
         parent_attempt_id: str | None = None,
         trigger_feedback_id: str | None = None,
+        validity_repair: bool = False,
+        revision_input_truncated: bool = False,
     ) -> GeneratorOutput:
         attempt_id = f"attempt_{uuid4().hex}"
         model_call_id = f"model_call_{uuid4().hex}"
         if "system_prompt" in request.config_overrides:
             raise ValueError("system_prompt is owned by Generator and cannot be overridden.")
-        system_prompt = get_svg_generator_system_prompt()
+        system_prompt = get_svg_generator_system_prompt(
+            revision=mode == "revision",
+            validity_repair=validity_repair,
+        )
         response = self._model.generate(
             prompt,
             system_prompt=system_prompt,
@@ -197,6 +232,15 @@ class GeneratorAgent(BaseGenerator):
                 "max_svg_length": self._max_svg_length,
                 "max_context_characters": self._max_context_characters,
                 "max_context_tokens": self._max_context_tokens,
+                "enable_revision_rag": self._enable_revision_rag,
+                "revision_kind": (
+                    "validity"
+                    if validity_repair
+                    else "targeted"
+                    if mode == "revision"
+                    else None
+                ),
+                "revision_input_truncated": revision_input_truncated,
                 "context_token_count": context_selection.token_count,
                 "context_usage": [asdict(item) for item in context_selection.usage],
             },
@@ -222,50 +266,41 @@ class GeneratorAgent(BaseGenerator):
         )
 
 
-def _format_feedback(feedback: CriticFeedback) -> str:
+def _format_required_changes_json(feedback: CriticFeedback) -> str:
     structured_issues = list(getattr(feedback, "structured_issues", []))
-    if getattr(feedback, "status", None) == "revise" and structured_issues:
-        issue_sections: list[str] = []
-        for index, issue in enumerate(structured_issues, start=1):
-            target_ids = ", ".join(issue.target_ids) or "GLOBAL_OR_MISSING_OBJECT"
-            issue_sections.append(
-                f"Issue {index}:\n"
-                f"  Category: {issue.category}\n"
-                f"  Type: {issue.type}\n"
-                f"  Severity: {issue.severity}\n"
-                f"  Scope: {issue.scope}\n"
-                f"  Target IDs: {target_ids}\n"
-                f"  Observed: {issue.observed}\n"
-                f"  Expected: {issue.expected}\n"
-                f"  Required fix: {issue.fix}"
-            )
-        preserve_items = list(getattr(feedback, "preserve", []))
-        preserve = "\n".join(f"- {item}" for item in preserve_items) or "- None"
-        return (
-            f"Status: revise\n"
-            f"Compatibility score: {feedback.score}\n"
-            "Structured issues:\n"
-            + "\n".join(issue_sections)
-            + "\nPreserve constraints:\n"
-            + preserve
-            + "\nRevision constraints:\n"
-            "- Target IDs refer to data-agent-id values in the labeled previous SVG.\n"
-            "- Make the smallest changes necessary to address the listed issues.\n"
-            "- Preserve unaffected elements, layout, styling, and all explicit preserve items.\n"
-            "- Modify a target and only the adjacent or shared resource nodes required "
-            "by its fix.\n"
-            "- Do not emit any data-agent-id attributes in the revised SVG."
-        )
+    if structured_issues:
+        changes = [asdict(issue) for issue in structured_issues]
+    else:
+        changes = _legacy_required_changes(feedback)
+    return json.dumps(changes, ensure_ascii=False, indent=2)
 
-    issues = "\n".join(f"- {issue}" for issue in feedback.issues) or "- None"
-    suggestions = "\n".join(f"- {suggestion}" for suggestion in feedback.suggestions) or "- None"
-    return (
-        f"Score: {feedback.score}\n"
-        f"Valid: {feedback.is_valid}\n"
-        f"Matches instruction: {feedback.matches_instruction}\n"
-        f"Issues:\n{issues}\n"
-        f"Suggestions:\n{suggestions}"
-    )
+
+def _legacy_required_changes(feedback: CriticFeedback) -> list[dict[str, object]]:
+    changes: list[dict[str, object]] = []
+    count = max(len(feedback.issues), len(feedback.suggestions))
+    for index in range(count):
+        observed = (
+            feedback.issues[index]
+            if index < len(feedback.issues)
+            else "The reviewer requested a correction."
+        )
+        fix = (
+            feedback.suggestions[index]
+            if index < len(feedback.suggestions)
+            else "Correct the observed problem."
+        )
+        changes.append(
+            {
+                "category": "general",
+                "type": "review_feedback",
+                "scope": "global",
+                "target_ids": [],
+                "observed": observed,
+                "expected": "The SVG should satisfy the original instruction.",
+                "fix": fix,
+            }
+        )
+    return changes
 
 
 def _revision_input_svg(previous: GeneratorOutput, feedback: CriticFeedback) -> str:
@@ -298,3 +333,15 @@ def _revision_input_svg(previous: GeneratorOutput, feedback: CriticFeedback) -> 
             + ", ".join(unknown_ids)
         )
     return labeling.labeled_svg
+
+
+def _validity_revision_input(
+    previous: GeneratorOutput,
+    *,
+    maximum: int,
+) -> tuple[str, bool]:
+    """Return bounded invalid output evidence for a structural repair prompt."""
+    candidate = previous.svg.strip() or previous.raw_output.strip()
+    if len(candidate) <= maximum:
+        return candidate, False
+    return candidate[:maximum], True

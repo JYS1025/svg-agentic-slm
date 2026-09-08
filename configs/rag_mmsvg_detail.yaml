@@ -1,0 +1,37 @@
+# Dedicated MMSVG detail-only Chroma configuration.
+# This file intentionally does not replace the active description backend in
+# configs/rag.yaml. It writes to a physically separate persistence directory.
+rag:
+  backend: "chromadb"
+  top_k: 3
+
+  chromadb:
+    collection_name: "mmsvg_detail_qwen3_0_6b_1024_v1"
+    persist_directory: "./data/chroma_db_detail"
+    embedding_model: "Qwen/Qwen3-Embedding-0.6B"
+    embedding_revision: "97b0c614be4d77ee51c0cef4e5f07c00f9eb65b3"
+    embedding_dimension: 1024
+    document_field: "detail"
+    precomputed_embeddings: true
+    device: "cuda:1"
+    overfetch_factor: 5
+    similarity_threshold: 0.0
+    query_instruction: >-
+      Given a user description of a desired SVG image, retrieve SVG examples
+      matching the objects, attributes, colors, style, composition, and spatial
+      relationships.
+    dataset_roots:
+      icon: "./data/raw/mmsvg_icon_v2/data"
+      illustration: "./data/raw/mmsvg_illustration_v2/data"
+
+  mmsvg_indexing:
+    document_field: "detail"
+    collection_name: "mmsvg_detail_qwen3_0_6b_1024_v1"
+    persist_directory: "./data/chroma_db_detail"
+    icon_data_dir: "./data/raw/mmsvg_icon_v2/data"
+    illustration_data_dir: "./data/raw/mmsvg_illustration_v2/data"
+    device: "cuda:1"
+    batch_size: 256
+    read_batch_size: 4096
+    max_seq_length: 512
+    log_every_batches: 10

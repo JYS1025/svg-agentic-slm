@@ -15,10 +15,13 @@ class _FakeProcessor:
     def __init__(self) -> None:
         self.template_kwargs = None
         self.saw_image = False
+        self.messages = None
 
     def apply_chat_template(self, messages, **kwargs):
         self.template_kwargs = kwargs
-        image = messages[0]["content"][0]["image"]
+        self.messages = messages
+        user_message = next(item for item in messages if item["role"] == "user")
+        image = user_message["content"][0]["image"]
         self.saw_image = isinstance(image, Image.Image)
         return {
             "input_ids": torch.tensor([[10, 11]], dtype=torch.long),
@@ -73,6 +76,7 @@ def test_vlm_backend_uses_tokenized_multimodal_chat_template() -> None:
     response = backend.generate_with_image(
         "Return critic JSON.",
         _png_bytes(),
+        system_prompt="Follow the critic scorecard contract.",
         max_new_tokens=16,
         do_sample=False,
     )
@@ -84,6 +88,17 @@ def test_vlm_backend_uses_tokenized_multimodal_chat_template() -> None:
         "return_dict": True,
         "return_tensors": "pt",
         "enable_thinking": False,
+    }
+    assert processor.messages[0] == {
+        "role": "system",
+        "content": [
+            {"type": "text", "text": "Follow the critic scorecard contract."}
+        ],
+    }
+    assert processor.messages[1]["role"] == "user"
+    assert processor.messages[1]["content"][1] == {
+        "type": "text",
+        "text": "Return critic JSON.",
     }
     assert model.generate_kwargs["pixel_values"].dtype == torch.float32
     assert response.text.startswith('{"status":"pass"')

@@ -2,14 +2,19 @@
 
 from __future__ import annotations
 
+import json
 from dataclasses import replace
 
 import pytest
 
-from svg_agentic_slm.agents.generator import GeneratorAgent
+from svg_agentic_slm.agents.generator import (
+    GeneratorAgent,
+    _format_required_changes_json,
+)
 from svg_agentic_slm.agents.schemas import (
     CriticFeedback,
     CriticFeedbackEvent,
+    CriticIssue,
     GenerationRequest,
 )
 from svg_agentic_slm.models.schemas import ModelResponse
@@ -80,6 +85,8 @@ def test_revise_links_parent_and_feedback() -> None:
         target_attempt_id=initial.attempt_id,
         feedback=CriticFeedback(
             score=4.0,
+            is_valid=True,
+            matches_instruction=False,
             issues=["Circle is off-center."],
             suggestions=["Move the circle to the center."],
         ),
@@ -91,6 +98,140 @@ def test_revise_links_parent_and_feedback() -> None:
     assert revised.parent_attempt_id == initial.attempt_id
     assert revised.trigger_feedback_id == "feedback-1"
     assert "Circle is off-center." in backend.calls[1][0]
+    assert "<original_instruction>" in backend.calls[1][0]
+    assert "<previous_labeled_svg>" in backend.calls[1][0]
+    assert "<required_changes_json>" in backend.calls[1][0]
+    assert "Revision mode:" not in backend.calls[0][1]["system_prompt"]
+    assert "Revision mode:" in backend.calls[1][1]["system_prompt"]
+
+
+def test_validity_revision_uses_structural_repair_prompt_without_target_constraints() -> None:
+    backend = _RecordingBackend(
+        [
+            "No SVG was produced.",
+            '<svg xmlns="http://www.w3.org/2000/svg"><circle/></svg>',
+        ]
+    )
+    generator = GeneratorAgent(backend)
+    request = GenerationRequest(instruction="Draw a circle.")
+    initial = generator.generate(request)
+    issue = CriticIssue(
+        category="validity",
+        type="generator_output_failure",
+        scope="global",
+        target_ids=[],
+        observed="No complete SVG document was produced.",
+        expected="One complete, valid SVG document.",
+        fix="Generate the entire SVG document.",
+    )
+    event = CriticFeedbackEvent(
+        feedback_id="feedback-validity",
+        target_attempt_id=initial.attempt_id,
+        feedback=CriticFeedback(
+            score=0.0,
+            is_valid=False,
+            matches_instruction=False,
+            critic_type="critic_evidence_gate",
+            status="invalid",
+            structured_issues=[issue],
+            schema_version=3,
+        ),
+    )
+
+    revised = generator.revise(request, initial, event)
+
+    prompt, kwargs = backend.calls[1]
+    assert initial.status == "failed"
+    assert "<previous_invalid_output>" in prompt
+    assert "No SVG was produced." in prompt
+    assert "<validity_feedback_json>" in prompt
+    assert "<previous_labeled_svg>" not in prompt
+    assert "Validity repair mode:" in kwargs["system_prompt"]
+    assert "Revision mode:" not in kwargs["system_prompt"]
+    assert "data-agent-id values only to locate" not in kwargs["system_prompt"]
+    assert revised.status == "succeeded"
+    assert revised.metadata["revision_kind"] == "validity"
+
+
+def test_scorecard_feedback_preserves_detailed_targeted_revision_instructions() -> None:
+    feedback = CriticFeedback(
+        score=2.0,
+        is_valid=True,
+        matches_instruction=False,
+        critic_type="scorecard",
+        status="revise",
+        structured_issues=[
+            CriticIssue(
+                category="layout",
+                type="scale",
+                scope="object",
+                target_ids=["g0002"],
+                observed="The smartphone is too small.",
+                expected="The smartphone should be visually comparable to the laptop.",
+                fix="Increase the overall size of g0002.",
+            )
+        ],
+        schema_version=3,
+        metadata={"score_threshold": 3.0},
+    )
+
+    changes = json.loads(_format_required_changes_json(feedback))
+
+    assert changes == [
+        {
+            "category": "layout",
+            "type": "scale",
+            "scope": "object",
+            "target_ids": ["g0002"],
+            "observed": "The smartphone is too small.",
+            "expected": "The smartphone should be visually comparable to the laptop.",
+            "fix": "Increase the overall size of g0002.",
+        }
+    ]
+
+
+@pytest.mark.parametrize(
+    ("enable_revision_rag", "expected_in_revision"),
+    [(False, False), (True, True)],
+)
+def test_revision_rag_is_configurable(
+    enable_revision_rag: bool,
+    expected_in_revision: bool,
+) -> None:
+    backend = _RecordingBackend(["<svg><circle/></svg>", "<svg><circle/></svg>"])
+    generator = GeneratorAgent(
+        backend,
+        enable_revision_rag=enable_revision_rag,
+    )
+    request = GenerationRequest(instruction="Draw a circle.")
+    context = [
+        RetrievedExample(
+            content="<svg><rect/></svg>",
+            description="RAG marker for revision",
+            source="corpus:revision-rag-marker",
+            item_id="rag-revision",
+        )
+    ]
+    initial = generator.generate(request, context=context)
+    event = CriticFeedbackEvent(
+        feedback_id="feedback-rag",
+        target_attempt_id=initial.attempt_id,
+        feedback=CriticFeedback(
+            score=2.0,
+            is_valid=True,
+            matches_instruction=False,
+            issues=["The circle is too small."],
+            suggestions=["Increase the circle size."],
+        ),
+    )
+
+    revised = generator.revise(request, initial, event, context=context)
+
+    assert "corpus:revision-rag-marker" in backend.calls[0][0]
+    assert (
+        "corpus:revision-rag-marker" in backend.calls[1][0]
+    ) is expected_in_revision
+    assert revised.context_item_ids == (["rag-revision"] if expected_in_revision else [])
 
 
 def test_generate_reports_svg_extraction_failure() -> None:
