@@ -173,7 +173,7 @@ def main() -> None:
             _append_jsonl_durable(results_path, output_record)
             print(f"[{position}/{len(pending)}] {sample_id}: {output_record['status']}")
     finally:
-        runtime.model_backend.unload()
+        runtime.model_backend.unload_model()
 
 
 def _instruction(record: dict[str, Any]) -> str:
