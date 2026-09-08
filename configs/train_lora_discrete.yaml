@@ -1,4 +1,4 @@
-# C1: description-only matched ablation using the independent SVG discrete codec.
+# C1: description-only ablation using pinned official OpenVGLab cached targets.
 train:
   model:
     model_id: "google/gemma-4-12B-it-qat-q4_0-unquantized"
@@ -14,6 +14,23 @@ train:
   experiment:
     instruction_mode: "description_only"
     target_representation: "omnisvg_discrete"
+    codec_backend_id: "openvglab-omnisvg-train-4b-cached-gemma-named-v1"
+    allow_legacy_toy_codec: false
+    official_cache:
+      cache_path: "/home/minjun_dev/svg-agentic-slm/artifacts/omnisvg_train_4b_mmsvg_20k_tokens.sqlite3"
+      expected_cache_sha256: "da25dc3db8739e846d952b3044e5f7977eaf8820f4ea0c45c46ed8111f91a3fa"
+      audit_manifest_path: "/home/minjun_dev/svg-agentic-slm/artifacts/omnisvg_train_4b_mmsvg_20k_token_audit.json"
+      expected_audit_sha256: "30e3deb8a8cf443a1c32a58bc48e41b35b4adc615c14eb7fb9dee1f48d4e35c7"
+      prepared_root: "/data/minjun_dev/mmsvg_sft_prepared_seed42_20k/mmsvg_sft_20k"
+      expected_input_sha256:
+        train: "7920c33235ede566657003ac63166b01b3e594b6ccc521d34d9fbe937e5642bd"
+        validation: "ab4a24667b19160a3c3337ad9b25a8e1c4c4ba58116ec690c3829d25b621ef2a"
+        test: "381d28d516273698a1c4e0b793376fe90aa7135ad89b69a04ec6cbda57ab9d3b"
+      expected_split_counts:
+        train: 18000
+        validation: 1000
+        test: 1000
+      allow_live_reencode: false
   lora:
     r: 16
     lora_alpha: 32
@@ -21,13 +38,15 @@ train:
     target_modules: ["q_proj", "k_proj", "v_proj", "o_proj", "gate_proj", "up_proj", "down_proj"]
     bias: "none"
     task_type: "CAUSAL_LM"
-    modules_to_save: ["embed_tokens", "lm_head"]
+    modules_to_save: []
   sft:
     output_dir: "./outputs/sft/gemma4_discrete"
-    num_train_epochs: 1.0
+    num_train_epochs: 5.0
     per_device_train_batch_size: 1
     per_device_eval_batch_size: 1
     gradient_accumulation_steps: 16
+    train_sampling_strategy: "group_by_length"
+    length_grouping_batch_size: 16
     learning_rate: 2.0e-4
     weight_decay: 0.01
     warmup_ratio: 0.03
@@ -36,12 +55,26 @@ train:
     save_steps: 100
     eval_steps: 100
     save_total_limit: 2
+    eval_strategy: "epoch"
+    save_strategy: "epoch"
+    load_best_model_at_end: true
+    metric_for_best_model: "eval_loss"
+    greater_is_better: false
+    prediction_loss_only: true
+    early_stopping_patience: 2
+    early_stopping_threshold: 0.01
     max_seq_length: 8192
     bf16: true
     gradient_checkpointing: true
     optim: "paged_adamw_8bit"
+    rehydrate_paged_optimizer_state_on_resume: true
     seed: 42
     merge_adapter: false
+    # PEFT selected-row tying rebuilds the full vocabulary weight per forward;
+    # chunking would repeat that cost for every loss chunk.
+    chunked_lm_head_loss: false
+    lm_head_loss_chunk_size: 256
   dataset:
-    train_path: "./data/processed/mmsvg_sft_20k/train.jsonl"
-    validation_path: "./data/processed/mmsvg_sft_20k/validation.jsonl"
+    train_path: "/data/minjun_dev/mmsvg_sft_prepared_seed42_20k/mmsvg_sft_20k/train.jsonl"
+    validation_path: "/data/minjun_dev/mmsvg_sft_prepared_seed42_20k/mmsvg_sft_20k/validation.jsonl"
+    test_path: "/data/minjun_dev/mmsvg_sft_prepared_seed42_20k/mmsvg_sft_20k/test.jsonl"

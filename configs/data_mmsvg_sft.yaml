@@ -1,18 +1,24 @@
 prepare_mmsvg_sft:
-  # Replace only these Elice-local paths after mounting the dataset instance.
+  # Local machine:
+  #   export MMSVG_RAW_ROOT=/path/only/available/on/elice
+  #   export MMSVG_SFT_ALLOWLIST_ROOT=/data/minjun_dev/mmsvg_sft_ids_seed42_20k/sft_sample_ids
+  # Elice instance:
+  #   export MMSVG_RAW_ROOT="$HOME/svg-agentic-slm/data/raw"
+  #   export MMSVG_SFT_ALLOWLIST_ROOT="$HOME/svg-agentic-slm/data/sft_sample_ids"
+  # Source/output paths may also be replaced by prepare-sft CLI overrides.
   sources:
     icon:
       paths:
-        - "/path/to/elice/MMSVG-Icon/**/*.parquet"
+        - "${MMSVG_RAW_ROOT}/mmsvg_icon_v2/data/*.parquet"
       dataset_id: "OmniSVG/MMSVG-Icon"
-      dataset_revision: null
+      dataset_revision: "8b1980d64000138d9fd14c3bfbd592edcc4b0be9"
     illustration:
       paths:
-        - "/path/to/elice/MMSVG-Illustration/**/*.parquet"
+        - "${MMSVG_RAW_ROOT}/mmsvg_illustration_v2/data/*.parquet"
       dataset_id: "OmniSVG/MMSVG-Illustration"
-      dataset_revision: null
+      dataset_revision: "6d81c98ae9bc1f4e1fca80cea496a73cb7f150c1"
 
-  output_dir: "./data/processed/mmsvg_sft_20k"
+  output_dir: "${MMSVG_SFT_OUTPUT_DIR}/mmsvg_sft_20k"
   seed: 42
   batch_size: 1024
 
@@ -22,12 +28,14 @@ prepare_mmsvg_sft:
     test_per_domain: 500
 
   filters:
-    min_description_words: 2
-    max_description_words: 80
+    min_description_words: 1
+    max_description_words: 160
     require_detail: true
     min_svg_char_length: 32
-    max_svg_char_length: 8192
-    max_svg_token_length: 8192
+    max_svg_char_length: 65536
+    max_svg_token_length: null
+    # No truncation: exact Gemma chat-template length including the SVG target.
+    max_full_chat_token_length: 65536
     # Fail closed: CairoSVG must successfully render every selected target.
     require_renderable: true
 
@@ -43,10 +51,17 @@ prepare_mmsvg_sft:
     local_files_only: true
     trust_remote_code: false
 
+  # Immutable seed-42 selection. The preparation job joins these IDs against
+  # the raw Parquet rows and fails if any ID is missing, duplicated, or filtered.
+  sample_allowlist:
+    manifest_path: "${MMSVG_SFT_ALLOWLIST_ROOT}/manifest.json"
+    icon_ids_path: "${MMSVG_SFT_ALLOWLIST_ROOT}/mmsvg_icon_sft_10000_ids.txt"
+    illustration_ids_path: "${MMSVG_SFT_ALLOWLIST_ROOT}/mmsvg_illustration_sft_10000_ids.txt"
+
   # JSON/JSONL records can contain IDs, canonical SVG hashes, and captions.
   exclusion_manifests:
-    - "/path/to/elice/exclusions/mmsvgbench.jsonl"
-    - "/path/to/elice/exclusions/vectorgym_vg_text.jsonl"
+    - "${MMSVG_EXCLUSION_ROOT}/mmsvgbench.jsonl"
+    - "${MMSVG_EXCLUSION_ROOT}/vectorgym_vg_text.jsonl"
 
   # Optional metadata-only JSONL. Add dataset_type if record IDs overlap across domains:
   # {"dataset_type": "icon", "record_id": "...", "retrieved_item_ids": ["...", "...", "..."]}

@@ -1,0 +1,43 @@
+{
+  "created_utc": "2026-09-08T04:14:24.030054+00:00",
+  "source": "/data/minjun_dev/svg_sft_experiments/r0_description_raw_full20k_seed42/full_train_grouped/checkpoints/trainer_state.json",
+  "source_sha256": "59a980f2c20fce17d4a51b7b846af7fb9d778707869bd4b0f814c73f19708573",
+  "status": "complete",
+  "global_step": 1875,
+  "max_steps": 1875,
+  "epoch": 5.0,
+  "train_points": 187,
+  "validation_points": 5,
+  "validation_curve": [
+    {
+      "step": 375,
+      "loss": 0.3066871166229248
+    },
+    {
+      "step": 750,
+      "loss": 0.24753732979297638
+    },
+    {
+      "step": 1125,
+      "loss": 0.23003491759300232
+    },
+    {
+      "step": 1500,
+      "loss": 0.22395868599414825
+    },
+    {
+      "step": 1875,
+      "loss": 0.22345300018787384
+    }
+  ],
+  "best_global_step": 1875,
+  "best_validation_loss": 0.22345300018787384,
+  "test_loss": 0.22170956432819366,
+  "aggregate_train_loss": 0.18408195867538452,
+  "last_10_logged_train_loss_mean": 0.20995588302612306,
+  "validation_improvement_first_to_best_percent": 27.139749902630644,
+  "outputs": {
+    "png": "/home/minjun_dev/svg-agentic-slm/artifacts/r0_raw_xml_learning_curve.png",
+    "csv": "/home/minjun_dev/svg-agentic-slm/artifacts/r0_raw_xml_learning_curve.csv"
+  }
+}

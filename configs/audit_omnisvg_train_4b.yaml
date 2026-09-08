@@ -1,0 +1,21 @@
+# Phase-1 encode-only analysis. Both roots must already exist locally.
+backend: openvglab-omnisvg-train-4b-812489fd9d191e39fe94bc0c4027e5d0121e0fc6
+upstream_root: ${OMNISVG_TRAIN_ROOT}
+prepared_root: /data/minjun_dev/mmsvg_sft_prepared_seed42_20k/mmsvg_sft_20k
+output: artifacts/omnisvg_train_4b_mmsvg_20k_token_audit.json
+token_cache: artifacts/omnisvg_train_4b_mmsvg_20k_tokens.sqlite3
+
+fields:
+  svg: output_svg
+  id: id
+  domain: domain
+  source: source
+
+# This uses only local tokenizer artifacts and never resolves a model over the network.
+chat:
+  mode: local_hf_tokenizer
+  tokenizer_root: ${QWEN_TOKENIZER_ROOT}
+  prompt_field: instruction
+  system_field: null
+
+thresholds: [2048, 8192, 32768]

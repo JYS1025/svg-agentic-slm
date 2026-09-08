@@ -23,10 +23,12 @@ train:
     task_type: "CAUSAL_LM"
   sft:
     output_dir: "./outputs/sft/gemma4_raw_mixed"
-    num_train_epochs: 1.0
+    num_train_epochs: 5.0
     per_device_train_batch_size: 1
     per_device_eval_batch_size: 1
     gradient_accumulation_steps: 16
+    train_sampling_strategy: "group_by_length"
+    length_grouping_batch_size: 16
     learning_rate: 2.0e-4
     weight_decay: 0.01
     warmup_ratio: 0.03
@@ -35,12 +37,24 @@ train:
     save_steps: 100
     eval_steps: 100
     save_total_limit: 2
+    eval_strategy: "epoch"
+    save_strategy: "epoch"
+    load_best_model_at_end: true
+    metric_for_best_model: "eval_loss"
+    greater_is_better: false
+    prediction_loss_only: true
+    early_stopping_patience: 2
+    early_stopping_threshold: 0.01
     max_seq_length: 8192
     bf16: true
     gradient_checkpointing: true
     optim: "paged_adamw_8bit"
+    rehydrate_paged_optimizer_state_on_resume: true
     seed: 42
     merge_adapter: false
+    chunked_lm_head_loss: true
+    lm_head_loss_chunk_size: 256
   dataset:
     train_path: "./data/processed/mmsvg_sft_20k/train.jsonl"
     validation_path: "./data/processed/mmsvg_sft_20k/validation.jsonl"
+    test_path: "./data/processed/mmsvg_sft_20k/test.jsonl"

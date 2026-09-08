@@ -30,6 +30,8 @@ class LoRAConfig:
     bias: str = "none"
     task_type: str = "CAUSAL_LM"
     modules_to_save: list[str] = field(default_factory=list)
+    trainable_token_indices: list[int] | dict[str, list[int]] | None = None
+    ensure_weight_tying: bool = False
 
     def to_peft_config(self) -> Any:
         """Build the lazily imported PEFT configuration."""
@@ -45,6 +47,8 @@ class LoRAConfig:
             bias=self.bias,
             task_type=self.task_type,
             modules_to_save=self.modules_to_save or None,
+            trainable_token_indices=self.trainable_token_indices,
+            ensure_weight_tying=self.ensure_weight_tying,
         )
 
     @classmethod
@@ -58,4 +62,6 @@ class LoRAConfig:
             bias=data.get("bias", "none"),
             task_type=data.get("task_type", "CAUSAL_LM"),
             modules_to_save=list(data.get("modules_to_save", [])),
+            trainable_token_indices=data.get("trainable_token_indices"),
+            ensure_weight_tying=bool(data.get("ensure_weight_tying", False)),
         )

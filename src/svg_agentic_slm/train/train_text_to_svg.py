@@ -9,6 +9,10 @@ from pathlib import Path
 from typing import Any
 
 from svg_agentic_slm.train.lora_config import LoRAConfig
+from svg_agentic_slm.svg.official_discrete_cache import (
+    OFFICIAL_CACHED_GEMMA_BACKEND_ID,
+    OpenVGLabCacheConfig,
+)
 from svg_agentic_slm.train.sft_trainer import (
     ModelTrainingConfig,
     SFTConfig,
@@ -54,6 +58,36 @@ def run_training(
         trust_remote_code=bool(model.get("trust_remote_code", False)),
         token_env=model.get("token_env"),
     )
+    official_cache_data = experiment.get("official_cache")
+    official_cache_config = None
+    if official_cache_data is not None:
+        if not isinstance(official_cache_data, dict):
+            raise ValueError("train.experiment.official_cache must be a mapping.")
+        required = ("cache_path", "audit_manifest_path", "prepared_root")
+        missing = [key for key in required if not official_cache_data.get(key)]
+        if missing:
+            raise ValueError(
+                "train.experiment.official_cache is missing: " + ", ".join(missing)
+            )
+        cache_kwargs: dict[str, Any] = {
+            "cache_path": Path(str(official_cache_data["cache_path"])),
+            "audit_manifest_path": Path(
+                str(official_cache_data["audit_manifest_path"])
+            ),
+            "prepared_root": Path(str(official_cache_data["prepared_root"])),
+            "allow_live_reencode": official_cache_data.get(
+                "allow_live_reencode", False
+            ),
+        }
+        for key in (
+            "expected_cache_sha256",
+            "expected_audit_sha256",
+            "expected_input_sha256",
+            "expected_split_counts",
+        ):
+            if key in official_cache_data:
+                cache_kwargs[key] = official_cache_data[key]
+        official_cache_config = OpenVGLabCacheConfig(**cache_kwargs)
     trainer = TextToSVGSFTTrainer(
         model_config=model_config,
         lora_config=LoRAConfig.from_dict(train_config.get("lora", {})),
@@ -62,8 +96,18 @@ def run_training(
         eval_data_path=dataset.get(
             "validation_path", "./data/processed/mmsvg_sft_20k/validation.jsonl"
         ),
+        test_data_path=dataset.get("test_path"),
         instruction_mode=str(experiment.get("instruction_mode", "description_only")),
         target_representation=str(experiment.get("target_representation", "raw_xml")),
+        codec_backend_id=str(
+            experiment.get("codec_backend_id", OFFICIAL_CACHED_GEMMA_BACKEND_ID)
+        ),
+        official_cache_config=official_cache_config,
+        allow_legacy_toy_codec=experiment.get("allow_legacy_toy_codec", False),
+        official_train_sample_ids=experiment.get("official_train_sample_ids"),
+        official_validation_sample_ids=experiment.get(
+            "official_validation_sample_ids"
+        ),
     )
     logger.info("Starting auditable SFT experiment from %s", config_path)
     return trainer.train()

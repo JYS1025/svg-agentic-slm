@@ -192,10 +192,13 @@ run을 같은 sample, instruction 및 training budget으로 수행한다.
 ```bash
 conda create -n svg python=3.11 -y
 conda activate svg
-pip install -e '.[train,rag,render]'
+pip install -e '.[train]'
 
 svg-agentic-slm prepare-sft --config configs/data_mmsvg_sft.yaml
 ```
+
+소규모 smoke data에서만 `allow_nonstandard_split: true`를 명시할 수 있다. 운영 config의
+기본값은 `false`이며 이 경우 합의된 domain별 `9000/500/500` split을 강제한다.
 
 GPU 0, 1, 2에서 3-process Accelerate 학습을 실행한다.
 

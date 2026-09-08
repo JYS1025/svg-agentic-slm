@@ -50,3 +50,4 @@ data/qdrant_storage/
 *.safetensors
 *.pt
 *.onnx
+mmsvg_sft_sample_ids_seed42_20k.tar.gz
