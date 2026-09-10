@@ -1,19 +1,21 @@
 from __future__ import annotations
 
 import copy
+from pathlib import Path
 
 import pytest
-
 
 torch = pytest.importorskip("torch")
 pytest.importorskip("transformers")
 pytest.importorskip("peft")
 
-from peft import LoraConfig, get_peft_model
-from transformers.models.gemma4.configuration_gemma4 import Gemma4TextConfig
-from transformers.models.gemma4.modeling_gemma4 import Gemma4ForCausalLM
+from peft import LoraConfig, get_peft_model  # noqa: E402
+from transformers.models.gemma4.configuration_gemma4 import Gemma4TextConfig  # noqa: E402
+from transformers.models.gemma4.modeling_gemma4 import Gemma4ForCausalLM  # noqa: E402
 
-from svg_agentic_slm.train.chunked_causal_lm_loss import install_chunked_causal_lm_loss
+from svg_agentic_slm.train.chunked_causal_lm_loss import (  # noqa: E402
+    install_chunked_causal_lm_loss,
+)
 
 
 def _tiny_peft_gemma() -> object:
@@ -85,8 +87,14 @@ def test_chunked_loss_matches_gemma_loss_and_trainable_gradients() -> None:
         if parameter.requires_grad
     }
     assert reference_gradients.keys() == chunked_gradients.keys()
-    assert any("lora_" in name and gradient is not None for name, gradient in chunked_gradients.items())
-    assert any("lm_head" in name and gradient is not None for name, gradient in chunked_gradients.items())
+    assert any(
+        "lora_" in name and gradient is not None
+        for name, gradient in chunked_gradients.items()
+    )
+    assert any(
+        "lm_head" in name and gradient is not None
+        for name, gradient in chunked_gradients.items()
+    )
     for name, reference_gradient in reference_gradients.items():
         chunked_gradient = chunked_gradients[name]
         assert reference_gradient is not None, name
@@ -100,6 +108,89 @@ def test_unlabeled_forward_preserves_standard_logits() -> None:
     install_chunked_causal_lm_loss(model, chunk_size=2)
     actual = model(input_ids=torch.tensor([[2, 3, 4]])).logits
     torch.testing.assert_close(actual, expected)
+
+
+def _one_chunked_trainer_update(
+    tmp_path: Path,
+    *,
+    initial_model: object,
+    gradient_accumulation_steps: int,
+) -> dict[str, torch.Tensor]:
+    from transformers import Trainer, TrainingArguments
+
+    model = copy.deepcopy(initial_model)
+    install_chunked_causal_lm_loss(model, chunk_size=3)
+    trainable = [parameter for parameter in model.parameters() if parameter.requires_grad]
+    optimizer = torch.optim.SGD(trainable, lr=0.05)
+    scheduler = torch.optim.lr_scheduler.LambdaLR(optimizer, lambda _: 1.0)
+    records = []
+    for index, prompt_length in enumerate((2, 4, 6, 8) * 4):
+        input_ids = (torch.arange(13) + index).remainder(64).add(3)
+        labels = input_ids.clone()
+        labels[:prompt_length] = -100
+        records.append(
+            {
+                "input_ids": input_ids,
+                "attention_mask": torch.ones_like(input_ids),
+                "labels": labels,
+            }
+        )
+    trainer = Trainer(
+        model=model,
+        args=TrainingArguments(
+            output_dir=str(tmp_path / f"ga-{gradient_accumulation_steps}"),
+            max_steps=1,
+            per_device_train_batch_size=16 // gradient_accumulation_steps,
+            gradient_accumulation_steps=gradient_accumulation_steps,
+            train_sampling_strategy="sequential",
+            learning_rate=0.05,
+            max_grad_norm=0.0,
+            save_strategy="no",
+            eval_strategy="no",
+            remove_unused_columns=False,
+            use_cpu=True,
+            report_to=[],
+            disable_tqdm=True,
+        ),
+        train_dataset=records,
+        optimizers=(optimizer, scheduler),
+    )
+    assert trainer.model_accepts_loss_kwargs is True
+    trainer.train()
+    return {
+        name: parameter.detach().clone()
+        for name, parameter in model.named_parameters()
+        if parameter.requires_grad
+    }
+
+
+@pytest.mark.parametrize("gradient_accumulation_steps", [2, 4, 16])
+def test_chunked_trainer_accumulation_matches_full_effective_batch(
+    tmp_path: Path,
+    gradient_accumulation_steps: int,
+) -> None:
+    torch.manual_seed(17)
+    initial = _tiny_peft_gemma()
+    reference = _one_chunked_trainer_update(
+        tmp_path,
+        initial_model=initial,
+        gradient_accumulation_steps=1,
+    )
+    accumulated = _one_chunked_trainer_update(
+        tmp_path,
+        initial_model=initial,
+        gradient_accumulation_steps=gradient_accumulation_steps,
+    )
+
+    assert reference.keys() == accumulated.keys()
+    for name, expected in reference.items():
+        torch.testing.assert_close(
+            accumulated[name],
+            expected,
+            rtol=2e-5,
+            atol=2e-6,
+            msg=lambda message: f"{name}: {message}",
+        )
 
 
 def test_tiny_train_validation_then_single_held_out_test(tmp_path) -> None:

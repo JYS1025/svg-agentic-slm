@@ -267,6 +267,12 @@ class SFTConfig:
             raise ValueError(
                 "sft.init_adapter_from and sft.resume_from_checkpoint are mutually exclusive."
             )
+        if self.early_stopping_patience is not None and (
+            isinstance(self.early_stopping_patience, bool)
+            or not isinstance(self.early_stopping_patience, int)
+            or self.early_stopping_patience <= 0
+        ):
+            raise ValueError("sft.early_stopping_patience must be positive or null.")
         if (
             isinstance(self.max_steps, bool)
             or not isinstance(self.max_steps, int)
@@ -289,6 +295,16 @@ class SFTConfig:
             raise ValueError(
                 "sft.rehydrate_paged_optimizer_state_on_resume must be boolean."
             )
+        if (
+            isinstance(self.early_stopping_threshold, bool)
+            or not isinstance(self.early_stopping_threshold, (int, float))
+            or not math.isfinite(float(self.early_stopping_threshold))
+            or self.early_stopping_threshold < 0
+        ):
+            raise ValueError(
+                "sft.early_stopping_threshold must be a finite non-negative number."
+            )
+        self.early_stopping_threshold = float(self.early_stopping_threshold)
         if self.torch_empty_cache_steps is not None and (
             isinstance(self.torch_empty_cache_steps, bool)
             or not isinstance(self.torch_empty_cache_steps, int)
@@ -339,6 +355,86 @@ def _structural_response_loss_enabled(config: SFTConfig) -> bool:
         config.response_eos_loss_weight > 1.0
         or config.response_path_terminator_class_mass_weight > 1.0
     )
+
+
+def _early_stopping_resume_contract(
+    *,
+    resume_from_checkpoint: str | None,
+    patience: int | None,
+    threshold: float,
+) -> dict[str, Any]:
+    """Validate stateful early-stopping resume before Trainer restores callbacks."""
+
+    if resume_from_checkpoint is None or patience is None:
+        return {
+            "enabled": False,
+            "restore_callback_states_from_checkpoint": False,
+            "checkpoint": resume_from_checkpoint,
+        }
+    checkpoint = Path(resume_from_checkpoint).expanduser().resolve()
+    state_path = checkpoint / "trainer_state.json"
+    try:
+        payload = json.loads(state_path.read_text(encoding="utf-8"))
+    except FileNotFoundError as exc:
+        raise ValueError(
+            "Early-stopping resume requires checkpoint trainer_state.json: "
+            f"{state_path}"
+        ) from exc
+    except (OSError, json.JSONDecodeError) as exc:
+        raise ValueError(
+            f"Early-stopping checkpoint state is unreadable or invalid JSON: {state_path}"
+        ) from exc
+    if not isinstance(payload, Mapping):
+        raise ValueError("Early-stopping checkpoint trainer_state.json must be an object.")
+    stateful = payload.get("stateful_callbacks")
+    callback_state = (
+        stateful.get("EarlyStoppingCallback") if isinstance(stateful, Mapping) else None
+    )
+    if isinstance(callback_state, list):
+        if len(callback_state) != 1:
+            raise ValueError(
+                "Early-stopping checkpoint must contain exactly one callback state."
+            )
+        callback_state = callback_state[0]
+    if not isinstance(callback_state, Mapping):
+        raise ValueError(
+            "Early-stopping checkpoint does not contain a restorable "
+            "EarlyStoppingCallback state."
+        )
+    saved_args = callback_state.get("args")
+    saved_attributes = callback_state.get("attributes")
+    if not isinstance(saved_args, Mapping) or not isinstance(saved_attributes, Mapping):
+        raise ValueError("Early-stopping checkpoint callback state is malformed.")
+    saved_patience = saved_args.get("early_stopping_patience")
+    saved_threshold = saved_args.get("early_stopping_threshold")
+    saved_counter = saved_attributes.get("early_stopping_patience_counter")
+    if (
+        isinstance(saved_patience, bool)
+        or not isinstance(saved_patience, int)
+        or saved_patience <= 0
+        or isinstance(saved_threshold, bool)
+        or not isinstance(saved_threshold, (int, float))
+        or not math.isfinite(float(saved_threshold))
+        or isinstance(saved_counter, bool)
+        or not isinstance(saved_counter, int)
+        or saved_counter < 0
+    ):
+        raise ValueError("Early-stopping checkpoint callback values are invalid.")
+    if saved_patience != patience or float(saved_threshold) != float(threshold):
+        raise ValueError(
+            "Early-stopping checkpoint settings differ from the current SFT config: "
+            f"checkpoint patience={saved_patience}, threshold={float(saved_threshold)}; "
+            f"current patience={patience}, threshold={float(threshold)}."
+        )
+    return {
+        "enabled": True,
+        "restore_callback_states_from_checkpoint": True,
+        "checkpoint": str(checkpoint),
+        "trainer_state_path": str(state_path),
+        "patience": saved_patience,
+        "threshold": float(saved_threshold),
+        "restored_patience_counter": saved_counter,
+    }
 
 
 def _official_inference_token_kind(token_id: int) -> str:
@@ -1357,8 +1453,6 @@ class TextToSVGSFTTrainer:
                 "sft.train_sampling_strategy must be random, sequential, or group_by_length."
             )
         if sft_config.early_stopping_patience is not None:
-            if sft_config.early_stopping_patience <= 0:
-                raise ValueError("sft.early_stopping_patience must be positive or null.")
             if not sft_config.do_eval:
                 raise ValueError("Early stopping requires sft.do_eval=true.")
             if not sft_config.load_best_model_at_end:
@@ -1389,6 +1483,11 @@ class TextToSVGSFTTrainer:
         self._official_validation_sample_ids = normalized_validation_sample_ids
 
     def train(self) -> dict[str, Any]:
+        early_stopping_resume = _early_stopping_resume_contract(
+            resume_from_checkpoint=self._sft_config.resume_from_checkpoint,
+            patience=self._sft_config.early_stopping_patience,
+            threshold=self._sft_config.early_stopping_threshold,
+        )
         cached_records_by_split: dict[str, list[dict[str, Any]]] | None = None
         if (
             self._target_representation == "omnisvg_discrete"
@@ -1687,6 +1786,9 @@ class TextToSVGSFTTrainer:
             load_best_model_at_end=(
                 self._sft_config.load_best_model_at_end and eval_dataset is not None
             ),
+            restore_callback_states_from_checkpoint=early_stopping_resume[
+                "restore_callback_states_from_checkpoint"
+            ],
             metric_for_best_model=(
                 self._sft_config.metric_for_best_model if eval_dataset is not None else None
             ),
@@ -1954,6 +2056,7 @@ class TextToSVGSFTTrainer:
                 "global_step": trainer.state.global_step,
                 "early_stopping_patience": self._sft_config.early_stopping_patience,
                 "early_stopping_threshold": self._sft_config.early_stopping_threshold,
+                "early_stopping_resume": early_stopping_resume,
             },
         }
         if trainer.is_world_process_zero():
