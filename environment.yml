@@ -10,13 +10,15 @@ dependencies:
   - cairosvg>=2.7
   - cairocffi
   - pip:
-    - torch>=2.0
+    - torch>=2.5,<3
+    - numpy>=1.26
     - transformers>=5.15,<6
     - peft>=0.20,<1
     - trl>=0.8
     - datasets>=2.18
-    - accelerate>=0.28
-    - bitsandbytes>=0.43
+    - pyarrow>=20,<23
+    - accelerate>=1.1,<2
+    - bitsandbytes>=0.46,<1
     - huggingface-hub>=1.28,<2
     # Install llama-cpp-python==0.3.34 separately with GGML_CUDA enabled.
     - chromadb>=0.4
