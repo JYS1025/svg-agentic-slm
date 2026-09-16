@@ -1,0 +1,111 @@
+name: SFT portability
+
+"on":
+  push:
+    paths:
+      - ".github/workflows/sft-portability.yml"
+      - "configs/train_lora*.yaml"
+      - "pyproject.toml"
+      - "scripts/audit_official_discrete_factorization.py"
+      - "scripts/check_sft_environment.py"
+      - "scripts/run_generator_sft.sh"
+      - "src/svg_agentic_slm/train/**"
+      - "tests/test_chunked_causal_lm_loss.py"
+      - "tests/test_chunked_causal_lm_loss_kernel.py"
+      - "tests/test_official_discrete_factorization_audit.py"
+      - "tests/test_response_collator.py"
+      - "tests/test_sft_performance.py"
+      - "tests/test_streamed_linear_cross_entropy.py"
+      - "tests/test_tokenized_cache.py"
+  pull_request:
+    paths:
+      - ".github/workflows/sft-portability.yml"
+      - "configs/train_lora*.yaml"
+      - "pyproject.toml"
+      - "scripts/audit_official_discrete_factorization.py"
+      - "scripts/check_sft_environment.py"
+      - "scripts/run_generator_sft.sh"
+      - "src/svg_agentic_slm/train/**"
+      - "tests/test_chunked_causal_lm_loss.py"
+      - "tests/test_chunked_causal_lm_loss_kernel.py"
+      - "tests/test_official_discrete_factorization_audit.py"
+      - "tests/test_response_collator.py"
+      - "tests/test_sft_performance.py"
+      - "tests/test_streamed_linear_cross_entropy.py"
+      - "tests/test_tokenized_cache.py"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  cpu-contracts:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+        python: ["3.11", "3.13"]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+          cache: pip
+      - name: Install CPU test environment
+        shell: bash
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install --index-url https://download.pytorch.org/whl/cpu "torch>=2.5,<3"
+          python -m pip install \
+            "numpy>=1.26" "transformers>=5.15,<6" "peft>=0.20,<1" \
+            "accelerate>=1.1,<2" "pyyaml>=6" "pytest>=8" "ruff>=0.4"
+          python -m pip install --no-deps -e .
+      - name: Validate training configuration
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          import yaml
+
+          from svg_agentic_slm.train.sft_trainer import SFTConfig
+
+          files = sorted(Path("configs").glob("train_lora*.yaml"))
+          for path in files:
+              document = yaml.safe_load(path.read_text(encoding="utf-8"))
+              SFTConfig(**document["train"]["sft"])
+          print("validated:", ", ".join(path.name for path in files))
+          PY
+      - name: Run portable SFT contracts
+        run: >-
+          python -m pytest -q
+          tests/test_chunked_causal_lm_loss.py
+          tests/test_chunked_causal_lm_loss_kernel.py
+          tests/test_official_discrete_factorization_audit.py
+          tests/test_response_collator.py
+          tests/test_sft_performance.py
+          tests/test_streamed_linear_cross_entropy.py
+          tests/test_tokenized_cache.py
+      - name: Check changed Python files
+        run: >-
+          ruff check
+          scripts/audit_official_discrete_factorization.py
+          scripts/check_sft_environment.py
+          src/svg_agentic_slm/train/chunked_causal_lm_loss.py
+          src/svg_agentic_slm/train/response_collator.py
+          src/svg_agentic_slm/train/sft_trainer.py
+          src/svg_agentic_slm/train/streamed_linear_cross_entropy.py
+          src/svg_agentic_slm/train/tokenized_cache.py
+          tests/test_chunked_causal_lm_loss.py
+          tests/test_chunked_causal_lm_loss_kernel.py
+          tests/test_official_discrete_factorization_audit.py
+          tests/test_response_collator.py
+          tests/test_sft_performance.py
+          tests/test_streamed_linear_cross_entropy.py
+          tests/test_tokenized_cache.py
+      - name: Check launcher syntax
+        if: runner.os == 'Linux'
+        run: |
+          bash -n scripts/run_generator_sft.sh
+          python scripts/check_sft_environment.py --help

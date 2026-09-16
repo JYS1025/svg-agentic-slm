@@ -39,6 +39,13 @@ from svg_agentic_slm.train.paged_optimizer_resume import (
     PagedOptimizerResumeMixin,
     initial_paged_optimizer_resume_manifest,
 )
+from svg_agentic_slm.train.response_collator import (
+    ResponseOnlyCollator as _ResponseOnlyCollator,
+)
+from svg_agentic_slm.train.tokenized_cache import (
+    TokenizedDatasetCache,
+    load_or_build_tokenized_cache,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -106,23 +113,16 @@ _STRUCTURAL_RESPONSE_LOSS_CONTRACT = {
             "denominator": "sum(active_weight)",
         },
         "path_terminator_class_mass": {
-            "numerator": (
-                "sum(base_exact_token_ce) + "
-                "(weight-1) * sum(-log p(valid_color_class))"
-            ),
-            "denominator": (
-                "active_token_count + (weight-1) * completed_path_count"
-            ),
+            "numerator": ("sum(base_exact_token_ce) + (weight-1) * sum(-log p(valid_color_class))"),
+            "denominator": ("active_token_count + (weight-1) * completed_path_count"),
         },
     },
     "reductions": {
         "token": (
-            "sum all sample numerators / sum all sample denominators in the "
-            "accumulation window"
+            "sum all sample numerators / sum all sample denominators in the accumulation window"
         ),
         "sample": (
-            "mean each sample numerator/denominator across all samples in the "
-            "accumulation window"
+            "mean each sample numerator/denominator across all samples in the accumulation window"
         ),
     },
     "recommended_reduction": "sample",
@@ -180,6 +180,7 @@ class SFTConfig:
     warmup_ratio: float = 0.03
     lr_scheduler_type: str = "cosine"
     logging_steps: int = 10
+    logging_nan_inf_filter: bool = False
     save_steps: int = 100
     eval_steps: int = 100
     save_total_limit: int = 2
@@ -201,6 +202,15 @@ class SFTConfig:
     optim: str = "paged_adamw_8bit"
     seed: int = 42
     dataloader_num_workers: int = 2
+    dataloader_pin_memory: bool = True
+    dataloader_persistent_workers: bool = False
+    dataloader_prefetch_factor: int | None = None
+    dataloader_non_blocking: bool = False
+    tokenized_cache: bool = True
+    tokenized_cache_dir: str | None = None
+    tokenized_cache_lock_timeout_seconds: int = 3600
+    tokenized_cache_batched_fetch: bool = True
+    collator_array_fast_path: bool = True
     torch_empty_cache_steps: int | None = None
     init_adapter_from: str | None = None
     resume_from_checkpoint: str | None = None
@@ -209,6 +219,8 @@ class SFTConfig:
     report_to: list[str] | None = None
     chunked_lm_head_loss: bool = False
     lm_head_loss_chunk_size: int = 256
+    lm_head_loss_project_only_active_tokens: bool = True
+    lm_head_loss_backend: Literal["auto", "checkpoint", "streamed"] = "auto"
     response_eos_loss_weight: float = 1.0
     response_path_terminator_class_mass_weight: float = 1.0
     structural_response_loss_reduction: StructuralResponseLossReduction = "token"
@@ -217,6 +229,48 @@ class SFTConfig:
     length_grouping_batch_size: int | None = None
 
     def __post_init__(self) -> None:
+        for field_name in (
+            "dataloader_pin_memory",
+            "dataloader_persistent_workers",
+            "dataloader_non_blocking",
+            "tokenized_cache",
+            "lm_head_loss_project_only_active_tokens",
+            "tokenized_cache_batched_fetch",
+            "collator_array_fast_path",
+            "logging_nan_inf_filter",
+        ):
+            if not isinstance(getattr(self, field_name), bool):
+                raise TypeError(f"sft.{field_name} must be boolean.")
+        if self.lm_head_loss_backend not in {"auto", "checkpoint", "streamed"}:
+            raise ValueError("sft.lm_head_loss_backend must be auto, checkpoint, or streamed.")
+        if (
+            isinstance(self.lm_head_loss_chunk_size, bool)
+            or not isinstance(self.lm_head_loss_chunk_size, int)
+            or self.lm_head_loss_chunk_size <= 0
+        ):
+            raise ValueError("sft.lm_head_loss_chunk_size must be a positive integer.")
+        if (
+            isinstance(self.dataloader_num_workers, bool)
+            or not isinstance(self.dataloader_num_workers, int)
+            or self.dataloader_num_workers < 0
+        ):
+            raise ValueError("sft.dataloader_num_workers must be a non-negative integer.")
+        for field_name in ("dataloader_prefetch_factor", "tokenized_cache_lock_timeout_seconds"):
+            value = getattr(self, field_name)
+            if value is None and field_name == "dataloader_prefetch_factor":
+                continue
+            if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
+                raise ValueError(f"sft.{field_name} must be a positive integer.")
+        if self.dataloader_num_workers == 0 and (
+            self.dataloader_persistent_workers or self.dataloader_prefetch_factor is not None
+        ):
+            raise ValueError("Persistent workers/prefetch require dataloader_num_workers > 0.")
+        if self.dataloader_non_blocking and not self.dataloader_pin_memory:
+            raise ValueError("sft.dataloader_non_blocking requires dataloader_pin_memory=true.")
+        if self.tokenized_cache_dir is not None and (
+            not isinstance(self.tokenized_cache_dir, str) or not self.tokenized_cache_dir.strip()
+        ):
+            raise ValueError("sft.tokenized_cache_dir must be a non-empty path or null.")
         for field_name in ("do_train", "do_eval", "do_predict"):
             if not isinstance(getattr(self, field_name), bool):
                 raise TypeError(f"sft.{field_name} must be boolean.")
@@ -225,12 +279,10 @@ class SFTConfig:
             field_name="response_eos_loss_weight",
             maximum=8.0,
         )
-        self.response_path_terminator_class_mass_weight = (
-            _validated_response_loss_weight(
-                self.response_path_terminator_class_mass_weight,
-                field_name="response_path_terminator_class_mass_weight",
-                maximum=4.0,
-            )
+        self.response_path_terminator_class_mass_weight = _validated_response_loss_weight(
+            self.response_path_terminator_class_mass_weight,
+            field_name="response_path_terminator_class_mass_weight",
+            maximum=4.0,
         )
         if (
             self.response_eos_loss_weight > 1.0
@@ -241,10 +293,8 @@ class SFTConfig:
                 "sft.response_path_terminator_class_mass_weight cannot both exceed 1.0 "
                 "before the follow-up EP arms are approved."
             )
-        self.structural_response_loss_reduction = (
-            _validated_structural_response_loss_reduction(
-                self.structural_response_loss_reduction
-            )
+        self.structural_response_loss_reduction = _validated_structural_response_loss_reduction(
+            self.structural_response_loss_reduction
         )
         self.detail_text_normalization = _validated_detail_text_normalization(
             self.detail_text_normalization
@@ -259,9 +309,7 @@ class SFTConfig:
             )
         for field_name in ("init_adapter_from", "resume_from_checkpoint"):
             value = getattr(self, field_name)
-            if value is not None and (
-                not isinstance(value, str) or not value.strip()
-            ):
+            if value is not None and (not isinstance(value, str) or not value.strip()):
                 raise ValueError(f"sft.{field_name} must be a non-empty path or null.")
         if self.init_adapter_from is not None and self.resume_from_checkpoint is not None:
             raise ValueError(
@@ -292,27 +340,21 @@ class SFTConfig:
                 "sft.train_sampling_strategy=group_by_length."
             )
         if not isinstance(self.rehydrate_paged_optimizer_state_on_resume, bool):
-            raise ValueError(
-                "sft.rehydrate_paged_optimizer_state_on_resume must be boolean."
-            )
+            raise ValueError("sft.rehydrate_paged_optimizer_state_on_resume must be boolean.")
         if (
             isinstance(self.early_stopping_threshold, bool)
             or not isinstance(self.early_stopping_threshold, (int, float))
             or not math.isfinite(float(self.early_stopping_threshold))
             or self.early_stopping_threshold < 0
         ):
-            raise ValueError(
-                "sft.early_stopping_threshold must be a finite non-negative number."
-            )
+            raise ValueError("sft.early_stopping_threshold must be a finite non-negative number.")
         self.early_stopping_threshold = float(self.early_stopping_threshold)
         if self.torch_empty_cache_steps is not None and (
             isinstance(self.torch_empty_cache_steps, bool)
             or not isinstance(self.torch_empty_cache_steps, int)
             or self.torch_empty_cache_steps <= 0
         ):
-            raise ValueError(
-                "sft.torch_empty_cache_steps must be a positive integer or null."
-            )
+            raise ValueError("sft.torch_empty_cache_steps must be a positive integer or null.")
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> SFTConfig:
@@ -344,9 +386,7 @@ def _validated_structural_response_loss_reduction(
 
 def _validated_detail_text_normalization(value: Any) -> DetailTextNormalization:
     if not isinstance(value, str) or value not in ("none", "mmsvg_list_repr_v1"):
-        raise ValueError(
-            "sft.detail_text_normalization must be none or mmsvg_list_repr_v1."
-        )
+        raise ValueError("sft.detail_text_normalization must be none or mmsvg_list_repr_v1.")
     return value
 
 
@@ -377,8 +417,7 @@ def _early_stopping_resume_contract(
         payload = json.loads(state_path.read_text(encoding="utf-8"))
     except FileNotFoundError as exc:
         raise ValueError(
-            "Early-stopping resume requires checkpoint trainer_state.json: "
-            f"{state_path}"
+            f"Early-stopping resume requires checkpoint trainer_state.json: {state_path}"
         ) from exc
     except (OSError, json.JSONDecodeError) as exc:
         raise ValueError(
@@ -392,14 +431,11 @@ def _early_stopping_resume_contract(
     )
     if isinstance(callback_state, list):
         if len(callback_state) != 1:
-            raise ValueError(
-                "Early-stopping checkpoint must contain exactly one callback state."
-            )
+            raise ValueError("Early-stopping checkpoint must contain exactly one callback state.")
         callback_state = callback_state[0]
     if not isinstance(callback_state, Mapping):
         raise ValueError(
-            "Early-stopping checkpoint does not contain a restorable "
-            "EarlyStoppingCallback state."
+            "Early-stopping checkpoint does not contain a restorable EarlyStoppingCallback state."
         )
     saved_args = callback_state.get("args")
     saved_attributes = callback_state.get("attributes")
@@ -551,11 +587,15 @@ def _official_discrete_response_loss_annotations(
     for index, role in enumerate(roles):
         if role == _RESPONSE_ROLE_EOS:
             weights[index] = eos_weight
-    return weights, roles, {
-        "labeled_token_count": len(labeled_positions),
-        "eos_count": 1,
-        "path_color_terminator_count": path_terminator_count,
-    }
+    return (
+        weights,
+        roles,
+        {
+            "labeled_token_count": len(labeled_positions),
+            "eos_count": 1,
+            "path_color_terminator_count": path_terminator_count,
+        },
+    )
 
 
 def _structural_weighted_causal_lm_loss(
@@ -600,9 +640,13 @@ def _structural_weighted_causal_lm_loss(
 
     shift_logits = logits[:, :-1, :].contiguous().float()
     shift_labels = labels[:, 1:].contiguous()
-    shift_weights = loss_weights[:, 1:].contiguous().to(
-        device=shift_logits.device,
-        dtype=shift_logits.dtype,
+    shift_weights = (
+        loss_weights[:, 1:]
+        .contiguous()
+        .to(
+            device=shift_logits.device,
+            dtype=shift_logits.dtype,
+        )
     )
     active = shift_labels.ne(-100)
     if not bool(active.any()):
@@ -740,15 +784,13 @@ def _structural_accumulation_window_denominator(
         labels = batch.get("labels")
         loss_weights = batch.get("loss_weights")
         roles = batch.get("response_token_roles")
-        if not all(
-            isinstance(value, torch.Tensor) for value in (labels, loss_weights, roles)
-        ):
+        if not all(isinstance(value, torch.Tensor) for value in (labels, loss_weights, roles)):
             raise ValueError(
                 "Structural accumulation batches require tensor labels, weights, and roles."
             )
-        if tuple(labels.shape) != tuple(loss_weights.shape) or tuple(
-            labels.shape
-        ) != tuple(roles.shape):
+        if tuple(labels.shape) != tuple(loss_weights.shape) or tuple(labels.shape) != tuple(
+            roles.shape
+        ):
             raise ValueError("Structural accumulation batch shapes do not match.")
         active = labels[:, 1:].ne(-100)
         if not bool(active.any()):
@@ -829,6 +871,7 @@ class _ResponseOnlyDataset:
         response_eos_loss_weight: float = 1.0,
         response_path_terminator_class_mass_weight: float = 1.0,
         detail_text_normalization: DetailTextNormalization = "none",
+        defer_length_validation: bool = False,
     ) -> None:
         self._records = records
         self._tokenizer = tokenizer
@@ -846,12 +889,10 @@ class _ResponseOnlyDataset:
             field_name="response_eos_loss_weight",
             maximum=8.0,
         )
-        self._response_path_terminator_class_mass_weight = (
-            _validated_response_loss_weight(
-                response_path_terminator_class_mass_weight,
-                field_name="response_path_terminator_class_mass_weight",
-                maximum=4.0,
-            )
+        self._response_path_terminator_class_mass_weight = _validated_response_loss_weight(
+            response_path_terminator_class_mass_weight,
+            field_name="response_path_terminator_class_mass_weight",
+            maximum=4.0,
         )
         self._structural_response_loss_enabled = bool(
             self._response_eos_loss_weight > 1.0
@@ -867,6 +908,19 @@ class _ResponseOnlyDataset:
         self._structural_role_counts: Counter[str] = Counter()
         self._verified_length_contract: dict[str, Any] | None = None
         self._metadata_length_diagnostic: dict[str, Any] | None = None
+        self._observed_serialization: dict[int, tuple[int, dict[str, int]]] = {}
+        self._verified_lengths: tuple[int, ...] | None = None
+        if not defer_length_validation:
+            self._initialize_verified_lengths()
+
+    def _initialize_verified_lengths(self) -> None:
+        if self._verified_lengths is not None:
+            return
+        records = self._records
+        tokenizer = self._tokenizer
+        target_representation = self._target_representation
+        instruction_mode = self._instruction_mode
+        max_seq_length = self._max_seq_length
         if target_representation == "raw_xml":
             self._verified_length_source = _VERIFIED_LENGTH_SOURCE
             self._verified_length_validation = "positive_integer"
@@ -876,17 +930,20 @@ class _ResponseOnlyDataset:
             )
         else:
             self._verified_length_source = _RUNTIME_SERIALIZATION_LENGTH_SOURCE
-            self._verified_length_validation = (
-                "exact_runtime_serialization_without_truncation"
-            )
+            self._verified_length_validation = "exact_runtime_serialization_without_truncation"
             verified_lengths: list[int] = []
             for index in range(len(records)):
-                serialized = self._serialize_record(index)
-                verified_lengths.append(len(serialized["input_ids"]))
-                if self._structural_response_loss_enabled:
-                    self._structural_role_counts.update(
-                        serialized["response_token_role_counts"]
+                observed = self._observed_serialization.get(index)
+                if observed is None:
+                    serialized = self._serialize_record(index)
+                    observed = (
+                        len(serialized["input_ids"]),
+                        serialized.get("response_token_role_counts", {}),
                     )
+                length, role_counts = observed
+                verified_lengths.append(length)
+                if self._structural_response_loss_enabled:
+                    self._structural_role_counts.update(role_counts)
             self._verified_lengths = tuple(verified_lengths)
             try:
                 tokenizer_vocabulary_size = len(tokenizer)
@@ -920,9 +977,7 @@ class _ResponseOnlyDataset:
                 "present_positive_integer_count": sum(
                     value is not None for value in metadata_values
                 ),
-                "missing_or_invalid_count": sum(
-                    value is None for value in metadata_values
-                ),
+                "missing_or_invalid_count": sum(value is None for value in metadata_values),
                 "match_count": sum(
                     value == actual
                     for value, actual in zip(metadata_values, self._verified_lengths)
@@ -935,9 +990,8 @@ class _ResponseOnlyDataset:
                 ),
             }
         compact_lengths = json.dumps(self._verified_lengths, separators=(",", ":"))
-        self._verified_lengths_sha256 = hashlib.sha256(
-            compact_lengths.encode("utf-8")
-        ).hexdigest()
+        self._verified_lengths_sha256 = hashlib.sha256(compact_lengths.encode("utf-8")).hexdigest()
+        self._observed_serialization.clear()
 
     def __len__(self) -> int:
         return len(self._records)
@@ -946,9 +1000,13 @@ class _ResponseOnlyDataset:
     def verified_lengths(self) -> tuple[int, ...]:
         """Return immutable, pre-validated lengths without tokenizing dataset rows."""
 
+        self._initialize_verified_lengths()
+        assert self._verified_lengths is not None
         return self._verified_lengths
 
     def verified_length_manifest(self) -> dict[str, Any]:
+        self._initialize_verified_lengths()
+        assert self._verified_lengths is not None
         manifest = {
             "source": self._verified_length_source,
             "validation": self._verified_length_validation,
@@ -967,6 +1025,7 @@ class _ResponseOnlyDataset:
     def structural_response_role_manifest(self) -> dict[str, Any] | None:
         if not self._structural_response_loss_enabled:
             return None
+        self._initialize_verified_lengths()
         return {
             "sample_count": len(self._records),
             "labeled_token_count": int(self._structural_role_counts["labeled_token_count"]),
@@ -1144,76 +1203,161 @@ class _ResponseOnlyDataset:
         return result
 
     def __getitem__(self, index: int) -> dict[str, Any]:
-        return self._serialize_record(index)
+        feature = self._serialize_record(index)
+        if self._verified_lengths is None:
+            self._observed_serialization[index] = (
+                len(feature["input_ids"]),
+                feature.get("response_token_role_counts", {}),
+            )
+        return feature
 
 
-class _ResponseOnlyCollator:
-    def __init__(self, tokenizer: Any) -> None:
-        self._pad_token_id = tokenizer.pad_token_id
-        if self._pad_token_id is None:
-            self._pad_token_id = tokenizer.eos_token_id
-        if self._pad_token_id is None:
-            raise ValueError("Tokenizer must define pad_token_id or eos_token_id.")
+class _DeferredResponseOnlyDataset:
+    """Avoid even constructing/tokenizing the source dataset on a warm cache hit."""
 
-    def __call__(self, features: list[dict[str, list[int]]]) -> dict[str, Any]:
-        import torch
+    def __init__(self, records: list[dict[str, Any]], kwargs: dict[str, Any]) -> None:
+        self._records = records
+        self._kwargs = kwargs
+        self._dataset: _ResponseOnlyDataset | None = None
 
-        max_length = max(len(feature["input_ids"]) for feature in features)
-        batch_size = len(features)
-        input_ids = torch.full((batch_size, max_length), self._pad_token_id, dtype=torch.long)
-        attention_mask = torch.zeros((batch_size, max_length), dtype=torch.long)
-        labels = torch.full((batch_size, max_length), -100, dtype=torch.long)
-        weighted_features = ["loss_weights" in feature for feature in features]
-        if any(weighted_features) and not all(weighted_features):
-            raise ValueError("A batch cannot mix structural-weighted and unweighted records.")
-        loss_weights = (
-            torch.ones((batch_size, max_length), dtype=torch.float32)
-            if all(weighted_features)
-            else None
+    def __len__(self) -> int:
+        return len(self._records)
+
+    def _materialize(self) -> _ResponseOnlyDataset:
+        if self._dataset is None:
+            self._dataset = _ResponseOnlyDataset(
+                self._records,
+                **self._kwargs,
+                # Raw XML lengths are cheap metadata checks; discrete lengths
+                # reuse the rows streamed into the cache before validation.
+                defer_length_validation=self._kwargs["target_representation"] != "raw_xml",
+            )
+        return self._dataset
+
+    def __getitem__(self, index: int) -> dict[str, Any]:
+        return self._materialize()[index]
+
+    @property
+    def verified_lengths(self) -> tuple[int, ...]:
+        return self._materialize().verified_lengths
+
+    def verified_length_manifest(self) -> dict[str, Any]:
+        return self._materialize().verified_length_manifest()
+
+    def instruction_selection_manifest(self) -> dict[str, Any]:
+        return self._materialize().instruction_selection_manifest()
+
+    def structural_response_role_manifest(self) -> dict[str, Any] | None:
+        return self._materialize().structural_response_role_manifest()
+
+
+def _tokenization_identity(tokenizer: Any, codec: Any) -> dict[str, Any]:
+    """Hash serialization inputs, including actual tokenizer state and local code."""
+    backend = getattr(tokenizer, "backend_tokenizer", None)
+    if backend is None or not callable(getattr(backend, "to_str", None)):
+        raise ValueError(
+            "Tokenized caching requires a fast tokenizer with serializable backend state. "
+            "Set sft.tokenized_cache=false for a custom tokenizer."
         )
-        response_token_roles = (
-            torch.zeros((batch_size, max_length), dtype=torch.long)
-            if all(weighted_features)
-            else None
+    package_root = Path(__file__).resolve().parents[1]
+    sources = [Path(__file__).resolve(), Path(__file__).with_name("tokenized_cache.py").resolve()]
+    for directory in ("prompts", "svg"):
+        sources.extend(sorted((package_root / directory).glob("*.py")))
+    special_tokens = {
+        key: [str(token) for token in value] if isinstance(value, list) else str(value)
+        for key, value in tokenizer.special_tokens_map.items()
+    }
+    return {
+        "schema_version": 1,
+        "tokenizer_class": f"{type(tokenizer).__module__}.{type(tokenizer).__qualname__}",
+        "backend_sha256": hashlib.sha256(backend.to_str().encode("utf-8")).hexdigest(),
+        "chat_template": tokenizer.chat_template,
+        "special_tokens": special_tokens,
+        "padding_side": tokenizer.padding_side,
+        "truncation_side": tokenizer.truncation_side,
+        "codec": codec.codec_manifest() if codec is not None else None,
+        "packages": {name: _package_version(name) for name in ("transformers", "tokenizers")},
+        "serialization_source_sha256": {
+            str(path.relative_to(package_root)).replace("\\", "/"): hashlib.sha256(
+                path.read_text(encoding="utf-8").encode("utf-8")
+            ).hexdigest()
+            for path in sources
+        },
+    }
+
+
+def _cache_record_identity(value: Any) -> Any:
+    """Encode JSON records and official compressed targets without type collisions."""
+    if isinstance(value, bytes):
+        return ["bytes", len(value), hashlib.sha256(value).hexdigest()]
+    if isinstance(value, Mapping):
+        if not all(isinstance(key, str) for key in value):
+            raise TypeError("Tokenized cache record keys must be strings.")
+        return ["mapping", [[key, _cache_record_identity(value[key])] for key in sorted(value)]]
+    if isinstance(value, list):
+        return ["list", [_cache_record_identity(item) for item in value]]
+    if isinstance(value, tuple):
+        return ["tuple", [_cache_record_identity(item) for item in value]]
+    if value is None or isinstance(value, (str, bool, int, float)):
+        return value
+    raise TypeError(f"Unsupported tokenized cache record value: {type(value).__name__}.")
+
+
+def _prepare_sft_dataset(
+    records: list[dict[str, Any]],
+    *,
+    split: str,
+    config: SFTConfig,
+    dataset_kwargs: dict[str, Any],
+    tokenization_identity: dict[str, Any] | None,
+) -> _ResponseOnlyDataset | TokenizedDatasetCache:
+    if not config.tokenized_cache:
+        return _ResponseOnlyDataset(records, **dataset_kwargs)
+    if tokenization_identity is None:
+        raise ValueError("Tokenized caching requires a tokenization identity.")
+    record_digest = hashlib.sha256()
+    for row in records:
+        record_digest.update(
+            json.dumps(
+                _cache_record_identity(row),
+                ensure_ascii=False,
+                sort_keys=True,
+                separators=(",", ":"),
+                allow_nan=False,
+            ).encode("utf-8")
         )
-        for row_index, feature in enumerate(features):
-            length = len(feature["input_ids"])
-            input_ids[row_index, :length] = torch.tensor(feature["input_ids"], dtype=torch.long)
-            attention_mask[row_index, :length] = 1
-            labels[row_index, :length] = torch.tensor(feature["labels"], dtype=torch.long)
-            if loss_weights is not None:
-                feature_weights = feature["loss_weights"]
-                feature_roles = feature.get("response_token_roles")
-                if (
-                    not isinstance(feature_weights, list)
-                    or len(feature_weights) != length
-                    or not isinstance(feature_roles, list)
-                    or len(feature_roles) != length
-                ):
-                    raise ValueError(
-                        "Structural response weight/role shape differs from input IDs."
-                    )
-                if any(
-                    isinstance(value, bool)
-                    or not isinstance(value, (int, float))
-                    or not math.isfinite(float(value))
-                    or float(value) <= 0
-                    for value in feature_weights
-                ):
-                    raise ValueError("Structural response weights must be finite and positive.")
-                loss_weights[row_index, :length] = torch.tensor(
-                    feature_weights,
-                    dtype=torch.float32,
-                )
-                response_token_roles[row_index, :length] = torch.tensor(
-                    feature_roles,
-                    dtype=torch.long,
-                )
-        batch = {"input_ids": input_ids, "attention_mask": attention_mask, "labels": labels}
-        if loss_weights is not None:
-            batch["loss_weights"] = loss_weights
-            batch["response_token_roles"] = response_token_roles
-        return batch
+        record_digest.update(b"\n")
+    fingerprint = {
+        "tokenization": tokenization_identity,
+        "split": split,
+        "ordered_records_sha256": record_digest.hexdigest(),
+        "record_count": len(records),
+        "serialization_options": {
+            key: value for key, value in dataset_kwargs.items() if key not in {"tokenizer", "codec"}
+        },
+    }
+    cache_dir = (
+        Path(config.tokenized_cache_dir)
+        if config.tokenized_cache_dir is not None
+        else Path(config.output_dir) / "tokenized_cache"
+    )
+    logger.info("Preparing %s tokenized cache under %s", split, cache_dir)
+    cached = load_or_build_tokenized_cache(
+        _DeferredResponseOnlyDataset(records, dataset_kwargs),
+        cache_dir=cache_dir,
+        fingerprint=fingerprint,
+        lock_timeout_seconds=config.tokenized_cache_lock_timeout_seconds,
+        batched_array_fetch=config.tokenized_cache_batched_fetch,
+    )
+    provenance = cached.cache_manifest()
+    logger.info(
+        "%s tokenized cache %s: %d rows at %s",
+        split,
+        provenance["status"],
+        len(cached),
+        provenance["cache_path"],
+    )
+    return cached
 
 
 class _StructuralResponseLossMixin:
@@ -1241,9 +1385,7 @@ class _StructuralResponseLossMixin:
             )
         denominator = _structural_accumulation_window_denominator(
             batch_samples,
-            path_terminator_class_mass_weight=(
-                self._svg_path_terminator_class_mass_weight
-            ),
+            path_terminator_class_mass_weight=(self._svg_path_terminator_class_mass_weight),
             reduction=self._svg_structural_response_loss_reduction,
         )
         return batch_samples, denominator.to(device)
@@ -1294,9 +1436,7 @@ class _StructuralResponseLossMixin:
             labels,
             loss_weights,
             response_token_roles=response_token_roles,
-            path_terminator_class_mass_weight=(
-                self._svg_path_terminator_class_mass_weight
-            ),
+            path_terminator_class_mass_weight=(self._svg_path_terminator_class_mass_weight),
             reduction=self._svg_structural_response_loss_reduction,
             normalization_denominator=num_items_in_batch,
         )
@@ -1310,7 +1450,7 @@ class _VerifiedLengthSamplerMixin:
         if self.args.train_sampling_strategy != "group_by_length":
             return super()._get_train_sampler(train_dataset)
         dataset = train_dataset if train_dataset is not None else self.train_dataset
-        if not isinstance(dataset, _ResponseOnlyDataset):
+        if not isinstance(dataset, (_ResponseOnlyDataset, TokenizedDatasetCache)):
             raise TypeError(
                 "Verified length grouping requires _ResponseOnlyDataset with "
                 f"{_VERIFIED_LENGTH_SOURCE}."
@@ -1319,9 +1459,7 @@ class _VerifiedLengthSamplerMixin:
 
         grouping_batch_size = getattr(self.args, "length_grouping_batch_size", None)
         if grouping_batch_size is None:
-            grouping_batch_size = (
-                self.args.train_batch_size * self.args.gradient_accumulation_steps
-            )
+            grouping_batch_size = self.args.train_batch_size * self.args.gradient_accumulation_steps
         return LengthGroupedSampler(
             grouping_batch_size,
             lengths=dataset.verified_lengths,
@@ -1409,9 +1547,7 @@ class TextToSVGSFTTrainer:
             )
             if codec_backend_id == OFFICIAL_CACHED_GEMMA_BACKEND_ID:
                 if official_cache_config is None:
-                    raise ValueError(
-                        "Official cached discrete SFT requires official_cache_config."
-                    )
+                    raise ValueError("Official cached discrete SFT requires official_cache_config.")
                 if official_cache_config.allow_live_reencode:
                     raise ValueError(
                         "Official cached discrete SFT requires allow_live_reencode=false."
@@ -1425,19 +1561,14 @@ class TextToSVGSFTTrainer:
                     configured_path = configured_paths[split]
                     expected_path = official_cache_config.prepared_root / f"{split}.jsonl"
                     if configured_path is None or configured_path.resolve() != expected_path:
-                        raise ValueError(
-                            f"Official cached {split} path must be {expected_path}."
-                        )
+                        raise ValueError(f"Official cached {split} path must be {expected_path}.")
             elif official_cache_config is not None:
                 raise ValueError(
                     "official_cache_config is only valid for the official cached backend."
                 )
         if model_config.auto_model_class not in _AUTO_MODEL_CLASSES:
             raise ValueError(f"Unsupported auto_model_class: {model_config.auto_model_class}")
-        if (
-            sft_config.init_adapter_from is not None
-            and target_representation != "omnisvg_discrete"
-        ):
+        if sft_config.init_adapter_from is not None and target_representation != "omnisvg_discrete":
             raise ValueError(
                 "sft.init_adapter_from is restricted to omnisvg_discrete training; "
                 "cross-representation adapter transfer requires an explicit mapping policy."
@@ -1593,15 +1724,13 @@ class TextToSVGSFTTrainer:
             base_tying = None
         if model_config.load_in_4bit:
             model = prepare_model_for_kbit_training(
-                model, use_gradient_checkpointing=self._sft_config.gradient_checkpointing
+                model,
+                use_gradient_checkpointing=self._sft_config.gradient_checkpointing,
+                gradient_checkpointing_kwargs={"use_reentrant": False},
             )
         lora_config = self._lora_config
-        language_targets = _resolve_language_model_lora_targets(
-            model, lora_config.target_modules
-        )
-        lora_config = LoRAConfig(
-            **{**asdict(lora_config), "target_modules": language_targets}
-        )
+        language_targets = _resolve_language_model_lora_targets(model, lora_config.target_modules)
+        lora_config = LoRAConfig(**{**asdict(lora_config), "target_modules": language_targets})
         if codec is not None:
             if codec_registration is None:
                 raise RuntimeError("Discrete codec registration is unavailable.")
@@ -1661,9 +1790,7 @@ class TextToSVGSFTTrainer:
                     "per_sample_training_objectives"
                 ],
                 "reduction": self._sft_config.structural_response_loss_reduction,
-                "evaluation_reduction": _STRUCTURAL_RESPONSE_LOSS_CONTRACT[
-                    "evaluation_reduction"
-                ],
+                "evaluation_reduction": _STRUCTURAL_RESPONSE_LOSS_CONTRACT["evaluation_reduction"],
                 "contract_sha256": _STRUCTURAL_RESPONSE_LOSS_CONTRACT_SHA256,
                 "returns_labeled_logits": True,
             }
@@ -1671,6 +1798,10 @@ class TextToSVGSFTTrainer:
             loss_implementation = install_chunked_causal_lm_loss(
                 model,
                 chunk_size=self._sft_config.lm_head_loss_chunk_size,
+                project_only_active_tokens=(
+                    self._sft_config.lm_head_loss_project_only_active_tokens
+                ),
+                loss_backend=self._sft_config.lm_head_loss_backend,
             )
         if self._sft_config.gradient_checkpointing and hasattr(model.config, "use_cache"):
             model.config.use_cache = False
@@ -1683,9 +1814,7 @@ class TextToSVGSFTTrainer:
                 else []
             )
             test_records = (
-                _load_records(self._test_data_path)
-                if "test" in self._required_data_splits
-                else []
+                _load_records(self._test_data_path) if "test" in self._required_data_splits else []
             )
         else:
             train_records = cached_records_by_split["train"]
@@ -1695,60 +1824,43 @@ class TextToSVGSFTTrainer:
                 else []
             )
             test_records = (
-                cached_records_by_split["test"]
-                if "test" in self._required_data_splits
-                else []
+                cached_records_by_split["test"] if "test" in self._required_data_splits else []
             )
-        train_dataset = _ResponseOnlyDataset(
-            train_records,
-            tokenizer=tokenizer,
-            instruction_mode=self._instruction_mode,
-            target_representation=self._target_representation,
-            max_seq_length=self._sft_config.max_seq_length,
-            seed=self._sft_config.seed,
-            codec=codec,
-            response_eos_loss_weight=self._sft_config.response_eos_loss_weight,
-            response_path_terminator_class_mass_weight=(
+        dataset_kwargs = {
+            "tokenizer": tokenizer,
+            "instruction_mode": self._instruction_mode,
+            "target_representation": self._target_representation,
+            "max_seq_length": self._sft_config.max_seq_length,
+            "seed": self._sft_config.seed,
+            "codec": codec,
+            "response_eos_loss_weight": self._sft_config.response_eos_loss_weight,
+            "response_path_terminator_class_mass_weight": (
                 self._sft_config.response_path_terminator_class_mass_weight
             ),
-            detail_text_normalization=self._sft_config.detail_text_normalization,
+            "detail_text_normalization": self._sft_config.detail_text_normalization,
+        }
+        tokenization_identity = (
+            _tokenization_identity(tokenizer, codec) if self._sft_config.tokenized_cache else None
         )
-        eval_dataset = (
-            _ResponseOnlyDataset(
-                eval_records,
-                tokenizer=tokenizer,
-                instruction_mode=self._instruction_mode,
-                target_representation=self._target_representation,
-                max_seq_length=self._sft_config.max_seq_length,
-                seed=self._sft_config.seed,
-                codec=codec,
-                response_eos_loss_weight=self._sft_config.response_eos_loss_weight,
-                response_path_terminator_class_mass_weight=(
-                    self._sft_config.response_path_terminator_class_mass_weight
-                ),
-                detail_text_normalization=self._sft_config.detail_text_normalization,
+        datasets = {
+            split: _prepare_sft_dataset(
+                records,
+                split=split,
+                config=self._sft_config,
+                dataset_kwargs=dataset_kwargs,
+                tokenization_identity=tokenization_identity,
             )
-            if eval_records
+            if records
             else None
-        )
-        test_dataset = (
-            _ResponseOnlyDataset(
-                test_records,
-                tokenizer=tokenizer,
-                instruction_mode=self._instruction_mode,
-                target_representation=self._target_representation,
-                max_seq_length=self._sft_config.max_seq_length,
-                seed=self._sft_config.seed,
-                codec=codec,
-                response_eos_loss_weight=self._sft_config.response_eos_loss_weight,
-                response_path_terminator_class_mass_weight=(
-                    self._sft_config.response_path_terminator_class_mass_weight
-                ),
-                detail_text_normalization=self._sft_config.detail_text_normalization,
+            for split, records in (
+                ("train", train_records),
+                ("validation", eval_records),
+                ("test", test_records),
             )
-            if test_records
-            else None
-        )
+        }
+        train_dataset = datasets["train"]
+        eval_dataset = datasets["validation"]
+        test_dataset = datasets["test"]
         output_dir = Path(self._sft_config.output_dir)
         output_dir.mkdir(parents=True, exist_ok=True)
         args = TrainingArguments(
@@ -1766,6 +1878,7 @@ class TextToSVGSFTTrainer:
             warmup_steps=self._sft_config.warmup_ratio,
             lr_scheduler_type=self._sft_config.lr_scheduler_type,
             logging_steps=self._sft_config.logging_steps,
+            logging_nan_inf_filter=self._sft_config.logging_nan_inf_filter,
             save_strategy=self._sft_config.save_strategy,
             save_steps=self._sft_config.save_steps,
             save_total_limit=self._sft_config.save_total_limit,
@@ -1779,6 +1892,10 @@ class TextToSVGSFTTrainer:
             seed=self._sft_config.seed,
             data_seed=self._sft_config.seed,
             dataloader_num_workers=self._sft_config.dataloader_num_workers,
+            dataloader_pin_memory=self._sft_config.dataloader_pin_memory,
+            dataloader_persistent_workers=self._sft_config.dataloader_persistent_workers,
+            dataloader_prefetch_factor=self._sft_config.dataloader_prefetch_factor,
+            accelerator_config={"non_blocking": self._sft_config.dataloader_non_blocking},
             torch_empty_cache_steps=self._sft_config.torch_empty_cache_steps,
             train_sampling_strategy=self._sft_config.train_sampling_strategy,
             remove_unused_columns=False,
@@ -1811,6 +1928,7 @@ class TextToSVGSFTTrainer:
                     early_stopping_threshold=self._sft_config.early_stopping_threshold,
                 )
             )
+
         class VerifiedLengthTrainer(
             PagedOptimizerResumeMixin,
             _RowDeltaAdapterSaveMixin,
@@ -1825,7 +1943,10 @@ class TextToSVGSFTTrainer:
             args=args,
             train_dataset=train_dataset,
             eval_dataset=eval_dataset,
-            data_collator=_ResponseOnlyCollator(tokenizer),
+            data_collator=_ResponseOnlyCollator(
+                tokenizer,
+                array_fast_path=self._sft_config.collator_array_fast_path,
+            ),
             callbacks=callbacks,
         )
         trainer._save_row_deltas_only = codec is not None
@@ -1996,9 +2117,7 @@ class TextToSVGSFTTrainer:
                 else None
             ),
             "test_data_sha256": (
-                _file_sha256(self._test_data_path)
-                if "test" in self._required_data_splits
-                else None
+                _file_sha256(self._test_data_path) if "test" in self._required_data_splits else None
             ),
             "sampling": {
                 "strategy": self._sft_config.train_sampling_strategy,
@@ -2047,6 +2166,13 @@ class TextToSVGSFTTrainer:
                 name: _package_version(name)
                 for name in ("torch", "transformers", "peft", "bitsandbytes", "accelerate")
             },
+            "tokenized_cache": {
+                split: dataset.cache_manifest()
+                if isinstance(dataset, TokenizedDatasetCache)
+                else {"enabled": False}
+                for split, dataset in datasets.items()
+                if dataset is not None
+            },
             "train_metrics": dict(train_result.metrics),
             "test_metrics": dict(test_metrics) if test_metrics is not None else None,
             "training_control": {
@@ -2091,9 +2217,7 @@ def _select_instruction(
     return _select_instruction_with_provenance(
         row,
         mode,
-        detail_text_normalization=_validated_detail_text_normalization(
-            detail_text_normalization
-        ),
+        detail_text_normalization=_validated_detail_text_normalization(detail_text_normalization),
     ).text
 
 
@@ -2158,13 +2282,10 @@ def _normalize_selected_detail(
             f"SFT record {record_id!r} has a malformed MMSVG detail list representation."
         ) from exc
     if not isinstance(parsed, list) or not parsed:
-        raise ValueError(
-            f"SFT record {record_id!r} MMSVG detail list must be a non-empty list."
-        )
+        raise ValueError(f"SFT record {record_id!r} MMSVG detail list must be a non-empty list.")
     if any(not isinstance(item, str) or not item.strip() for item in parsed):
         raise ValueError(
-            f"SFT record {record_id!r} MMSVG detail list must contain only "
-            "non-empty strings."
+            f"SFT record {record_id!r} MMSVG detail list must contain only non-empty strings."
         )
     normalized = " ".join(item.strip() for item in parsed)
     return _InstructionSelection(
@@ -2190,8 +2311,7 @@ def _verified_full_chat_token_length(row: dict[str, Any], *, index: int) -> int:
     value = metadata.get("full_chat_token_length") if isinstance(metadata, Mapping) else None
     if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
         raise ValueError(
-            f"SFT record {record_id!r} requires {_VERIFIED_LENGTH_SOURCE} "
-            "to be a positive integer."
+            f"SFT record {record_id!r} requires {_VERIFIED_LENGTH_SOURCE} to be a positive integer."
         )
     return value
 
@@ -2269,8 +2389,7 @@ def _normalize_official_train_sample_ids(
         raise TypeError("official_train_sample_ids must be a sequence of strings or null.")
     normalized = tuple(value)
     if not normalized or any(
-        not isinstance(sample_id, str) or not sample_id.strip()
-        for sample_id in normalized
+        not isinstance(sample_id, str) or not sample_id.strip() for sample_id in normalized
     ):
         raise ValueError("official_train_sample_ids must contain non-empty strings.")
     normalized = tuple(sample_id.strip() for sample_id in normalized)
@@ -2307,9 +2426,7 @@ def _filter_official_train_records(
     for record in records:
         record_id = _prepared_record_id(record)
         if record_id in indexed:
-            raise ValueError(
-                f"Pinned official train records contain duplicate ID {record_id!r}."
-            )
+            raise ValueError(f"Pinned official train records contain duplicate ID {record_id!r}.")
         indexed[record_id] = record
     missing = [sample_id for sample_id in requested if sample_id not in indexed]
     if missing:
@@ -2336,9 +2453,7 @@ def _official_train_selection_manifest(
             else "all_pinned_train_records"
         ),
         "selected_count": len(selected_ids),
-        "ordered_selected_sample_ids_sha256": hashlib.sha256(
-            compact.encode("utf-8")
-        ).hexdigest(),
+        "ordered_selected_sample_ids_sha256": hashlib.sha256(compact.encode("utf-8")).hexdigest(),
         "requested_sample_ids": (
             list(requested_sample_ids) if requested_sample_ids is not None else None
         ),
@@ -2380,9 +2495,7 @@ def _configure_discrete_lora(
     if lora_config.trainable_token_indices not in (None, token_ids):
         raise ValueError("Discrete trainable_token_indices are derived and cannot be overridden.")
     modules_to_save = [
-        name
-        for name in lora_config.modules_to_save
-        if name not in {"embed_tokens", "lm_head"}
+        name for name in lora_config.modules_to_save if name not in {"embed_tokens", "lm_head"}
     ]
     return LoRAConfig(
         **{
@@ -2438,9 +2551,7 @@ def _discrete_trainability_manifest(
     base_tying: Mapping[str, Any] | None,
 ) -> dict[str, Any]:
     trainable = [
-        (name, parameter)
-        for name, parameter in model.named_parameters()
-        if parameter.requires_grad
+        (name, parameter) for name, parameter in model.named_parameters() if parameter.requires_grad
     ]
     unexpected = [
         name
@@ -2464,17 +2575,16 @@ def _discrete_trainability_manifest(
 
     input_wrapper = model.get_input_embeddings()
     output_wrapper = model.get_output_embeddings()
-    if type(input_wrapper).__name__ != "TrainableTokensWrapper" or type(
-        output_wrapper
-    ).__name__ != "TrainableTokensWrapper":
+    if (
+        type(input_wrapper).__name__ != "TrainableTokensWrapper"
+        or type(output_wrapper).__name__ != "TrainableTokensWrapper"
+    ):
         raise RuntimeError("PEFT did not wrap both tied input embeddings and LM head.")
     input_adapter = getattr(input_wrapper, "token_adapter", None)
     output_adapter = getattr(output_wrapper, "token_adapter", None)
     if input_adapter is None or output_adapter is None:
         raise RuntimeError("PEFT trainable-token wrappers do not expose token adapters.")
-    input_delta_ids = {
-        id(parameter) for parameter in input_adapter.trainable_tokens_delta.values()
-    }
+    input_delta_ids = {id(parameter) for parameter in input_adapter.trainable_tokens_delta.values()}
     output_delta_ids = {
         id(parameter) for parameter in output_adapter.trainable_tokens_delta.values()
     }
@@ -2566,9 +2676,7 @@ def _load_adapter_weight_only(
     if not config_path.is_file() or config_path.stat().st_size <= 0:
         raise ValueError("Adapter initialization requires a non-empty adapter_config.json.")
     if not weights_path.is_file() or weights_path.stat().st_size <= 0:
-        raise ValueError(
-            "Adapter initialization requires a non-empty adapter_model.safetensors."
-        )
+        raise ValueError("Adapter initialization requires a non-empty adapter_model.safetensors.")
     if unsafe_weights_path.exists():
         raise ValueError(
             "Adapter initialization refuses ambiguous/unsafe adapter_model.bin artifacts."
@@ -2760,9 +2868,7 @@ def _require_matching_adapter_target_modules(
     return {
         "canonical_suffixes": canonical_suffixes,
         "resolved_module_count": len(resolved_modules),
-        "resolved_modules_sha256": hashlib.sha256(
-            compact_modules.encode("utf-8")
-        ).hexdigest(),
+        "resolved_modules_sha256": hashlib.sha256(compact_modules.encode("utf-8")).hexdigest(),
     }
 
 
@@ -2799,9 +2905,7 @@ def _adapter_serialization_manifest(training_args: Any) -> dict[str, Any]:
         source = "peft.save_pretrained_default"
     else:
         if not isinstance(configured, bool):
-            raise RuntimeError(
-                "TrainingArguments.save_safetensors must be a bool when provided."
-            )
+            raise RuntimeError("TrainingArguments.save_safetensors must be a bool when provided.")
         safe_serialization = configured
         source = "training_arguments.save_safetensors"
 

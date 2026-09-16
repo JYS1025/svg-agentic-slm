@@ -49,18 +49,29 @@ def _tiny_peft_gemma() -> object:
     )
 
 
-def test_chunked_loss_matches_gemma_loss_and_trainable_gradients() -> None:
+@pytest.mark.parametrize("project_only_active_tokens", [False, True])
+def test_chunked_loss_matches_gemma_loss_and_trainable_gradients(
+    project_only_active_tokens: bool,
+) -> None:
     torch.manual_seed(7)
     reference = _tiny_peft_gemma()
     chunked = copy.deepcopy(reference)
-    install_chunked_causal_lm_loss(chunked, chunk_size=3)
+    provenance = install_chunked_causal_lm_loss(
+        chunked, chunk_size=3, project_only_active_tokens=project_only_active_tokens
+    )
+    assert provenance["projection"] == (
+        "active_shifted_labels_only" if project_only_active_tokens else "all_shifted_positions"
+    )
     reference.train()
     chunked.train()
 
     input_ids = torch.randint(3, 67, (2, 13))
     attention_mask = torch.ones_like(input_ids)
     labels = input_ids.clone()
-    labels[:, :5] = -100
+    labels[0, :5] = -100
+    labels[1, :3] = -100
+    labels[1, 10:] = -100
+    attention_mask[1, 10:] = 0
 
     reference_loss = reference(
         input_ids=input_ids,
@@ -72,6 +83,7 @@ def test_chunked_loss_matches_gemma_loss_and_trainable_gradients() -> None:
         attention_mask=attention_mask,
         labels=labels,
     ).loss
+    assert provenance["last_backend"] == "checkpoint"
     torch.testing.assert_close(chunked_loss, reference_loss, rtol=1e-5, atol=1e-6)
 
     reference_loss.backward()
@@ -88,12 +100,10 @@ def test_chunked_loss_matches_gemma_loss_and_trainable_gradients() -> None:
     }
     assert reference_gradients.keys() == chunked_gradients.keys()
     assert any(
-        "lora_" in name and gradient is not None
-        for name, gradient in chunked_gradients.items()
+        "lora_" in name and gradient is not None for name, gradient in chunked_gradients.items()
     )
     assert any(
-        "lm_head" in name and gradient is not None
-        for name, gradient in chunked_gradients.items()
+        "lm_head" in name and gradient is not None for name, gradient in chunked_gradients.items()
     )
     for name, reference_gradient in reference_gradients.items():
         chunked_gradient = chunked_gradients[name]
@@ -102,12 +112,74 @@ def test_chunked_loss_matches_gemma_loss_and_trainable_gradients() -> None:
         torch.testing.assert_close(chunked_gradient, reference_gradient, rtol=2e-5, atol=2e-6)
 
 
+def test_auto_streamed_loss_matches_frozen_head_peft_backbone_gradients() -> None:
+    torch.manual_seed(17)
+    config = Gemma4TextConfig(
+        vocab_size=67,
+        hidden_size=32,
+        intermediate_size=64,
+        num_hidden_layers=2,
+        num_attention_heads=4,
+        num_key_value_heads=2,
+        head_dim=8,
+        max_position_embeddings=128,
+        sliding_window=32,
+        layer_types=["full_attention", "sliding_attention"],
+        final_logit_softcapping=12.0,
+        hidden_size_per_layer_input=0,
+        vocab_size_per_layer_input=67,
+        tie_word_embeddings=False,
+    )
+    reference = get_peft_model(
+        Gemma4ForCausalLM(config),
+        LoraConfig(
+            r=4,
+            lora_alpha=8,
+            lora_dropout=0.0,
+            target_modules=["q_proj", "v_proj"],
+            task_type="CAUSAL_LM",
+        ),
+    )
+    streamed = copy.deepcopy(reference)
+    provenance = install_chunked_causal_lm_loss(streamed, chunk_size=3, loss_backend="auto")
+    input_ids = torch.randint(3, 67, (2, 13))
+    labels = input_ids.clone()
+    labels[0, :5] = -100
+    labels[1, :3] = -100
+    expected_loss = reference(input_ids=input_ids, labels=labels).loss
+    actual_loss = streamed(input_ids=input_ids, labels=labels).loss
+    torch.testing.assert_close(actual_loss, expected_loss, rtol=1e-5, atol=1e-6)
+    expected_loss.backward()
+    actual_loss.backward()
+    assert provenance["last_backend"] == "streamed"
+    for (expected_name, expected), (actual_name, actual) in zip(
+        reference.named_parameters(), streamed.named_parameters()
+    ):
+        assert actual_name == expected_name
+        if expected.requires_grad:
+            assert expected.grad is not None, expected_name
+            assert actual.grad is not None, actual_name
+            torch.testing.assert_close(actual.grad, expected.grad, rtol=2e-5, atol=2e-6)
+
+
 def test_unlabeled_forward_preserves_standard_logits() -> None:
     model = _tiny_peft_gemma()
     expected = model(input_ids=torch.tensor([[2, 3, 4]])).logits
     install_chunked_causal_lm_loss(model, chunk_size=2)
     actual = model(input_ids=torch.tensor([[2, 3, 4]])).logits
     torch.testing.assert_close(actual, expected)
+
+
+def test_chunked_loss_rejects_multimodal_training_inputs() -> None:
+    model = _tiny_peft_gemma()
+    install_chunked_causal_lm_loss(model, chunk_size=2)
+    input_ids = torch.tensor([[2, 3, 4]])
+    with pytest.raises(ValueError, match="text-only"):
+        model(
+            input_ids=input_ids,
+            labels=input_ids,
+            pixel_values=torch.zeros(1, 3, 8, 8),
+        )
 
 
 def _one_chunked_trainer_update(

@@ -928,6 +928,19 @@ def _sha256_file(path: Path) -> str:
     return digest.hexdigest()
 
 
+def _fsync_directory(path: Path) -> None:
+    """Persist a directory entry where the operating system exposes that primitive."""
+
+    if os.name == "nt":
+        return
+    flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0)
+    descriptor = os.open(path, flags)
+    try:
+        os.fsync(descriptor)
+    finally:
+        os.close(descriptor)
+
+
 def write_json_atomic(path: Path, payload: Mapping[str, Any]) -> None:
     """Durably replace ``path`` with one complete, deterministic JSON document."""
 
@@ -944,11 +957,7 @@ def write_json_atomic(path: Path, payload: Mapping[str, Any]) -> None:
             handle.flush()
             os.fsync(handle.fileno())
         os.replace(temporary, destination)
-        directory_descriptor = os.open(destination.parent, os.O_RDONLY)
-        try:
-            os.fsync(directory_descriptor)
-        finally:
-            os.close(directory_descriptor)
+        _fsync_directory(destination.parent)
     except BaseException:
         temporary.unlink(missing_ok=True)
         raise
