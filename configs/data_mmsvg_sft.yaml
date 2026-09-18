@@ -11,12 +11,6 @@ prepare_mmsvg_sft:
       dataset_id: "OmniSVG/MMSVG-Illustration"
       dataset_revision: "6d81c98ae9bc1f4e1fca80cea496a73cb7f150c1"
 
-  # Immutable seed-42 sample. File order defines each domain's
-  # 9,000/500/500 train/validation/test membership.
-  selected_id_files:
-    icon: "./data/sft_sample_ids/mmsvg_icon_sft_10000_ids.txt"
-    illustration: "./data/sft_sample_ids/mmsvg_illustration_sft_10000_ids.txt"
-
   output_dir: "./data/processed/mmsvg_sft_20k"
   seed: 42
   batch_size: 1024
@@ -35,6 +29,8 @@ prepare_mmsvg_sft:
     min_svg_char_length: 32
     max_svg_char_length: 65536
     max_svg_token_length: 65536
+    # No truncation: exact Gemma chat-template length including the SVG target.
+    max_full_chat_token_length: 65536
     # Fail closed: CairoSVG must successfully render every selected target.
     require_renderable: true
 
@@ -49,6 +45,13 @@ prepare_mmsvg_sft:
     revision: "b6ed86275a6a5735884e208bfed95b445a684ca2"
     local_files_only: true
     trust_remote_code: false
+
+  # Immutable seed-42 selection. The preparation job joins these IDs against
+  # the raw Parquet rows and fails if any ID is missing, duplicated, or filtered.
+  sample_allowlist:
+    manifest_path: "./data/sft_sample_ids/manifest.json"
+    icon_ids_path: "./data/sft_sample_ids/mmsvg_icon_sft_10000_ids.txt"
+    illustration_ids_path: "./data/sft_sample_ids/mmsvg_illustration_sft_10000_ids.txt"
 
   # JSON/JSONL records can contain IDs, canonical SVG hashes, and captions.
   exclusion_manifests:

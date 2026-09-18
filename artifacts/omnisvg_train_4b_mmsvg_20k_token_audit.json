@@ -1,0 +1,190 @@
+{
+  "audit_schema_version": 1,
+  "chat_prefix": {
+    "artifact_sha256": {
+      "chat_template.json": "ad60d90252ed0b0705ba14e2d0ad0fec0beac1ea955642b54059b36052d8bc96",
+      "config.json": "7ed3eed5be6924cc800e8a5e53fc405c1aab1aaf36bad65c33403b36c56827f5",
+      "generation_config.json": "533f191cc257b7de37a4fccd0a7a1706d75e1aa660f93efaa54e5a2a9f9aace9",
+      "model.safetensors.index.json": "c7dd78a4c6bea60b51332f1baf37b8f8124ecab2c35395a29a29825bf2619768",
+      "preprocessor_config.json": "f2058c716eef96ccaed1cc1e2d0c08306b62586d535b28d9d08e691b2fab7ca0",
+      "tokenizer.json": "c0382117ea329cdf097041132f6d735924b697924d6f6fc3945713e96ce87539",
+      "tokenizer_config.json": "4abd3520120e266da84c0864fee064d1fb10806f02225911a47253dd38dc5f56",
+      "vocab.json": "ca10d7e9fb3ed18575dd1e277a2579c16d108e32f27439684afa0e10b1440910"
+    },
+    "definition": "chat assistant prefix + framed SVG IDs",
+    "local_files_only": true,
+    "mode": "local_hf_tokenizer",
+    "multimodal_image_tokens_included": false,
+    "prompt_field": "instruction",
+    "system_field": null,
+    "tokenizer_root": "/home/minjun_dev/.cache/huggingface/hub/models--Qwen--Qwen2.5-VL-3B-Instruct/snapshots/66285546d2b821cf421d4f5eb2576359d3770cd3",
+    "trust_remote_code": false
+  },
+  "codec": {
+    "backend_id": "openvglab-omnisvg-train-4b-812489fd9d191e39fe94bc0c4027e5d0121e0fc6",
+    "codec_name": "OpenVGLab OmniSVG released training encoder",
+    "codec_version": "812489fd9d191e39fe94bc0c4027e5d0121e0fc6",
+    "dialect": "openvglab-training-code-4b",
+    "directions": [
+      "encode"
+    ],
+    "lossy": true,
+    "model_family": "Qwen2.5-VL",
+    "model_size": "4B",
+    "notes": [
+      "Encode-only analysis backend; no round-trip decoder is claimed.",
+      "Released training IDs are offset from the released inference decoder/checkpoint IDs.",
+      "Masking and dataset-side truncation are not invoked."
+    ],
+    "official_checkpoint_compatible": false,
+    "provenance": "official-training-source",
+    "source_revision": "812489fd9d191e39fe94bc0c4027e5d0121e0fc6",
+    "source_url": "https://github.com/OpenVGLab/OmniSVG-train/tree/812489fd9d191e39fe94bc0c4027e5d0121e0fc6",
+    "token_kind": "absolute-integer-id"
+  },
+  "counts": {
+    "by_split": {
+      "test": {
+        "failures": 0,
+        "records": 1000,
+        "successes": 1000
+      },
+      "train": {
+        "failures": 0,
+        "records": 18000,
+        "successes": 18000
+      },
+      "validation": {
+        "failures": 0,
+        "records": 1000,
+        "successes": 1000
+      }
+    },
+    "failures": 0,
+    "records": 20000,
+    "successes": 20000
+  },
+  "determinism": {
+    "dataset_shuffling": false,
+    "masking_enabled": false,
+    "split_order": [
+      "train",
+      "validation",
+      "test"
+    ]
+  },
+  "failures": [],
+  "inputs": {
+    "test": {
+      "bytes": 11067398,
+      "path": "/data/minjun_dev/mmsvg_sft_prepared_seed42_20k/mmsvg_sft_20k/test.jsonl",
+      "records": 1000,
+      "sha256": "381d28d516273698a1c4e0b793376fe90aa7135ad89b69a04ec6cbda57ab9d3b"
+    },
+    "train": {
+      "bytes": 203549323,
+      "path": "/data/minjun_dev/mmsvg_sft_prepared_seed42_20k/mmsvg_sft_20k/train.jsonl",
+      "records": 18000,
+      "sha256": "7920c33235ede566657003ac63166b01b3e594b6ccc521d34d9fbe937e5642bd"
+    },
+    "validation": {
+      "bytes": 11359520,
+      "path": "/data/minjun_dev/mmsvg_sft_prepared_seed42_20k/mmsvg_sft_20k/validation.jsonl",
+      "records": 1000,
+      "sha256": "ab4a24667b19160a3c3337ad9b25a8e1c4c4ba58116ec690c3829d25b621ef2a"
+    }
+  },
+  "length_definitions": {
+    "body": "OpenVGLab SVG IDs before BOS/EOS",
+    "bos_eos": "BOS + OpenVGLab SVG body + EOS",
+    "full_chat": "configured chat assistant prefix + BOS/EOS-framed SVG IDs"
+  },
+  "metrics": {
+    "body": {
+      "count": 20000,
+      "greater_than_threshold": {
+        "2048": 0,
+        "32768": 0,
+        "8192": 0
+      },
+      "max": 2046,
+      "max_sample": {
+        "domain": null,
+        "id": "4c27896301fb2a94fef629823d4ffffd",
+        "sample_index": 7205,
+        "source": null,
+        "source_line": 7206,
+        "split": "train"
+      },
+      "min": 11,
+      "p50": 436,
+      "p95": 1580,
+      "p99": 1932,
+      "quantile_method": "nearest-rank"
+    },
+    "bos_eos": {
+      "count": 20000,
+      "greater_than_threshold": {
+        "2048": 0,
+        "32768": 0,
+        "8192": 0
+      },
+      "max": 2048,
+      "max_sample": {
+        "domain": null,
+        "id": "4c27896301fb2a94fef629823d4ffffd",
+        "sample_index": 7205,
+        "source": null,
+        "source_line": 7206,
+        "split": "train"
+      },
+      "min": 13,
+      "p50": 438,
+      "p95": 1582,
+      "p99": 1934,
+      "quantile_method": "nearest-rank"
+    },
+    "full_chat": {
+      "count": 20000,
+      "greater_than_threshold": {
+        "2048": 98,
+        "32768": 0,
+        "8192": 0
+      },
+      "max": 2179,
+      "max_sample": {
+        "domain": null,
+        "id": "499e99a7acbf6251fa41baf78fd3e09f",
+        "sample_index": 11972,
+        "source": null,
+        "source_line": 11973,
+        "split": "train"
+      },
+      "min": 47,
+      "p50": 481,
+      "p95": 1633,
+      "p99": 1985,
+      "quantile_method": "nearest-rank"
+    }
+  },
+  "row_fields": {
+    "domain": "domain",
+    "id": "id",
+    "source": "source",
+    "svg": "output_svg"
+  },
+  "thresholds": [
+    2048,
+    8192,
+    32768
+  ],
+  "token_cache": {
+    "format": "sqlite3/uint32-little-endian-zlib",
+    "indexed_by": [
+      "sample_index",
+      "split+sample_id"
+    ],
+    "path": "/home/minjun_dev/svg-agentic-slm/artifacts/omnisvg_train_4b_mmsvg_20k_tokens.sqlite3",
+    "successful_records_only": true
+  }
+}

@@ -209,11 +209,14 @@ class PrecomputedRAGContextStore:
         self,
         train_path: str | Path,
         validation_path: str | Path | None,
+        test_path: str | Path | None = None,
     ) -> None:
         """Prove retrieval queries came from the same prepared JSONL files."""
         paths = {"train": Path(train_path)}
         if validation_path is not None:
             paths["validation"] = Path(validation_path)
+        if test_path is not None:
+            paths["test"] = Path(test_path)
         for split, path in paths.items():
             expected = self._input_file_sha256s[split]
             if not path.is_file():
@@ -488,6 +491,14 @@ def _load_and_validate_manifest(
         input_file_sha256s[split] = _sha256(
             entry.get("sha256"),
             f"run_contract.input.files.{split}.sha256",
+        )
+    test_entry = input_files.get("test")
+    if test_entry is not None:
+        if not isinstance(test_entry, dict):
+            raise ValueError("RAG run_contract input.files.test must be a mapping.")
+        input_file_sha256s["test"] = _sha256(
+            test_entry.get("sha256"),
+            "run_contract.input.files.test.sha256",
         )
 
     artifacts = payload.get("artifacts")

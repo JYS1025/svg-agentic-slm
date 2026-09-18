@@ -21,6 +21,7 @@ from svg_agentic_slm.svg.validator import SVGValidator
 _PATH_COMMAND_RE = re.compile(r"(?<![A-Za-z])[MmLlHhVvCcSsQqTtAaZz](?![A-Za-z])")
 _WORD_RE = re.compile(r"\b\w+(?:[-']\w+)*\b", re.UNICODE)
 _REJECTION_REASONS = (
+    "not_in_sample_allowlist",
     "missing_required_field",
     "missing_detail",
     "description_length",
@@ -32,6 +33,7 @@ _REJECTION_REASONS = (
     "render",
     "svg_tokenization",
     "svg_token_length",
+    "full_chat_token_length",
 )
 
 
@@ -61,6 +63,7 @@ class FilterConfig:
     min_svg_char_length: int = 32
     max_svg_char_length: int = 8192
     max_svg_token_length: int | None = 8192
+    max_full_chat_token_length: int | None = None
     require_renderable: bool = False
 
 
@@ -81,7 +84,16 @@ class TokenizerConfig:
 
 
 @dataclass(frozen=True)
+class SampleAllowlistConfig:
+    manifest_path: Path
+    icon_ids_path: Path
+    illustration_ids_path: Path
+
+
+@dataclass(frozen=True)
 class SelectedIdConfig:
+    """Legacy fixed-ID paths retained for reproducible local 20K artifacts."""
+
     icon: Path
     illustration: Path
 
@@ -91,13 +103,15 @@ class MMSVGPreparationConfig:
     icon: SourceConfig
     illustration: SourceConfig
     output_dir: Path
-    selected_ids: SelectedIdConfig
     seed: int = 42
     batch_size: int = 1024
+    allow_nonstandard_split: bool = False
     split: SplitConfig = field(default_factory=SplitConfig)
     filters: FilterConfig = field(default_factory=FilterConfig)
     fields: FieldConfig = field(default_factory=FieldConfig)
     tokenizer: TokenizerConfig = field(default_factory=TokenizerConfig)
+    sample_allowlist: SampleAllowlistConfig | None = None
+    selected_ids: SelectedIdConfig | None = None
     exclusion_manifests: tuple[Path, ...] = ()
     rag_results_path: Path | None = None
 
@@ -121,22 +135,15 @@ def load_preparation_config(path: str | Path) -> MMSVGPreparationConfig:
     filters = _mapping(root.get("filters", {}), "filters")
     fields = _mapping(root.get("fields", {}), "fields")
     tokenizer = _mapping(root.get("tokenizer", {}), "tokenizer")
-    selected_id_files = _mapping(root.get("selected_id_files"), "selected_id_files")
+    sample_allowlist = root.get("sample_allowlist")
+    selected_id_files = root.get("selected_id_files")
     return MMSVGPreparationConfig(
         icon=_source_config(sources.get("icon"), "icon"),
         illustration=_source_config(sources.get("illustration"), "illustration"),
-        output_dir=Path(_nonempty(root.get("output_dir"), "output_dir")),
-        selected_ids=SelectedIdConfig(
-            icon=Path(_nonempty(selected_id_files.get("icon"), "selected_id_files.icon")),
-            illustration=Path(
-                _nonempty(
-                    selected_id_files.get("illustration"),
-                    "selected_id_files.illustration",
-                )
-            ),
-        ),
+        output_dir=_configured_path(root.get("output_dir"), "output_dir"),
         seed=int(root.get("seed", 42)),
         batch_size=_positive_int(root.get("batch_size", 1024), "batch_size"),
+        allow_nonstandard_split=bool(root.get("allow_nonstandard_split", False)),
         split=SplitConfig(
             train_per_domain=_positive_int(split.get("train_per_domain", 9000), "train_per_domain"),
             validation_per_domain=_positive_int(
@@ -155,6 +162,11 @@ def load_preparation_config(path: str | Path) -> MMSVGPreparationConfig:
                 if filters.get("max_svg_token_length") is not None
                 else None
             ),
+            max_full_chat_token_length=(
+                int(filters["max_full_chat_token_length"])
+                if filters.get("max_full_chat_token_length") is not None
+                else None
+            ),
             require_renderable=bool(filters.get("require_renderable", False)),
         ),
         fields=FieldConfig(
@@ -171,70 +183,99 @@ def load_preparation_config(path: str | Path) -> MMSVGPreparationConfig:
             local_files_only=bool(tokenizer.get("local_files_only", True)),
             trust_remote_code=bool(tokenizer.get("trust_remote_code", False)),
         ),
-        exclusion_manifests=tuple(Path(item) for item in root.get("exclusion_manifests", [])),
-        rag_results_path=(Path(root["rag_results_path"]) if root.get("rag_results_path") else None),
+        sample_allowlist=(
+            SampleAllowlistConfig(
+                manifest_path=_configured_path(
+                    _mapping(sample_allowlist, "sample_allowlist").get("manifest_path"),
+                    "sample_allowlist.manifest_path",
+                ),
+                icon_ids_path=_configured_path(
+                    _mapping(sample_allowlist, "sample_allowlist").get("icon_ids_path"),
+                    "sample_allowlist.icon_ids_path",
+                ),
+                illustration_ids_path=_configured_path(
+                    _mapping(sample_allowlist, "sample_allowlist").get(
+                        "illustration_ids_path"
+                    ),
+                    "sample_allowlist.illustration_ids_path",
+                ),
+            )
+            if sample_allowlist is not None
+            else None
+        ),
+        selected_ids=(
+            SelectedIdConfig(
+                icon=_configured_path(
+                    _mapping(selected_id_files, "selected_id_files").get("icon"),
+                    "selected_id_files.icon",
+                ),
+                illustration=_configured_path(
+                    _mapping(selected_id_files, "selected_id_files").get("illustration"),
+                    "selected_id_files.illustration",
+                ),
+            )
+            if selected_id_files is not None
+            else None
+        ),
+        exclusion_manifests=tuple(
+            _configured_path(item, "exclusion_manifests")
+            for item in root.get("exclusion_manifests", [])
+        ),
+        rag_results_path=(
+            _configured_path(root["rag_results_path"], "rag_results_path")
+            if root.get("rag_results_path")
+            else None
+        ),
     )
 
 
 def prepare_mmsvg_sft_dataset(config: MMSVGPreparationConfig) -> dict[str, Any]:
-    """Prepare exactly the immutable MMSVG IDs declared by the configuration."""
+    """Stream, clean, deduplicate, balance, split, and publish MMSVG records."""
     _validate_config(config)
-    selected_ids = {
-        "icon": _load_selected_ids(config.selected_ids.icon, config.split.per_domain, "icon"),
-        "illustration": _load_selected_ids(
-            config.selected_ids.illustration,
-            config.split.per_domain,
-            "illustration",
-        ),
-    }
-    cross_domain_ids = set(selected_ids["icon"]) & set(selected_ids["illustration"])
+    validator = SVGValidator()
+    token_counter, full_chat_token_counter = _build_token_counters(config.tokenizer)
+    exclusions = _load_exclusions(config.exclusion_manifests)
+    rag_results = _load_rag_results(config.rag_results_path)
+    allowlists, allowlist_provenance = _load_sample_allowlists(config)
+    cross_domain_ids = set(allowlists["icon"]) & set(allowlists["illustration"])
     if cross_domain_ids:
         examples = ", ".join(sorted(cross_domain_ids)[:5])
         raise ValueError(
             "Fixed MMSVG ID files must be disjoint across domains; "
             f"found {len(cross_domain_ids)} overlaps (examples: {examples})."
         )
-
-    validator = SVGValidator()
-    token_counter = _build_token_counter(config.tokenizer)
-    exclusions = _load_exclusions(config.exclusion_manifests)
-    rag_results = _load_rag_results(config.rag_results_path)
     seen_svg_hashes = set(exclusions.svg_hashes)
     stats: dict[str, dict[str, int]] = {}
     selected: dict[str, list[dict[str, Any]]] = {}
 
     for domain, source in (("icon", config.icon), ("illustration", config.illustration)):
-        required_ids = selected_ids[domain]
+        rng = random.Random(f"{config.seed}:{domain}")
+        reservoir: list[dict[str, Any]] = []
+        required_ids = allowlists[domain]
         required_id_set = set(required_ids)
-        encountered_ids: set[str] = set()
+        source_ids_seen: set[str] = set()
         prepared_by_id: dict[str, dict[str, Any]] = {}
         rejected_by_id: dict[str, str] = {}
         domain_stats: dict[str, int] = {
-            "source_rows_scanned": _source_row_count(source),
             "rows_seen": 0,
+            "source_rows_scanned": 0,
             "fixed_id_rows_seen": 0,
             "eligible": 0,
             "selected": 0,
             "eligible_not_selected": 0,
             **{f"rejected_{reason}": 0 for reason in _REJECTION_REASONS},
         }
-        for row, pointer in _iter_source_rows(
-            source,
-            config.batch_size,
-            fields=config.fields,
-            selected_ids=required_id_set,
-        ):
+        for row, pointer in _iter_source_rows(source, config.batch_size):
             domain_stats["rows_seen"] += 1
-            record_id = _first_text(row, config.fields.id)
-            if record_id not in required_id_set:
-                continue
-            domain_stats["fixed_id_rows_seen"] += 1
-            if record_id in encountered_ids:
-                raise RuntimeError(
-                    f"Fixed MMSVG {domain} ID {record_id!r} appears more than once "
-                    "in the configured raw source."
-                )
-            encountered_ids.add(record_id)
+            source_record_id = _first_text(row, config.fields.id)
+            if source_record_id and source_record_id in required_id_set:
+                domain_stats["fixed_id_rows_seen"] += 1
+                if source_record_id in source_ids_seen:
+                    raise RuntimeError(
+                        f"Fixed MMSVG {domain} ID {source_record_id!r} appears more than once "
+                        "in the configured raw source."
+                    )
+                source_ids_seen.add(source_record_id)
             prepared, rejection = _prepare_row(
                 row=row,
                 pointer=pointer,
@@ -246,47 +287,65 @@ def prepare_mmsvg_sft_dataset(config: MMSVGPreparationConfig) -> dict[str, Any]:
                 seen_svg_hashes=seen_svg_hashes,
                 validator=validator,
                 token_counter=token_counter,
+                full_chat_token_counter=full_chat_token_counter,
                 rag_results=rag_results,
+                allowed_record_ids=required_id_set,
             )
             if prepared is None:
                 key = f"rejected_{rejection or 'unknown'}"
                 domain_stats[key] = domain_stats.get(key, 0) + 1
-                rejected_by_id[record_id] = rejection or "unknown"
+                if source_record_id in required_id_set:
+                    rejected_by_id[source_record_id] = rejection or "unknown"
                 continue
             seen_svg_hashes.add(prepared["metadata"]["canonical_svg_sha256"])
             domain_stats["eligible"] += 1
-            prepared_by_id[record_id] = prepared
-
-        missing_ids = [record_id for record_id in required_ids if record_id not in encountered_ids]
-        rejected_ids = [record_id for record_id in required_ids if record_id in rejected_by_id]
-        if missing_ids or rejected_ids:
+            eligible_index = domain_stats["eligible"]
+            if required_ids:
+                prepared_by_id[source_record_id] = prepared
+            elif len(reservoir) < config.split.per_domain:
+                reservoir.append(prepared)
+            else:
+                replacement = rng.randrange(eligible_index)
+                if replacement < config.split.per_domain:
+                    reservoir[replacement] = prepared
+        domain_stats["source_rows_scanned"] = domain_stats["rows_seen"]
+        if required_ids:
+            missing = [record_id for record_id in required_ids if record_id not in source_ids_seen]
+            rejected = [record_id for record_id in required_ids if record_id in rejected_by_id]
+        else:
+            missing = []
+            rejected = []
+        if missing or rejected:
             diagnostics: list[str] = []
-            if missing_ids:
-                diagnostics.append(
-                    f"missing={len(missing_ids)} ({', '.join(missing_ids[:5])})"
-                )
-            if rejected_ids:
+            if missing:
+                diagnostics.append(f"missing={len(missing)} ({', '.join(missing[:5])})")
+            if rejected:
                 examples = ", ".join(
-                    f"{record_id}:{rejected_by_id[record_id]}" for record_id in rejected_ids[:5]
+                    f"{record_id}:{rejected_by_id[record_id]}" for record_id in rejected[:5]
                 )
-                diagnostics.append(f"rejected={len(rejected_ids)} ({examples})")
+                diagnostics.append(f"rejected={len(rejected)} ({examples})")
             raise RuntimeError(
                 f"Fixed MMSVG {domain} selection failed closed: {'; '.join(diagnostics)}. "
                 "No replacement IDs were sampled."
             )
-
-        fixed_rows = [prepared_by_id[record_id] for record_id in required_ids]
-        if len(fixed_rows) != config.split.per_domain:
+        if required_ids:
+            reservoir = [prepared_by_id[record_id] for record_id in required_ids]
+        if len(reservoir) != config.split.per_domain:
             raise RuntimeError(
-                f"Fixed MMSVG {domain} produced {len(fixed_rows)} rows; "
+                f"MMSVG {domain} produced {len(reservoir)} eligible selected rows; "
                 f"{config.split.per_domain} are required."
             )
-        domain_stats["selected"] = len(fixed_rows)
+        if not required_ids:
+            rng.shuffle(reservoir)
+        domain_stats["selected"] = len(reservoir)
+        domain_stats["eligible_not_selected"] = domain_stats["eligible"] - len(reservoir)
         stats[domain] = domain_stats
-        selected[domain] = fixed_rows
+        selected[domain] = reservoir
 
     split_records = _assign_splits(selected, config)
-    manifest = _publish_dataset(config, split_records, stats)
+    manifest = _publish_dataset(
+        config, split_records, stats, allowlist_provenance=allowlist_provenance
+    )
     return manifest
 
 
@@ -302,9 +361,13 @@ def _prepare_row(
     seen_svg_hashes: set[str],
     validator: SVGValidator,
     token_counter: Callable[[str], int] | None,
+    full_chat_token_counter: Callable[[str, str], int] | None,
     rag_results: dict[str, list[str]],
+    allowed_record_ids: set[str],
 ) -> tuple[dict[str, Any] | None, str | None]:
     record_id = _first_text(row, fields.id)
+    if allowed_record_ids and record_id not in allowed_record_ids:
+        return None, "not_in_sample_allowlist"
     description = _first_text(row, fields.description)
     detail = _first_text(row, fields.detail)
     svg = _first_text(row, fields.svg)
@@ -348,6 +411,20 @@ def _prepare_row(
         and svg_token_length > filters.max_svg_token_length
     ):
         return None, "svg_token_length"
+    try:
+        full_chat_token_length = (
+            full_chat_token_counter(description, canonical_svg)
+            if full_chat_token_counter is not None
+            else None
+        )
+    except Exception:
+        return None, "svg_tokenization"
+    if (
+        filters.max_full_chat_token_length is not None
+        and full_chat_token_length is not None
+        and full_chat_token_length > filters.max_full_chat_token_length
+    ):
+        return None, "full_chat_token_length"
     stable_record_key = hashlib.sha256(
         "\x1f".join(
             (
@@ -374,6 +451,7 @@ def _prepare_row(
         "detail_words": len(_WORD_RE.findall(detail)) if detail else 0,
         "svg_char_length": len(canonical_svg),
         "svg_token_length": svg_token_length,
+        "full_chat_token_length": full_chat_token_length,
         "svg_element_count": element_count,
         "svg_path_count": canonical_svg.count("<path"),
         "svg_path_command_count": len(_PATH_COMMAND_RE.findall(canonical_svg)),
@@ -439,6 +517,8 @@ def _publish_dataset(
     config: MMSVGPreparationConfig,
     splits: dict[str, list[dict[str, Any]]],
     stats: dict[str, dict[str, int]],
+    *,
+    allowlist_provenance: dict[str, Any] | None,
 ) -> dict[str, Any]:
     output_dir = config.output_dir.resolve()
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -463,7 +543,7 @@ def _publish_dataset(
                 ),
             }
         manifest = {
-            "schema_version": 2,
+            "schema_version": 1,
             "dataset": "mmsvg-generator-sft-balanced-20k",
             "seed": config.seed,
             "config_sha256": hashlib.sha256(
@@ -473,16 +553,18 @@ def _publish_dataset(
                 "icon": _source_provenance(config.icon),
                 "illustration": _source_provenance(config.illustration),
             },
-            "selected_id_files": {
-                "icon": {
-                    **_file_provenance(config.selected_ids.icon),
-                    "rows": config.split.per_domain,
-                },
-                "illustration": {
-                    **_file_provenance(config.selected_ids.illustration),
-                    "rows": config.split.per_domain,
-                },
-            },
+            "sample_allowlist": allowlist_provenance,
+            "selected_id_files": (
+                {
+                    domain: {
+                        **provenance,
+                        "rows": config.split.per_domain,
+                    }
+                    for domain, provenance in allowlist_provenance["id_files"].items()
+                }
+                if allowlist_provenance is not None
+                else None
+            ),
             "benchmark_exclusions": [_file_provenance(path) for path in config.exclusion_manifests],
             "rag_results": (
                 _file_provenance(config.rag_results_path)
@@ -510,7 +592,9 @@ def _publish_dataset(
             "fixed_id_selection": {
                 "policy": "exact IDs in file order; fail on missing, rejected, or duplicate IDs",
                 "replacement_sampling": False,
-            },
+            }
+            if allowlist_provenance is not None
+            else None,
         }
         manifest_path = temp_dir / "manifest.json"
         manifest_path.write_text(
@@ -527,11 +611,7 @@ def _publish_dataset(
 
 
 def _iter_source_rows(
-    source: SourceConfig,
-    batch_size: int,
-    *,
-    fields: FieldConfig | None = None,
-    selected_ids: set[str] | None = None,
+    source: SourceConfig, batch_size: int
 ) -> Iterator[tuple[dict[str, Any], dict[str, Any]]]:
     paths = _expand_paths(source.paths)
     if not paths:
@@ -540,43 +620,16 @@ def _iter_source_rows(
         suffix = path.suffix.lower()
         if suffix == ".parquet":
             try:
-                import pyarrow as pa
                 import pyarrow.parquet as pq
             except ImportError as exc:
                 raise RuntimeError("pyarrow is required to read MMSVG Parquet files.") from exc
             parquet = pq.ParquetFile(path)
-            columns: list[str] | None = None
-            id_column: str | None = None
-            if fields is not None:
-                requested = dict.fromkeys(
-                    (*fields.id, *fields.description, *fields.detail, *fields.svg)
-                )
-                columns = [
-                    name for name in requested if name in parquet.schema_arrow.names
-                ]
-                id_column = next(
-                    (name for name in fields.id if name in parquet.schema_arrow.names),
-                    None,
-                )
-                if selected_ids is not None and id_column is None:
-                    raise ValueError(f"No configured ID field exists in MMSVG source {path}.")
             row_offset = 0
-            for batch in parquet.iter_batches(batch_size=batch_size, columns=columns):
-                indexes = list(range(batch.num_rows))
-                if selected_ids is not None:
-                    assert id_column is not None
-                    column_index = batch.schema.get_field_index(id_column)
-                    id_values = batch.column(column_index).to_pylist()
-                    indexes = [
-                        index
-                        for index, value in enumerate(id_values)
-                        if str(value).strip() in selected_ids
-                    ]
-                if indexes:
-                    rows = batch.take(pa.array(indexes)).to_pylist()
-                    for index, row in zip(indexes, rows, strict=True):
-                        yield dict(row), {"file": str(path), "row": row_offset + index}
-                row_offset += batch.num_rows
+            for batch in parquet.iter_batches(batch_size=batch_size):
+                rows = batch.to_pylist()
+                for index, row in enumerate(rows):
+                    yield dict(row), {"file": str(path), "row": row_offset + index}
+                row_offset += len(rows)
         elif suffix in {".jsonl", ".ndjson"}:
             with path.open("r", encoding="utf-8") as handle:
                 for row_index, line in enumerate(handle):
@@ -584,55 +637,9 @@ def _iter_source_rows(
                         row = json.loads(line)
                         if not isinstance(row, dict):
                             raise ValueError(f"Expected JSON object at {path}:{row_index + 1}.")
-                        if (
-                            selected_ids is not None
-                            and (fields is None or _first_text(row, fields.id) not in selected_ids)
-                        ):
-                            continue
                         yield row, {"file": str(path), "row": row_index}
         else:
             raise ValueError(f"Unsupported MMSVG input format: {path}")
-
-
-def _source_row_count(source: SourceConfig) -> int:
-    total = 0
-    for path in _expand_paths(source.paths):
-        if path.suffix.lower() == ".parquet":
-            try:
-                import pyarrow.parquet as pq
-            except ImportError as exc:
-                raise RuntimeError("pyarrow is required to inspect MMSVG Parquet files.") from exc
-            total += int(pq.read_metadata(path).num_rows)
-        elif path.suffix.lower() in {".jsonl", ".ndjson"}:
-            with path.open("r", encoding="utf-8") as handle:
-                total += sum(1 for line in handle if line.strip())
-    return total
-
-
-def _load_selected_ids(path: Path, expected_count: int, domain: str) -> tuple[str, ...]:
-    if not path.is_file():
-        raise FileNotFoundError(f"Fixed MMSVG {domain} ID file not found: {path}")
-    ids: list[str] = []
-    seen: set[str] = set()
-    for line_number, raw_value in enumerate(
-        path.read_text(encoding="utf-8").splitlines(),
-        1,
-    ):
-        record_id = raw_value.strip()
-        if not record_id:
-            raise ValueError(f"Blank fixed MMSVG {domain} ID at {path}:{line_number}.")
-        if record_id in seen:
-            raise ValueError(
-                f"Duplicate fixed MMSVG {domain} ID {record_id!r} at {path}:{line_number}."
-            )
-        seen.add(record_id)
-        ids.append(record_id)
-    if len(ids) != expected_count:
-        raise ValueError(
-            f"Fixed MMSVG {domain} ID file contains {len(ids)} IDs; "
-            f"exactly {expected_count} are required."
-        )
-    return tuple(ids)
 
 
 def _load_exclusions(paths: tuple[Path, ...]) -> _Exclusions:
@@ -643,7 +650,9 @@ def _load_exclusions(paths: tuple[Path, ...]) -> _Exclusions:
         payloads: Iterable[Any]
         if path.suffix.lower() in {".jsonl", ".ndjson"}:
             payloads = (
-                payload for _line_number, payload in _iter_jsonl_payloads(path)
+                json.loads(line)
+                for line in path.read_text(encoding="utf-8").split("\n")
+                if line
             )
         else:
             raw = json.loads(path.read_text(encoding="utf-8"))
@@ -688,9 +697,11 @@ def _load_rag_results(path: Path | None) -> dict[str, list[str]]:
     if not path.exists():
         raise FileNotFoundError(f"RAG result file not found: {path}")
     output: dict[str, list[str]] = {}
-    for line_index, row in _iter_jsonl_payloads(path):
-        if not isinstance(row, dict):
-            raise ValueError(f"Invalid RAG result at {path}:{line_index}.")
+    lines = path.read_text(encoding="utf-8").splitlines()
+    for line_index, line in enumerate(lines, 1):
+        if not line.strip():
+            continue
+        row = json.loads(line)
         record_id = row.get("record_id", row.get("id"))
         values = row.get("retrieved_item_ids", row.get("top3", row.get("neighbors", [])))
         if record_id is None or not isinstance(values, list):
@@ -708,21 +719,124 @@ def _load_rag_results(path: Path | None) -> dict[str, list[str]]:
     return output
 
 
-def _iter_jsonl_payloads(path: Path) -> Iterator[tuple[int, Any]]:
-    """Read physical LF-delimited rows without splitting Unicode U+2028/U+2029."""
-    with path.open("r", encoding="utf-8") as handle:
-        for line_number, line in enumerate(handle, 1):
-            if not line.strip():
-                continue
-            try:
-                yield line_number, json.loads(line)
-            except json.JSONDecodeError as exc:
-                raise ValueError(f"Invalid JSONL at {path}:{line_number}.") from exc
+def _load_sample_allowlists(
+    config: MMSVGPreparationConfig,
+) -> tuple[dict[str, tuple[str, ...]], dict[str, Any] | None]:
+    empty = {"icon": (), "illustration": ()}
+    contract = config.sample_allowlist
+    legacy = config.selected_ids
+    if contract is not None and legacy is not None:
+        raise ValueError("Configure sample_allowlist or selected_ids, not both.")
+    if legacy is not None:
+        paths = {"icon": legacy.icon, "illustration": legacy.illustration}
+        loaded = {
+            domain: _load_selected_ids(path, config.split.per_domain, domain)
+            for domain, path in paths.items()
+        }
+        return loaded, {
+            "manifest": None,
+            "id_files": {
+                domain: _file_provenance(path) for domain, path in paths.items()
+            },
+            "selection": "exact IDs in file order",
+            "source_pointer": "resolved during source scan and stored per output record",
+            "split_assignment": "file-order 9000/500/500 per domain",
+            "legacy_selected_ids_contract": True,
+        }
+    if contract is None:
+        return empty, None
+    paths = {
+        "icon": contract.icon_ids_path,
+        "illustration": contract.illustration_ids_path,
+    }
+    for path in (contract.manifest_path, *paths.values()):
+        if not path.is_file():
+            raise FileNotFoundError(f"MMSVG sample allowlist file not found: {path}")
+    manifest = json.loads(contract.manifest_path.read_text(encoding="utf-8"))
+    if not isinstance(manifest, dict) or manifest.get("format_version") != 1:
+        raise ValueError("MMSVG sample allowlist requires manifest format_version=1.")
+    if manifest.get("purpose") != "MMSVG SFT sample IDs only":
+        raise ValueError("Unexpected MMSVG sample allowlist purpose.")
+    sampling = _mapping(manifest.get("sampling"), "sample_allowlist.sampling")
+    if int(sampling.get("seed", -1)) != config.seed:
+        raise ValueError("MMSVG sample allowlist seed does not match preparation seed.")
+    if int(sampling.get("sample_size_per_dataset", -1)) != config.split.per_domain:
+        raise ValueError("MMSVG sample allowlist size does not match the configured split.")
+    datasets = _mapping(manifest.get("datasets"), "sample_allowlist.datasets")
+    sources = {"icon": config.icon, "illustration": config.illustration}
+    loaded: dict[str, tuple[str, ...]] = {}
+    file_provenance: dict[str, Any] = {}
+    for domain in ("icon", "illustration"):
+        entry = _mapping(datasets.get(domain), f"sample_allowlist.datasets.{domain}")
+        source = sources[domain]
+        path = paths[domain]
+        if entry.get("repo_id") != source.dataset_id:
+            raise ValueError(f"MMSVG {domain} allowlist dataset ID mismatch.")
+        if source.dataset_revision and entry.get("revision") != source.dataset_revision:
+            raise ValueError(f"MMSVG {domain} allowlist dataset revision mismatch.")
+        if Path(str(entry.get("output_file", ""))).name != path.name:
+            raise ValueError(f"MMSVG {domain} allowlist filename mismatch.")
+        if entry.get("output_sha256") != _file_sha256(path):
+            raise ValueError(f"MMSVG {domain} allowlist SHA-256 mismatch.")
+        raw_lines = path.read_text(encoding="utf-8").splitlines()
+        if any(not line.strip() for line in raw_lines):
+            raise ValueError(f"MMSVG {domain} allowlist contains blank lines.")
+        values = [line.strip() for line in raw_lines]
+        if any(re.fullmatch(r"[0-9a-f]{32}", value) is None for value in values):
+            raise ValueError(f"MMSVG {domain} allowlist IDs must be lowercase 32-hex strings.")
+        unique = set(values)
+        expected = config.split.per_domain
+        if len(values) != expected or len(unique) != expected:
+            raise ValueError(
+                f"MMSVG {domain} allowlist must contain exactly {expected} unique IDs."
+            )
+        if int(entry.get("sample_rows", -1)) != expected or int(
+            entry.get("sample_unique_ids", -1)
+        ) != expected:
+            raise ValueError(f"MMSVG {domain} allowlist manifest count mismatch.")
+        loaded[domain] = tuple(values)
+        file_provenance[domain] = _file_provenance(path)
+    return loaded, {
+        "manifest": _file_provenance(contract.manifest_path),
+        "id_files": file_provenance,
+        "selection": "exact domain-qualified record_id allowlist in file order",
+        "source_pointer": "resolved during Parquet scan and stored per output record",
+        "split_assignment": "file-order 9000/500/500 per domain",
+    }
 
 
-def _build_token_counter(config: TokenizerConfig) -> Callable[[str], int] | None:
+def _load_selected_ids(path: Path, expected_count: int, domain: str) -> tuple[str, ...]:
+    """Load the legacy fixed-ID contract without relaxing validation."""
+    if not path.is_file():
+        raise FileNotFoundError(f"Fixed MMSVG {domain} ID file not found: {path}")
+    ids: list[str] = []
+    seen: set[str] = set()
+    for line_number, raw_value in enumerate(
+        path.read_text(encoding="utf-8").splitlines(),
+        1,
+    ):
+        record_id = raw_value.strip()
+        if not record_id:
+            raise ValueError(f"Blank fixed MMSVG {domain} ID at {path}:{line_number}.")
+        if record_id in seen:
+            raise ValueError(
+                f"Duplicate fixed MMSVG {domain} ID {record_id!r} at {path}:{line_number}."
+            )
+        seen.add(record_id)
+        ids.append(record_id)
+    if len(ids) != expected_count:
+        raise ValueError(
+            f"Fixed MMSVG {domain} ID file contains {len(ids)} IDs; "
+            f"exactly {expected_count} are required."
+        )
+    return tuple(ids)
+
+
+def _build_token_counters(
+    config: TokenizerConfig,
+) -> tuple[Callable[[str], int] | None, Callable[[str, str], int] | None]:
     if config.model_id is None:
-        return None
+        return None, None
     try:
         from transformers import AutoProcessor, AutoTokenizer
     except ImportError as exc:
@@ -738,7 +852,28 @@ def _build_token_counter(config: TokenizerConfig) -> Callable[[str], int] | None
         tokenizer = getattr(processor, "tokenizer", processor)
     except Exception:
         tokenizer = AutoTokenizer.from_pretrained(config.model_id, **kwargs)
-    return lambda text: len(tokenizer.encode(text, add_special_tokens=False))
+    def count_text(text: str) -> int:
+        return len(tokenizer.encode(text, add_special_tokens=False))
+
+    def count_full_chat(instruction: str, svg: str) -> int:
+        from svg_agentic_slm.prompts.system_prompts import get_svg_generator_system_prompt
+        from svg_agentic_slm.prompts.text_to_svg import build_text_to_svg_prompt
+
+        messages = [
+            {"role": "system", "content": get_svg_generator_system_prompt()},
+            {"role": "user", "content": build_text_to_svg_prompt(instruction)},
+            {"role": "assistant", "content": svg},
+        ]
+        rendered = tokenizer.apply_chat_template(
+            messages,
+            tokenize=False,
+            add_generation_prompt=False,
+        )
+        if not isinstance(rendered, str) or not rendered:
+            raise ValueError("Tokenizer returned an invalid rendered chat template.")
+        return len(tokenizer.encode(rendered, add_special_tokens=False))
+
+    return count_text, count_full_chat
 
 
 def _canonicalize_svg(svg: str) -> tuple[str, int]:
@@ -775,9 +910,10 @@ def _source_config(value: Any, name: str) -> SourceConfig:
 def _expand_paths(patterns: tuple[str, ...]) -> list[Path]:
     resolved: set[Path] = set()
     for pattern in patterns:
-        matches = glob.glob(os.path.expanduser(pattern), recursive=True)
-        if not matches and Path(pattern).is_file():
-            matches = [pattern]
+        expanded = os.path.expandvars(os.path.expanduser(pattern))
+        matches = glob.glob(expanded, recursive=True)
+        if not matches and Path(expanded).is_file():
+            matches = [expanded]
         resolved.update(Path(match).resolve() for match in matches if Path(match).is_file())
     return sorted(resolved)
 
@@ -786,7 +922,19 @@ def _first_text(row: dict[str, Any], keys: tuple[str, ...]) -> str:
     for key in keys:
         value = row.get(key)
         if value is not None:
-            text = value.decode("utf-8") if isinstance(value, bytes) else str(value)
+            if isinstance(value, bytes):
+                text = value.decode("utf-8")
+            elif isinstance(value, (list, tuple)):
+                # MMSVG detail fields can be stored as a list of sentences.  A
+                # Python ``str(list)`` leaks brackets, quotes, and commas into
+                # the instruction; preserve the prose while keeping its order.
+                text = " ".join(
+                    item.decode("utf-8") if isinstance(item, bytes) else str(item)
+                    for item in value
+                    if item is not None
+                )
+            else:
+                text = str(value)
             if text.strip():
                 return text.strip()
     return ""
@@ -859,6 +1007,11 @@ def _nonempty(value: Any, name: str) -> str:
     return value.strip()
 
 
+def _configured_path(value: Any, name: str) -> Path:
+    raw = _nonempty(value, name)
+    return Path(os.path.expandvars(os.path.expanduser(raw)))
+
+
 def _optional_string(value: Any, name: str) -> str | None:
     if value is None:
         return None
@@ -873,7 +1026,7 @@ def _positive_int(value: Any, name: str) -> int:
 
 
 def _validate_config(config: MMSVGPreparationConfig) -> None:
-    if (
+    if not config.allow_nonstandard_split and (
         config.split.train_per_domain,
         config.split.validation_per_domain,
         config.split.test_per_domain,
@@ -888,10 +1041,19 @@ def _validate_config(config: MMSVGPreparationConfig) -> None:
         raise ValueError(
             "Renderable SVG filtering must remain enabled for fail-closed preparation."
         )
-    if config.filters.max_svg_token_length is None or config.tokenizer.model_id is None:
-        raise ValueError("Tokenizer-aware SVG length filtering must remain enabled.")
+    if (
+        config.filters.max_full_chat_token_length is None
+        or config.tokenizer.model_id is None
+    ):
+        raise ValueError("Tokenizer-aware full-chat length filtering must remain enabled.")
     if not config.exclusion_manifests:
         raise ValueError("At least one benchmark exclusion manifest is required.")
+    if config.sample_allowlist is not None and config.selected_ids is not None:
+        raise ValueError("Configure sample_allowlist or selected_ids, not both.")
+    if config.sample_allowlist is None and config.selected_ids is None:
+        raise ValueError(
+            "The approved 20K MMSVG pool requires an exact sample_allowlist contract."
+        )
     if config.filters.min_description_words > config.filters.max_description_words:
         raise ValueError("Description word bounds are inverted.")
     if config.filters.min_svg_char_length > config.filters.max_svg_char_length:

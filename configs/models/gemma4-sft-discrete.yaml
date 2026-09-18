@@ -1,6 +1,6 @@
-# Isolated OmniSVG-inspired discrete-token ablation. The adapter, tokenizer,
-# and manifest must come from the same training run; inference fails closed on
-# any codec vocabulary or token-ID mismatch.
+# Official cached OpenVGLab discrete-token ablation. This configuration is
+# provenance-complete but intentionally fails closed at inference because no
+# audited decoder or generation grammar exists for the released +1 dialect.
 model:
   backend_type: "transformers_text"
   model_id: "google/gemma-4-12B-it-qat-q4_0-unquantized"
@@ -9,6 +9,8 @@ model:
   tokenizer_path: "outputs/sft/gemma4_discrete/tokenizer"
   output_format: "discrete_svg"
   codec_manifest_path: "outputs/sft/gemma4_discrete/codec_manifest.json"
+  codec_backend_id: "openvglab-omnisvg-train-4b-cached-gemma-named-v1"
+  allow_legacy_toy_codec: false
   codec_grid_size: 200
   auto_model_class: "multimodal_lm"
   device: "cuda:0"

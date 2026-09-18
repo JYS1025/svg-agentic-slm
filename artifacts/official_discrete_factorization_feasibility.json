@@ -1,0 +1,4717 @@
+{
+  "all_splits": {
+    "ambiguous_white_or_gradient_token_occurrences": 13816,
+    "complete_path_count": 157209,
+    "component_frequency_coverage": {
+      "arc": {
+        "coverage_fraction": 0.78,
+        "dense_histogram_sha256": "2fd38b64b98d9fad7723d365e7713b94ea7567d2367d683e9e41ca04b7b14832",
+        "least_frequent_observed": [
+          {
+            "count": 2,
+            "value": 3
+          },
+          {
+            "count": 2,
+            "value": 4
+          },
+          {
+            "count": 2,
+            "value": 9
+          },
+          {
+            "count": 2,
+            "value": 21
+          },
+          {
+            "count": 2,
+            "value": 23
+          },
+          {
+            "count": 2,
+            "value": 25
+          },
+          {
+            "count": 2,
+            "value": 31
+          },
+          {
+            "count": 2,
+            "value": 39
+          },
+          {
+            "count": 2,
+            "value": 42
+          },
+          {
+            "count": 2,
+            "value": 43
+          }
+        ],
+        "maximum_frequency": 506825,
+        "minimum_nonzero_frequency": 2,
+        "most_frequent_observed": [
+          {
+            "count": 506825,
+            "value": 0
+          },
+          {
+            "count": 157863,
+            "value": 1
+          },
+          {
+            "count": 354,
+            "value": 90
+          },
+          {
+            "count": 134,
+            "value": 45
+          },
+          {
+            "count": 62,
+            "value": 30
+          },
+          {
+            "count": 34,
+            "value": 60
+          },
+          {
+            "count": 18,
+            "value": 35
+          },
+          {
+            "count": 16,
+            "value": 18
+          },
+          {
+            "count": 16,
+            "value": 19
+          },
+          {
+            "count": 16,
+            "value": 57
+          }
+        ],
+        "observed_values": 78,
+        "possible_values": 100,
+        "total_occurrences": 665778,
+        "unobserved_value_count": 22,
+        "unobserved_value_examples": [
+          13,
+          14,
+          16,
+          38,
+          41,
+          48,
+          49,
+          59,
+          61,
+          69,
+          74,
+          75,
+          86,
+          91,
+          92,
+          93,
+          94,
+          95,
+          96,
+          97
+        ],
+        "unobserved_values_sha256": "ec24561f93b0e9cef5a96cae805363b09f0e41298e7e72064c34f1aaa86ed4af"
+      },
+      "atomic_color": {
+        "coverage_fraction": 0.76573939,
+        "dense_histogram_sha256": "4b6e107e57b25b27d076b6b612c1c6497d1d91292c9ba6d68cf0c2264c608ca1",
+        "least_frequent_observed": [
+          {
+            "count": 1,
+            "value": 15
+          },
+          {
+            "count": 1,
+            "value": 30
+          },
+          {
+            "count": 1,
+            "value": 44
+          },
+          {
+            "count": 1,
+            "value": 50
+          },
+          {
+            "count": 1,
+            "value": 64
+          },
+          {
+            "count": 1,
+            "value": 79
+          },
+          {
+            "count": 1,
+            "value": 85
+          },
+          {
+            "count": 1,
+            "value": 131
+          },
+          {
+            "count": 1,
+            "value": 148
+          },
+          {
+            "count": 1,
+            "value": 166
+          }
+        ],
+        "maximum_frequency": 19019,
+        "minimum_nonzero_frequency": 1,
+        "most_frequent_observed": [
+          {
+            "count": 19019,
+            "value": 0
+          },
+          {
+            "count": 13816,
+            "value": 4097
+          },
+          {
+            "count": 4293,
+            "value": 1
+          },
+          {
+            "count": 3776,
+            "value": 2
+          },
+          {
+            "count": 3480,
+            "value": 821
+          },
+          {
+            "count": 2111,
+            "value": 3824
+          },
+          {
+            "count": 1397,
+            "value": 822
+          },
+          {
+            "count": 1298,
+            "value": 275
+          },
+          {
+            "count": 1116,
+            "value": 1094
+          },
+          {
+            "count": 1058,
+            "value": 548
+          }
+        ],
+        "observed_values": 3138,
+        "possible_values": 4098,
+        "total_occurrences": 157209,
+        "unobserved_value_count": 960,
+        "unobserved_value_examples": [
+          11,
+          16,
+          26,
+          27,
+          29,
+          31,
+          33,
+          45,
+          47,
+          51,
+          52,
+          63,
+          67,
+          83,
+          84,
+          99,
+          179,
+          196,
+          211,
+          212
+        ],
+        "unobserved_values_sha256": "fe477dc918adc5c192a03db39b788b850f22bce6fc216504f7fa141c47fb0fb4"
+      },
+      "b": {
+        "coverage_fraction": 1.0,
+        "dense_histogram_sha256": "ae18e38dfe0d57624f9e6e9d50ac16da15bd13e1c9a5ab8d19452ff0d4588e45",
+        "least_frequent_observed": [
+          {
+            "count": 4738,
+            "value": 10
+          },
+          {
+            "count": 5118,
+            "value": 11
+          },
+          {
+            "count": 5405,
+            "value": 13
+          },
+          {
+            "count": 5584,
+            "value": 8
+          },
+          {
+            "count": 5966,
+            "value": 1
+          },
+          {
+            "count": 6036,
+            "value": 12
+          },
+          {
+            "count": 6151,
+            "value": 7
+          },
+          {
+            "count": 6274,
+            "value": 9
+          },
+          {
+            "count": 6757,
+            "value": 2
+          },
+          {
+            "count": 7514,
+            "value": 14
+          }
+        ],
+        "maximum_frequency": 26316,
+        "minimum_nonzero_frequency": 4738,
+        "most_frequent_observed": [
+          {
+            "count": 26316,
+            "value": 15
+          },
+          {
+            "count": 10632,
+            "value": 3
+          },
+          {
+            "count": 9846,
+            "value": 5
+          },
+          {
+            "count": 9537,
+            "value": 4
+          },
+          {
+            "count": 9519,
+            "value": 0
+          },
+          {
+            "count": 8504,
+            "value": 6
+          },
+          {
+            "count": 7514,
+            "value": 14
+          },
+          {
+            "count": 6757,
+            "value": 2
+          },
+          {
+            "count": 6274,
+            "value": 9
+          },
+          {
+            "count": 6151,
+            "value": 7
+          }
+        ],
+        "observed_values": 16,
+        "possible_values": 16,
+        "total_occurrences": 133897,
+        "unobserved_value_count": 0,
+        "unobserved_value_examples": [],
+        "unobserved_values_sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+      },
+      "command": {
+        "coverage_fraction": 1.0,
+        "dense_histogram_sha256": "92000e41a27ca81936aa6a0aa9a64d905f5b8984cd7d6fd8d9bfc0103b536d79",
+        "least_frequent_observed": [
+          {
+            "count": 221926,
+            "value": 3
+          },
+          {
+            "count": 510434,
+            "value": 4
+          },
+          {
+            "count": 524114,
+            "value": 0
+          },
+          {
+            "count": 1106962,
+            "value": 1
+          },
+          {
+            "count": 1172508,
+            "value": 2
+          }
+        ],
+        "maximum_frequency": 1172508,
+        "minimum_nonzero_frequency": 221926,
+        "most_frequent_observed": [
+          {
+            "count": 1172508,
+            "value": 2
+          },
+          {
+            "count": 1106962,
+            "value": 1
+          },
+          {
+            "count": 524114,
+            "value": 0
+          },
+          {
+            "count": 510434,
+            "value": 4
+          },
+          {
+            "count": 221926,
+            "value": 3
+          }
+        ],
+        "observed_values": 5,
+        "possible_values": 5,
+        "total_occurrences": 3535944,
+        "unobserved_value_count": 0,
+        "unobserved_value_examples": [],
+        "unobserved_values_sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+      },
+      "g": {
+        "coverage_fraction": 1.0,
+        "dense_histogram_sha256": "ef507cd45b125181f461bc84c234f16c1f6a848f5a9a315d1cf6f6ec7451f7b6",
+        "least_frequent_observed": [
+          {
+            "count": 5077,
+            "value": 7
+          },
+          {
+            "count": 5616,
+            "value": 1
+          },
+          {
+            "count": 6010,
+            "value": 8
+          },
+          {
+            "count": 6294,
+            "value": 9
+          },
+          {
+            "count": 6694,
+            "value": 5
+          },
+          {
+            "count": 6797,
+            "value": 0
+          },
+          {
+            "count": 6895,
+            "value": 2
+          },
+          {
+            "count": 6993,
+            "value": 10
+          },
+          {
+            "count": 7862,
+            "value": 4
+          },
+          {
+            "count": 8095,
+            "value": 6
+          }
+        ],
+        "maximum_frequency": 17405,
+        "minimum_nonzero_frequency": 5077,
+        "most_frequent_observed": [
+          {
+            "count": 17405,
+            "value": 15
+          },
+          {
+            "count": 11916,
+            "value": 3
+          },
+          {
+            "count": 10204,
+            "value": 14
+          },
+          {
+            "count": 9998,
+            "value": 13
+          },
+          {
+            "count": 9521,
+            "value": 12
+          },
+          {
+            "count": 8520,
+            "value": 11
+          },
+          {
+            "count": 8095,
+            "value": 6
+          },
+          {
+            "count": 7862,
+            "value": 4
+          },
+          {
+            "count": 6993,
+            "value": 10
+          },
+          {
+            "count": 6895,
+            "value": 2
+          }
+        ],
+        "observed_values": 16,
+        "possible_values": 16,
+        "total_occurrences": 133897,
+        "unobserved_value_count": 0,
+        "unobserved_value_examples": [],
+        "unobserved_values_sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+      },
+      "joint_xy": {
+        "coverage_fraction": 1.0,
+        "dense_histogram_sha256": "daa46821becf59e004f55a2d960435e746a24ed3765e4a961c27ebb8f84f8565",
+        "least_frequent_observed": [
+          {
+            "count": 1,
+            "value": 1196
+          },
+          {
+            "count": 2,
+            "value": 997
+          },
+          {
+            "count": 3,
+            "value": 213
+          },
+          {
+            "count": 3,
+            "value": 214
+          },
+          {
+            "count": 3,
+            "value": 395
+          },
+          {
+            "count": 3,
+            "value": 594
+          },
+          {
+            "count": 3,
+            "value": 1601
+          },
+          {
+            "count": 3,
+            "value": 2605
+          },
+          {
+            "count": 3,
+            "value": 2805
+          },
+          {
+            "count": 4,
+            "value": 411
+          }
+        ],
+        "maximum_frequency": 627722,
+        "minimum_nonzero_frequency": 1,
+        "most_frequent_observed": [
+          {
+            "count": 627722,
+            "value": 0
+          },
+          {
+            "count": 24560,
+            "value": 603
+          },
+          {
+            "count": 22604,
+            "value": 402
+          },
+          {
+            "count": 19851,
+            "value": 804
+          },
+          {
+            "count": 16494,
+            "value": 1206
+          },
+          {
+            "count": 13404,
+            "value": 201
+          },
+          {
+            "count": 12123,
+            "value": 1005
+          },
+          {
+            "count": 10938,
+            "value": 1608
+          },
+          {
+            "count": 7955,
+            "value": 1407
+          },
+          {
+            "count": 5971,
+            "value": 1809
+          }
+        ],
+        "observed_values": 40000,
+        "possible_values": 40000,
+        "total_occurrences": 6627000,
+        "unobserved_value_count": 0,
+        "unobserved_value_examples": [],
+        "unobserved_values_sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+      },
+      "path_end": {
+        "coverage_fraction": 1.0,
+        "dense_histogram_sha256": "509f73d9a57ecaaf0acf3a2caa2901fe3894cca88d4f39a0fe5f5cab1ecd4274",
+        "least_frequent_observed": [
+          {
+            "count": 157209,
+            "value": 0
+          }
+        ],
+        "maximum_frequency": 157209,
+        "minimum_nonzero_frequency": 157209,
+        "most_frequent_observed": [
+          {
+            "count": 157209,
+            "value": 0
+          }
+        ],
+        "observed_values": 1,
+        "possible_values": 1,
+        "total_occurrences": 157209,
+        "unobserved_value_count": 0,
+        "unobserved_value_examples": [],
+        "unobserved_values_sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+      },
+      "r": {
+        "coverage_fraction": 1.0,
+        "dense_histogram_sha256": "619d5ffc9c3b7e69950375bebe945c9711d38d61960ab0cff0fc4bd9c1dca1f8",
+        "least_frequent_observed": [
+          {
+            "count": 3402,
+            "value": 9
+          },
+          {
+            "count": 3517,
+            "value": 10
+          },
+          {
+            "count": 3555,
+            "value": 7
+          },
+          {
+            "count": 3798,
+            "value": 8
+          },
+          {
+            "count": 3909,
+            "value": 11
+          },
+          {
+            "count": 4733,
+            "value": 5
+          },
+          {
+            "count": 4942,
+            "value": 1
+          },
+          {
+            "count": 5010,
+            "value": 12
+          },
+          {
+            "count": 6151,
+            "value": 13
+          },
+          {
+            "count": 6336,
+            "value": 6
+          }
+        ],
+        "maximum_frequency": 40367,
+        "minimum_nonzero_frequency": 3402,
+        "most_frequent_observed": [
+          {
+            "count": 40367,
+            "value": 15
+          },
+          {
+            "count": 10845,
+            "value": 0
+          },
+          {
+            "count": 10618,
+            "value": 14
+          },
+          {
+            "count": 10596,
+            "value": 3
+          },
+          {
+            "count": 8829,
+            "value": 2
+          },
+          {
+            "count": 7289,
+            "value": 4
+          },
+          {
+            "count": 6336,
+            "value": 6
+          },
+          {
+            "count": 6151,
+            "value": 13
+          },
+          {
+            "count": 5010,
+            "value": 12
+          },
+          {
+            "count": 4942,
+            "value": 1
+          }
+        ],
+        "observed_values": 16,
+        "possible_values": 16,
+        "total_occurrences": 133897,
+        "unobserved_value_count": 0,
+        "unobserved_value_examples": [],
+        "unobserved_values_sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+      },
+      "special_color": {
+        "coverage_fraction": 1.0,
+        "dense_histogram_sha256": "3f2a1547432c975e1f96e4abb3411ed1ad9532038216e6607e7c431ca4414bf6",
+        "least_frequent_observed": [
+          {
+            "count": 4293,
+            "value": 1
+          },
+          {
+            "count": 19019,
+            "value": 0
+          }
+        ],
+        "maximum_frequency": 19019,
+        "minimum_nonzero_frequency": 4293,
+        "most_frequent_observed": [
+          {
+            "count": 19019,
+            "value": 0
+          },
+          {
+            "count": 4293,
+            "value": 1
+          }
+        ],
+        "observed_values": 2,
+        "possible_values": 2,
+        "total_occurrences": 23312,
+        "unobserved_value_count": 0,
+        "unobserved_value_examples": [],
+        "unobserved_values_sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+      },
+      "x": {
+        "coverage_fraction": 1.0,
+        "dense_histogram_sha256": "b5c7c4252f0cf63cbfdcd85bf9b2deb74fd5d9e6ccf729af111301ff2663ffcf",
+        "least_frequent_observed": [
+          {
+            "count": 6269,
+            "value": 198
+          },
+          {
+            "count": 7035,
+            "value": 195
+          },
+          {
+            "count": 8559,
+            "value": 196
+          },
+          {
+            "count": 9354,
+            "value": 193
+          },
+          {
+            "count": 9529,
+            "value": 197
+          },
+          {
+            "count": 9791,
+            "value": 189
+          },
+          {
+            "count": 10261,
+            "value": 190
+          },
+          {
+            "count": 10355,
+            "value": 191
+          },
+          {
+            "count": 10513,
+            "value": 192
+          },
+          {
+            "count": 11097,
+            "value": 194
+          }
+        ],
+        "maximum_frequency": 648039,
+        "minimum_nonzero_frequency": 6269,
+        "most_frequent_observed": [
+          {
+            "count": 648039,
+            "value": 0
+          },
+          {
+            "count": 119362,
+            "value": 100
+          },
+          {
+            "count": 44010,
+            "value": 97
+          },
+          {
+            "count": 43270,
+            "value": 103
+          },
+          {
+            "count": 43129,
+            "value": 112
+          },
+          {
+            "count": 43082,
+            "value": 94
+          },
+          {
+            "count": 42863,
+            "value": 125
+          },
+          {
+            "count": 42703,
+            "value": 199
+          },
+          {
+            "count": 42601,
+            "value": 88
+          },
+          {
+            "count": 42479,
+            "value": 106
+          }
+        ],
+        "observed_values": 200,
+        "possible_values": 200,
+        "total_occurrences": 6627000,
+        "unobserved_value_count": 0,
+        "unobserved_value_examples": [],
+        "unobserved_values_sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+      },
+      "y": {
+        "coverage_fraction": 1.0,
+        "dense_histogram_sha256": "8416b4ab230abd877c934ba3b4073fd9da6dba5e22ff0c977fe995b3065eb499",
+        "least_frequent_observed": [
+          {
+            "count": 7351,
+            "value": 198
+          },
+          {
+            "count": 7372,
+            "value": 195
+          },
+          {
+            "count": 8623,
+            "value": 196
+          },
+          {
+            "count": 10898,
+            "value": 193
+          },
+          {
+            "count": 11031,
+            "value": 191
+          },
+          {
+            "count": 11130,
+            "value": 189
+          },
+          {
+            "count": 11605,
+            "value": 197
+          },
+          {
+            "count": 11855,
+            "value": 190
+          },
+          {
+            "count": 12575,
+            "value": 192
+          },
+          {
+            "count": 12673,
+            "value": 194
+          }
+        ],
+        "maximum_frequency": 653633,
+        "minimum_nonzero_frequency": 7351,
+        "most_frequent_observed": [
+          {
+            "count": 653633,
+            "value": 0
+          },
+          {
+            "count": 66648,
+            "value": 100
+          },
+          {
+            "count": 44088,
+            "value": 88
+          },
+          {
+            "count": 43201,
+            "value": 75
+          },
+          {
+            "count": 43196,
+            "value": 92
+          },
+          {
+            "count": 42761,
+            "value": 94
+          },
+          {
+            "count": 42503,
+            "value": 106
+          },
+          {
+            "count": 42259,
+            "value": 108
+          },
+          {
+            "count": 41949,
+            "value": 112
+          },
+          {
+            "count": 41777,
+            "value": 199
+          }
+        ],
+        "observed_values": 200,
+        "possible_values": 200,
+        "total_occurrences": 6627000,
+        "unobserved_value_count": 0,
+        "unobserved_value_examples": [],
+        "unobserved_values_sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+      }
+    },
+    "digest_composition": "sha256_of_ordered_train_validation_test_split_digest_bytes",
+    "invertibility": {
+      "atomic_to_xy_rgb_path_end_to_atomic": {
+        "failed_records": 0,
+        "passed_records": 20000
+      },
+      "atomic_to_xy_to_atomic": {
+        "failed_records": 0,
+        "passed_records": 20000
+      }
+    },
+    "lengths": {
+      "atomic": {
+        "context_thresholds": {
+          "2304": {
+            "above_count": 0,
+            "above_fraction": 0.0,
+            "at_or_below_count": 20000,
+            "at_or_below_fraction": 1.0
+          },
+          "4096": {
+            "above_count": 0,
+            "above_fraction": 0.0,
+            "at_or_below_count": 20000,
+            "at_or_below_fraction": 1.0
+          },
+          "8192": {
+            "above_count": 0,
+            "above_fraction": 0.0,
+            "at_or_below_count": 20000,
+            "at_or_below_fraction": 1.0
+          }
+        },
+        "maximum": 2048,
+        "mean": 551.29655,
+        "median": 438.0,
+        "minimum": 13,
+        "p90_nearest_rank": 1261,
+        "p95_nearest_rank": 1582,
+        "p99_nearest_rank": 1934,
+        "record_count": 20000,
+        "total_tokens": 11025931
+      },
+      "xy_factorized": {
+        "context_thresholds": {
+          "2304": {
+            "above_count": 1429,
+            "above_fraction": 0.07145,
+            "at_or_below_count": 18571,
+            "at_or_below_fraction": 0.92855
+          },
+          "4096": {
+            "above_count": 0,
+            "above_fraction": 0.0,
+            "at_or_below_count": 20000,
+            "at_or_below_fraction": 1.0
+          },
+          "8192": {
+            "above_count": 0,
+            "above_fraction": 0.0,
+            "at_or_below_count": 20000,
+            "at_or_below_fraction": 1.0
+          }
+        },
+        "maximum": 3528,
+        "mean": 882.64655,
+        "median": 682.0,
+        "minimum": 19,
+        "p90_nearest_rank": 2035,
+        "p95_nearest_rank": 2569,
+        "p99_nearest_rank": 3163,
+        "record_count": 20000,
+        "total_tokens": 17652931
+      },
+      "xy_rgb_explicit_path_end": {
+        "context_thresholds": {
+          "2304": {
+            "above_count": 1543,
+            "above_fraction": 0.07715,
+            "at_or_below_count": 18457,
+            "at_or_below_fraction": 0.92285
+          },
+          "4096": {
+            "above_count": 0,
+            "above_fraction": 0.0,
+            "at_or_below_count": 20000,
+            "at_or_below_fraction": 1.0
+          },
+          "8192": {
+            "above_count": 0,
+            "above_fraction": 0.0,
+            "at_or_below_count": 20000,
+            "at_or_below_fraction": 1.0
+          }
+        },
+        "maximum": 3587,
+        "mean": 903.8967,
+        "median": 695.0,
+        "minimum": 20,
+        "p90_nearest_rank": 2088,
+        "p95_nearest_rank": 2631,
+        "p99_nearest_rank": 3246,
+        "record_count": 20000,
+        "total_tokens": 18077934
+      }
+    },
+    "paired_inflation_from_atomic": {
+      "xy_factorized": {
+        "maximum_per_record_length_ratio": 1.74700315,
+        "maximum_token_delta": 1495,
+        "mean_per_record_length_ratio": 1.5826669,
+        "mean_token_delta": 331.35,
+        "total_length_ratio": 1.60103768,
+        "total_token_delta": 6627000
+      },
+      "xy_rgb_explicit_path_end": {
+        "maximum_per_record_length_ratio": 1.79637527,
+        "maximum_token_delta": 1540,
+        "mean_per_record_length_ratio": 1.61724233,
+        "mean_token_delta": 352.60015,
+        "total_length_ratio": 1.63958345,
+        "total_token_delta": 7052003
+      }
+    },
+    "record_count": 20000,
+    "record_order_sha256": "38b1a59c66a46d8c076d401b670167da101dd63f19a2930c4c5da0b6cbbba374",
+    "sequence_sha256": {
+      "atomic": "445349d046a0043bfeed8a4a0f87f897ddc7c08024ecd1be67ed8c742bf48de1",
+      "xy_factorized": "4d64601da6c0686b0a266f84b9ed0688cc5dbc65d4326e2de26da88c2b710157",
+      "xy_rgb_explicit_path_end": "b3722ee4fba0ae4fc511196148b0b4f5b419ee7302973187d8a7d55c1850e118"
+    },
+    "token_class_occurrences": {
+      "arc": 665778,
+      "bos": 20000,
+      "color": 157209,
+      "command": 3535944,
+      "coordinate": 6627000,
+      "eos": 20000
+    }
+  },
+  "audit": "official_discrete_factorization_feasibility",
+  "context_thresholds_are_target_tokens_only": [
+    2304,
+    4096,
+    8192
+  ],
+  "exact_encoder_producible_training_id_classes": {
+    "arc": {
+      "count": 100,
+      "maximum": 196535,
+      "minimum": 196436
+    },
+    "bos": {
+      "count": 1,
+      "maximum": 196998,
+      "minimum": 196998
+    },
+    "color": {
+      "count": 4098,
+      "maximum": 196043,
+      "minimum": 191946
+    },
+    "command": {
+      "count": 5,
+      "maximum": 151942,
+      "minimum": 151938
+    },
+    "coordinate": {
+      "count": 40000,
+      "maximum": 191942,
+      "minimum": 151943
+    },
+    "eos": {
+      "count": 1,
+      "maximum": 196999,
+      "minimum": 196999
+    }
+  },
+  "factorization_contract": {
+    "arc": "kept as one of 100 atomic parameter tokens",
+    "color_offsets": {
+      "0": "none",
+      "1": "currentColor",
+      "2..4097": "12-bit RGB value = offset - 2, emitted in r,g,b order"
+    },
+    "command": "kept as one of 5 atomic opcode tokens",
+    "coordinate_index": "joint_xy = y * 200 + x",
+    "framing": "BOS and EOS remain distinct tokens",
+    "known_source_ambiguity": "Upstream maps both gradient and quantized white to color offset 4097; cached token IDs cannot recover which source semantic produced it.",
+    "path_end": "one explicit token after every special-color or RGB payload",
+    "rgb_channel_width_bits": 4,
+    "schema_version": 1,
+    "scope": "offline_feasibility_only_no_production_codec_claim",
+    "xy_order": [
+      "x",
+      "y"
+    ]
+  },
+  "factorization_contract_sha256": "74048f9a7e469aa370e110d47760fe5707bc6b302ddd7652cb723d20f4272f46",
+  "heldout_component_coverage_against_train": {
+    "test": {
+      "arc": {
+        "evaluation_observed_values": 46,
+        "occurrences_unseen_in_train": 46,
+        "possible_values": 100,
+        "unseen_occurrence_fraction": 0.00141412,
+        "values_unseen_in_train_count": 13,
+        "values_unseen_in_train_examples": [
+          4,
+          9,
+          10,
+          12,
+          32,
+          37,
+          39,
+          42,
+          50,
+          51,
+          53,
+          80,
+          87
+        ]
+      },
+      "atomic_color": {
+        "evaluation_observed_values": 1013,
+        "occurrences_unseen_in_train": 83,
+        "possible_values": 4098,
+        "unseen_occurrence_fraction": 0.01087099,
+        "values_unseen_in_train_count": 25,
+        "values_unseen_in_train_examples": [
+          166,
+          453,
+          455,
+          771,
+          793,
+          847,
+          852,
+          1052,
+          1365,
+          1414,
+          1872,
+          2180,
+          2346,
+          2546,
+          2600,
+          2609,
+          2683,
+          2744,
+          2938,
+          3136
+        ]
+      },
+      "b": {
+        "evaluation_observed_values": 16,
+        "occurrences_unseen_in_train": 0,
+        "possible_values": 16,
+        "unseen_occurrence_fraction": 0.0,
+        "values_unseen_in_train_count": 0,
+        "values_unseen_in_train_examples": []
+      },
+      "command": {
+        "evaluation_observed_values": 5,
+        "occurrences_unseen_in_train": 0,
+        "possible_values": 5,
+        "unseen_occurrence_fraction": 0.0,
+        "values_unseen_in_train_count": 0,
+        "values_unseen_in_train_examples": []
+      },
+      "g": {
+        "evaluation_observed_values": 16,
+        "occurrences_unseen_in_train": 0,
+        "possible_values": 16,
+        "unseen_occurrence_fraction": 0.0,
+        "values_unseen_in_train_count": 0,
+        "values_unseen_in_train_examples": []
+      },
+      "joint_xy": {
+        "evaluation_observed_values": 37246,
+        "occurrences_unseen_in_train": 0,
+        "possible_values": 40000,
+        "unseen_occurrence_fraction": 0.0,
+        "values_unseen_in_train_count": 0,
+        "values_unseen_in_train_examples": []
+      },
+      "path_end": {
+        "evaluation_observed_values": 1,
+        "occurrences_unseen_in_train": 0,
+        "possible_values": 1,
+        "unseen_occurrence_fraction": 0.0,
+        "values_unseen_in_train_count": 0,
+        "values_unseen_in_train_examples": []
+      },
+      "r": {
+        "evaluation_observed_values": 16,
+        "occurrences_unseen_in_train": 0,
+        "possible_values": 16,
+        "unseen_occurrence_fraction": 0.0,
+        "values_unseen_in_train_count": 0,
+        "values_unseen_in_train_examples": []
+      },
+      "special_color": {
+        "evaluation_observed_values": 2,
+        "occurrences_unseen_in_train": 0,
+        "possible_values": 2,
+        "unseen_occurrence_fraction": 0.0,
+        "values_unseen_in_train_count": 0,
+        "values_unseen_in_train_examples": []
+      },
+      "x": {
+        "evaluation_observed_values": 200,
+        "occurrences_unseen_in_train": 0,
+        "possible_values": 200,
+        "unseen_occurrence_fraction": 0.0,
+        "values_unseen_in_train_count": 0,
+        "values_unseen_in_train_examples": []
+      },
+      "y": {
+        "evaluation_observed_values": 200,
+        "occurrences_unseen_in_train": 0,
+        "possible_values": 200,
+        "unseen_occurrence_fraction": 0.0,
+        "values_unseen_in_train_count": 0,
+        "values_unseen_in_train_examples": []
+      }
+    },
+    "validation": {
+      "arc": {
+        "evaluation_observed_values": 8,
+        "occurrences_unseen_in_train": 2,
+        "possible_values": 100,
+        "unseen_occurrence_fraction": 6.721e-05,
+        "values_unseen_in_train_count": 1,
+        "values_unseen_in_train_examples": [
+          87
+        ]
+      },
+      "atomic_color": {
+        "evaluation_observed_values": 1075,
+        "occurrences_unseen_in_train": 75,
+        "possible_values": 4098,
+        "unseen_occurrence_fraction": 0.00943278,
+        "values_unseen_in_train_count": 24,
+        "values_unseen_in_train_examples": [
+          25,
+          256,
+          456,
+          723,
+          853,
+          887,
+          930,
+          963,
+          1034,
+          1290,
+          1514,
+          1548,
+          1610,
+          1653,
+          1749,
+          1780,
+          1872,
+          2472,
+          2534,
+          2566
+        ]
+      },
+      "b": {
+        "evaluation_observed_values": 16,
+        "occurrences_unseen_in_train": 0,
+        "possible_values": 16,
+        "unseen_occurrence_fraction": 0.0,
+        "values_unseen_in_train_count": 0,
+        "values_unseen_in_train_examples": []
+      },
+      "command": {
+        "evaluation_observed_values": 5,
+        "occurrences_unseen_in_train": 0,
+        "possible_values": 5,
+        "unseen_occurrence_fraction": 0.0,
+        "values_unseen_in_train_count": 0,
+        "values_unseen_in_train_examples": []
+      },
+      "g": {
+        "evaluation_observed_values": 16,
+        "occurrences_unseen_in_train": 0,
+        "possible_values": 16,
+        "unseen_occurrence_fraction": 0.0,
+        "values_unseen_in_train_count": 0,
+        "values_unseen_in_train_examples": []
+      },
+      "joint_xy": {
+        "evaluation_observed_values": 37727,
+        "occurrences_unseen_in_train": 0,
+        "possible_values": 40000,
+        "unseen_occurrence_fraction": 0.0,
+        "values_unseen_in_train_count": 0,
+        "values_unseen_in_train_examples": []
+      },
+      "path_end": {
+        "evaluation_observed_values": 1,
+        "occurrences_unseen_in_train": 0,
+        "possible_values": 1,
+        "unseen_occurrence_fraction": 0.0,
+        "values_unseen_in_train_count": 0,
+        "values_unseen_in_train_examples": []
+      },
+      "r": {
+        "evaluation_observed_values": 16,
+        "occurrences_unseen_in_train": 0,
+        "possible_values": 16,
+        "unseen_occurrence_fraction": 0.0,
+        "values_unseen_in_train_count": 0,
+        "values_unseen_in_train_examples": []
+      },
+      "special_color": {
+        "evaluation_observed_values": 2,
+        "occurrences_unseen_in_train": 0,
+        "possible_values": 2,
+        "unseen_occurrence_fraction": 0.0,
+        "values_unseen_in_train_count": 0,
+        "values_unseen_in_train_examples": []
+      },
+      "x": {
+        "evaluation_observed_values": 200,
+        "occurrences_unseen_in_train": 0,
+        "possible_values": 200,
+        "unseen_occurrence_fraction": 0.0,
+        "values_unseen_in_train_count": 0,
+        "values_unseen_in_train_examples": []
+      },
+      "y": {
+        "evaluation_observed_values": 200,
+        "occurrences_unseen_in_train": 0,
+        "possible_values": 200,
+        "unseen_occurrence_fraction": 0.0,
+        "values_unseen_in_train_count": 0,
+        "values_unseen_in_train_examples": []
+      }
+    }
+  },
+  "invertibility_scope": {
+    "cached_token_id_roundtrip": true,
+    "source_svg_semantic_limitation": "Upstream maps both gradient and quantized white to color offset 4097; cached token IDs cannot recover which source semantic produced it.",
+    "source_svg_semantic_roundtrip": false
+  },
+  "range_accounting": {
+    "current_contiguous_named_namespace": 45062,
+    "exact_encoder_producible": 44205,
+    "maximum_registered_upstream_id": 196999,
+    "minimum_registered_upstream_id": 151938,
+    "reserved_gap": 857
+  },
+  "reserved_contiguous_namespace_gaps": [
+    {
+      "count": 3,
+      "maximum": 191945,
+      "minimum": 191943
+    },
+    {
+      "count": 392,
+      "maximum": 196435,
+      "minimum": 196044
+    },
+    {
+      "count": 462,
+      "maximum": 196997,
+      "minimum": 196536
+    }
+  ],
+  "schema_version": 1,
+  "scope": "cpu_only_offline_audit_no_production_codec_change",
+  "source_provenance": {
+    "audit_manifest": {
+      "path": "/home/minjun_dev/svg-agentic-slm/artifacts/omnisvg_train_4b_mmsvg_20k_token_audit.json",
+      "sha256": "30e3deb8a8cf443a1c32a58bc48e41b35b4adc615c14eb7fb9dee1f48d4e35c7"
+    },
+    "audit_script_source": {
+      "path": "/home/minjun_dev/svg-agentic-slm/scripts/audit_official_discrete_factorization.py",
+      "sha256": "18749eea2d267f0192745c1287dfb8f3ebbedab9c1ebb37325baa56d7e1eb142"
+    },
+    "cache": {
+      "path": "/home/minjun_dev/svg-agentic-slm/artifacts/omnisvg_train_4b_mmsvg_20k_tokens.sqlite3",
+      "sha256": "da25dc3db8739e846d952b3044e5f7977eaf8820f4ea0c45c46ed8111f91a3fa"
+    },
+    "openvglab_tokenization_config_sha256": "bd56bc2bb9b39f614a9d553d2319332a18a075c4239bb71ec437822b20d97dd4",
+    "openvglab_training_commit": "812489fd9d191e39fe94bc0c4027e5d0121e0fc6",
+    "prepared_inputs": {
+      "test": {
+        "path": "/data/minjun_dev/mmsvg_sft_prepared_seed42_20k/mmsvg_sft_20k/test.jsonl",
+        "record_count": 1000,
+        "sha256": "381d28d516273698a1c4e0b793376fe90aa7135ad89b69a04ec6cbda57ab9d3b"
+      },
+      "train": {
+        "path": "/data/minjun_dev/mmsvg_sft_prepared_seed42_20k/mmsvg_sft_20k/train.jsonl",
+        "record_count": 18000,
+        "sha256": "7920c33235ede566657003ac63166b01b3e594b6ccc521d34d9fbe937e5642bd"
+      },
+      "validation": {
+        "path": "/data/minjun_dev/mmsvg_sft_prepared_seed42_20k/mmsvg_sft_20k/validation.jsonl",
+        "record_count": 1000,
+        "sha256": "ab4a24667b19160a3c3337ad9b25a8e1c4c4ba58116ec690c3829d25b621ef2a"
+      }
+    },
+    "verified_loader_source": {
+      "path": "/home/minjun_dev/svg-agentic-slm/src/svg_agentic_slm/svg/official_discrete_cache.py",
+      "sha256": "1a1148525d657462ba0f1c838b233110981f1b54f79afb1e465acf41c68f0a6b"
+    }
+  },
+  "splits": {
+    "test": {
+      "ambiguous_white_or_gradient_token_occurrences": 635,
+      "complete_path_count": 7635,
+      "component_frequency_coverage": {
+        "arc": {
+          "coverage_fraction": 0.46,
+          "dense_histogram_sha256": "a79e310337f65de6aebc9746d32a130ccb427d8ad77fc772c395dbb3dd03745b",
+          "least_frequent_observed": [
+            {
+              "count": 2,
+              "value": 4
+            },
+            {
+              "count": 2,
+              "value": 9
+            },
+            {
+              "count": 2,
+              "value": 17
+            },
+            {
+              "count": 2,
+              "value": 19
+            },
+            {
+              "count": 2,
+              "value": 34
+            },
+            {
+              "count": 2,
+              "value": 35
+            },
+            {
+              "count": 2,
+              "value": 39
+            },
+            {
+              "count": 2,
+              "value": 40
+            },
+            {
+              "count": 2,
+              "value": 42
+            },
+            {
+              "count": 2,
+              "value": 46
+            }
+          ],
+          "maximum_frequency": 24881,
+          "minimum_nonzero_frequency": 2,
+          "most_frequent_observed": [
+            {
+              "count": 24881,
+              "value": 0
+            },
+            {
+              "count": 7464,
+              "value": 1
+            },
+            {
+              "count": 36,
+              "value": 90
+            },
+            {
+              "count": 10,
+              "value": 45
+            },
+            {
+              "count": 6,
+              "value": 10
+            },
+            {
+              "count": 6,
+              "value": 12
+            },
+            {
+              "count": 6,
+              "value": 22
+            },
+            {
+              "count": 6,
+              "value": 30
+            },
+            {
+              "count": 6,
+              "value": 37
+            },
+            {
+              "count": 6,
+              "value": 52
+            }
+          ],
+          "observed_values": 46,
+          "possible_values": 100,
+          "total_occurrences": 32529,
+          "unobserved_value_count": 54,
+          "unobserved_value_examples": [
+            3,
+            5,
+            6,
+            8,
+            11,
+            13,
+            14,
+            15,
+            16,
+            20,
+            21,
+            23,
+            24,
+            25,
+            26,
+            28,
+            29,
+            31,
+            33,
+            36
+          ],
+          "unobserved_values_sha256": "d5f5867c1f418f6cc1eebe4eeae2b82494e489e3eeff4f0eaf7e37ced0577661"
+        },
+        "atomic_color": {
+          "coverage_fraction": 0.24719375,
+          "dense_histogram_sha256": "a5650c3b1f642f38890faf59d78d5ac48b356270c8afdc470d8b1e011b53cdc0",
+          "least_frequent_observed": [
+            {
+              "count": 1,
+              "value": 20
+            },
+            {
+              "count": 1,
+              "value": 22
+            },
+            {
+              "count": 1,
+              "value": 37
+            },
+            {
+              "count": 1,
+              "value": 46
+            },
+            {
+              "count": 1,
+              "value": 57
+            },
+            {
+              "count": 1,
+              "value": 59
+            },
+            {
+              "count": 1,
+              "value": 61
+            },
+            {
+              "count": 1,
+              "value": 65
+            },
+            {
+              "count": 1,
+              "value": 88
+            },
+            {
+              "count": 1,
+              "value": 94
+            }
+          ],
+          "maximum_frequency": 929,
+          "minimum_nonzero_frequency": 1,
+          "most_frequent_observed": [
+            {
+              "count": 929,
+              "value": 0
+            },
+            {
+              "count": 635,
+              "value": 4097
+            },
+            {
+              "count": 289,
+              "value": 1
+            },
+            {
+              "count": 140,
+              "value": 2
+            },
+            {
+              "count": 133,
+              "value": 821
+            },
+            {
+              "count": 92,
+              "value": 3824
+            },
+            {
+              "count": 83,
+              "value": 4038
+            },
+            {
+              "count": 81,
+              "value": 1649
+            },
+            {
+              "count": 70,
+              "value": 822
+            },
+            {
+              "count": 66,
+              "value": 275
+            }
+          ],
+          "observed_values": 1013,
+          "possible_values": 4098,
+          "total_occurrences": 7635,
+          "unobserved_value_count": 3085,
+          "unobserved_value_examples": [
+            6,
+            7,
+            8,
+            9,
+            10,
+            11,
+            12,
+            15,
+            16,
+            18,
+            21,
+            23,
+            25,
+            26,
+            27,
+            28,
+            29,
+            30,
+            31,
+            33
+          ],
+          "unobserved_values_sha256": "26867a8685f562b7e832e8bb0e3632f408569de2e0073dc23bbb109fe31825a0"
+        },
+        "b": {
+          "coverage_fraction": 1.0,
+          "dense_histogram_sha256": "52ea35bf18dd83f5e0fc7f4005c48eafcb02c7b93e061d1467bee114295605d9",
+          "least_frequent_observed": [
+            {
+              "count": 191,
+              "value": 11
+            },
+            {
+              "count": 220,
+              "value": 12
+            },
+            {
+              "count": 228,
+              "value": 10
+            },
+            {
+              "count": 248,
+              "value": 9
+            },
+            {
+              "count": 260,
+              "value": 8
+            },
+            {
+              "count": 277,
+              "value": 13
+            },
+            {
+              "count": 301,
+              "value": 1
+            },
+            {
+              "count": 333,
+              "value": 7
+            },
+            {
+              "count": 352,
+              "value": 14
+            },
+            {
+              "count": 383,
+              "value": 2
+            }
+          ],
+          "maximum_frequency": 1349,
+          "minimum_nonzero_frequency": 191,
+          "most_frequent_observed": [
+            {
+              "count": 1349,
+              "value": 15
+            },
+            {
+              "count": 509,
+              "value": 3
+            },
+            {
+              "count": 491,
+              "value": 4
+            },
+            {
+              "count": 459,
+              "value": 6
+            },
+            {
+              "count": 423,
+              "value": 5
+            },
+            {
+              "count": 393,
+              "value": 0
+            },
+            {
+              "count": 383,
+              "value": 2
+            },
+            {
+              "count": 352,
+              "value": 14
+            },
+            {
+              "count": 333,
+              "value": 7
+            },
+            {
+              "count": 301,
+              "value": 1
+            }
+          ],
+          "observed_values": 16,
+          "possible_values": 16,
+          "total_occurrences": 6417,
+          "unobserved_value_count": 0,
+          "unobserved_value_examples": [],
+          "unobserved_values_sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+        },
+        "command": {
+          "coverage_fraction": 1.0,
+          "dense_histogram_sha256": "ee5225584a8aefc9c0009de54d17d5f312fb2cde755d8f59ea866b972d7358e6",
+          "least_frequent_observed": [
+            {
+              "count": 10843,
+              "value": 3
+            },
+            {
+              "count": 24900,
+              "value": 4
+            },
+            {
+              "count": 25470,
+              "value": 0
+            },
+            {
+              "count": 53938,
+              "value": 1
+            },
+            {
+              "count": 56468,
+              "value": 2
+            }
+          ],
+          "maximum_frequency": 56468,
+          "minimum_nonzero_frequency": 10843,
+          "most_frequent_observed": [
+            {
+              "count": 56468,
+              "value": 2
+            },
+            {
+              "count": 53938,
+              "value": 1
+            },
+            {
+              "count": 25470,
+              "value": 0
+            },
+            {
+              "count": 24900,
+              "value": 4
+            },
+            {
+              "count": 10843,
+              "value": 3
+            }
+          ],
+          "observed_values": 5,
+          "possible_values": 5,
+          "total_occurrences": 171619,
+          "unobserved_value_count": 0,
+          "unobserved_value_examples": [],
+          "unobserved_values_sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+        },
+        "g": {
+          "coverage_fraction": 1.0,
+          "dense_histogram_sha256": "21643b523339e0b04714413a99fe54d27765ccf1bd93806cef32199d4a402aa6",
+          "least_frequent_observed": [
+            {
+              "count": 209,
+              "value": 7
+            },
+            {
+              "count": 241,
+              "value": 9
+            },
+            {
+              "count": 261,
+              "value": 8
+            },
+            {
+              "count": 288,
+              "value": 0
+            },
+            {
+              "count": 289,
+              "value": 1
+            },
+            {
+              "count": 355,
+              "value": 4
+            },
+            {
+              "count": 355,
+              "value": 10
+            },
+            {
+              "count": 358,
+              "value": 11
+            },
+            {
+              "count": 372,
+              "value": 5
+            },
+            {
+              "count": 416,
+              "value": 2
+            }
+          ],
+          "maximum_frequency": 807,
+          "minimum_nonzero_frequency": 209,
+          "most_frequent_observed": [
+            {
+              "count": 807,
+              "value": 15
+            },
+            {
+              "count": 566,
+              "value": 12
+            },
+            {
+              "count": 527,
+              "value": 3
+            },
+            {
+              "count": 492,
+              "value": 13
+            },
+            {
+              "count": 452,
+              "value": 14
+            },
+            {
+              "count": 429,
+              "value": 6
+            },
+            {
+              "count": 416,
+              "value": 2
+            },
+            {
+              "count": 372,
+              "value": 5
+            },
+            {
+              "count": 358,
+              "value": 11
+            },
+            {
+              "count": 355,
+              "value": 4
+            }
+          ],
+          "observed_values": 16,
+          "possible_values": 16,
+          "total_occurrences": 6417,
+          "unobserved_value_count": 0,
+          "unobserved_value_examples": [],
+          "unobserved_values_sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+        },
+        "joint_xy": {
+          "coverage_fraction": 0.93115,
+          "dense_histogram_sha256": "b15b93fe3795e3d63fe1fe6927a2ec697f37282953f1d802b940a007f394f7ec",
+          "least_frequent_observed": [
+            {
+              "count": 1,
+              "value": 5
+            },
+            {
+              "count": 1,
+              "value": 12
+            },
+            {
+              "count": 1,
+              "value": 16
+            },
+            {
+              "count": 1,
+              "value": 41
+            },
+            {
+              "count": 1,
+              "value": 42
+            },
+            {
+              "count": 1,
+              "value": 44
+            },
+            {
+              "count": 1,
+              "value": 58
+            },
+            {
+              "count": 1,
+              "value": 59
+            },
+            {
+              "count": 1,
+              "value": 87
+            },
+            {
+              "count": 1,
+              "value": 92
+            }
+          ],
+          "maximum_frequency": 30491,
+          "minimum_nonzero_frequency": 1,
+          "most_frequent_observed": [
+            {
+              "count": 30491,
+              "value": 0
+            },
+            {
+              "count": 1120,
+              "value": 603
+            },
+            {
+              "count": 932,
+              "value": 804
+            },
+            {
+              "count": 922,
+              "value": 402
+            },
+            {
+              "count": 832,
+              "value": 1206
+            },
+            {
+              "count": 735,
+              "value": 201
+            },
+            {
+              "count": 645,
+              "value": 1608
+            },
+            {
+              "count": 564,
+              "value": 1005
+            },
+            {
+              "count": 367,
+              "value": 1407
+            },
+            {
+              "count": 299,
+              "value": 1809
+            }
+          ],
+          "observed_values": 37246,
+          "possible_values": 40000,
+          "total_occurrences": 320868,
+          "unobserved_value_count": 2754,
+          "unobserved_value_examples": [
+            2,
+            13,
+            19,
+            22,
+            26,
+            36,
+            40,
+            43,
+            56,
+            70,
+            156,
+            157,
+            160,
+            174,
+            184,
+            192,
+            202,
+            203,
+            205,
+            208
+          ],
+          "unobserved_values_sha256": "ff1afe14c8d239dc8e6d63a86a77977d9d250c237493798f7d6877675dcac734"
+        },
+        "path_end": {
+          "coverage_fraction": 1.0,
+          "dense_histogram_sha256": "a01f4c290c4a7d72c9da6af8dea0689c33af9319a3478689a04e67954471b2bf",
+          "least_frequent_observed": [
+            {
+              "count": 7635,
+              "value": 0
+            }
+          ],
+          "maximum_frequency": 7635,
+          "minimum_nonzero_frequency": 7635,
+          "most_frequent_observed": [
+            {
+              "count": 7635,
+              "value": 0
+            }
+          ],
+          "observed_values": 1,
+          "possible_values": 1,
+          "total_occurrences": 7635,
+          "unobserved_value_count": 0,
+          "unobserved_value_examples": [],
+          "unobserved_values_sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+        },
+        "r": {
+          "coverage_fraction": 1.0,
+          "dense_histogram_sha256": "3d18bde022ccf30485a3aff2a87a00ca4be85df9a86c39faa817be4da990856a",
+          "least_frequent_observed": [
+            {
+              "count": 155,
+              "value": 11
+            },
+            {
+              "count": 158,
+              "value": 8
+            },
+            {
+              "count": 158,
+              "value": 10
+            },
+            {
+              "count": 172,
+              "value": 9
+            },
+            {
+              "count": 199,
+              "value": 7
+            },
+            {
+              "count": 230,
+              "value": 1
+            },
+            {
+              "count": 253,
+              "value": 12
+            },
+            {
+              "count": 269,
+              "value": 5
+            },
+            {
+              "count": 300,
+              "value": 13
+            },
+            {
+              "count": 316,
+              "value": 4
+            }
+          ],
+          "maximum_frequency": 1869,
+          "minimum_nonzero_frequency": 155,
+          "most_frequent_observed": [
+            {
+              "count": 1869,
+              "value": 15
+            },
+            {
+              "count": 498,
+              "value": 3
+            },
+            {
+              "count": 488,
+              "value": 2
+            },
+            {
+              "count": 487,
+              "value": 14
+            },
+            {
+              "count": 463,
+              "value": 0
+            },
+            {
+              "count": 402,
+              "value": 6
+            },
+            {
+              "count": 316,
+              "value": 4
+            },
+            {
+              "count": 300,
+              "value": 13
+            },
+            {
+              "count": 269,
+              "value": 5
+            },
+            {
+              "count": 253,
+              "value": 12
+            }
+          ],
+          "observed_values": 16,
+          "possible_values": 16,
+          "total_occurrences": 6417,
+          "unobserved_value_count": 0,
+          "unobserved_value_examples": [],
+          "unobserved_values_sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+        },
+        "special_color": {
+          "coverage_fraction": 1.0,
+          "dense_histogram_sha256": "25dafbfa9e7db1f926e54508ed0563998aef2f8d6d6b06f2b57d4e7fab9c930b",
+          "least_frequent_observed": [
+            {
+              "count": 289,
+              "value": 1
+            },
+            {
+              "count": 929,
+              "value": 0
+            }
+          ],
+          "maximum_frequency": 929,
+          "minimum_nonzero_frequency": 289,
+          "most_frequent_observed": [
+            {
+              "count": 929,
+              "value": 0
+            },
+            {
+              "count": 289,
+              "value": 1
+            }
+          ],
+          "observed_values": 2,
+          "possible_values": 2,
+          "total_occurrences": 1218,
+          "unobserved_value_count": 0,
+          "unobserved_value_examples": [],
+          "unobserved_values_sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+        },
+        "x": {
+          "coverage_fraction": 1.0,
+          "dense_histogram_sha256": "eddc68f3c62dee2673f51838ae9e57548206ccdad0ede871995e028288c0f730",
+          "least_frequent_observed": [
+            {
+              "count": 251,
+              "value": 195
+            },
+            {
+              "count": 349,
+              "value": 196
+            },
+            {
+              "count": 393,
+              "value": 190
+            },
+            {
+              "count": 397,
+              "value": 198
+            },
+            {
+              "count": 432,
+              "value": 189
+            },
+            {
+              "count": 452,
+              "value": 197
+            },
+            {
+              "count": 471,
+              "value": 193
+            },
+            {
+              "count": 495,
+              "value": 192
+            },
+            {
+              "count": 495,
+              "value": 194
+            },
+            {
+              "count": 515,
+              "value": 191
+            }
+          ],
+          "maximum_frequency": 31936,
+          "minimum_nonzero_frequency": 251,
+          "most_frequent_observed": [
+            {
+              "count": 31936,
+              "value": 0
+            },
+            {
+              "count": 6133,
+              "value": 100
+            },
+            {
+              "count": 2278,
+              "value": 122
+            },
+            {
+              "count": 2206,
+              "value": 98
+            },
+            {
+              "count": 2189,
+              "value": 83
+            },
+            {
+              "count": 2170,
+              "value": 102
+            },
+            {
+              "count": 2159,
+              "value": 125
+            },
+            {
+              "count": 2138,
+              "value": 92
+            },
+            {
+              "count": 2120,
+              "value": 103
+            },
+            {
+              "count": 2105,
+              "value": 121
+            }
+          ],
+          "observed_values": 200,
+          "possible_values": 200,
+          "total_occurrences": 320868,
+          "unobserved_value_count": 0,
+          "unobserved_value_examples": [],
+          "unobserved_values_sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+        },
+        "y": {
+          "coverage_fraction": 1.0,
+          "dense_histogram_sha256": "9fd3e0034bd5403d401d117b31f8a86fc83be43a996cda8165df1a7ae1f344d3",
+          "least_frequent_observed": [
+            {
+              "count": 326,
+              "value": 195
+            },
+            {
+              "count": 337,
+              "value": 198
+            },
+            {
+              "count": 393,
+              "value": 196
+            },
+            {
+              "count": 422,
+              "value": 194
+            },
+            {
+              "count": 442,
+              "value": 189
+            },
+            {
+              "count": 485,
+              "value": 197
+            },
+            {
+              "count": 511,
+              "value": 193
+            },
+            {
+              "count": 513,
+              "value": 190
+            },
+            {
+              "count": 537,
+              "value": 11
+            },
+            {
+              "count": 567,
+              "value": 191
+            }
+          ],
+          "maximum_frequency": 31633,
+          "minimum_nonzero_frequency": 326,
+          "most_frequent_observed": [
+            {
+              "count": 31633,
+              "value": 0
+            },
+            {
+              "count": 3139,
+              "value": 100
+            },
+            {
+              "count": 2366,
+              "value": 199
+            },
+            {
+              "count": 2304,
+              "value": 88
+            },
+            {
+              "count": 2233,
+              "value": 106
+            },
+            {
+              "count": 2203,
+              "value": 112
+            },
+            {
+              "count": 2143,
+              "value": 50
+            },
+            {
+              "count": 2109,
+              "value": 75
+            },
+            {
+              "count": 2068,
+              "value": 90
+            },
+            {
+              "count": 2068,
+              "value": 91
+            }
+          ],
+          "observed_values": 200,
+          "possible_values": 200,
+          "total_occurrences": 320868,
+          "unobserved_value_count": 0,
+          "unobserved_value_examples": [],
+          "unobserved_values_sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+        }
+      },
+      "digest_composition": "direct_length_prefixed_record_stream",
+      "invertibility": {
+        "atomic_to_xy_rgb_path_end_to_atomic": {
+          "failed_records": 0,
+          "passed_records": 1000
+        },
+        "atomic_to_xy_to_atomic": {
+          "failed_records": 0,
+          "passed_records": 1000
+        }
+      },
+      "lengths": {
+        "atomic": {
+          "context_thresholds": {
+            "2304": {
+              "above_count": 0,
+              "above_fraction": 0.0,
+              "at_or_below_count": 1000,
+              "at_or_below_fraction": 1.0
+            },
+            "4096": {
+              "above_count": 0,
+              "above_fraction": 0.0,
+              "at_or_below_count": 1000,
+              "at_or_below_fraction": 1.0
+            },
+            "8192": {
+              "above_count": 0,
+              "above_fraction": 0.0,
+              "at_or_below_count": 1000,
+              "at_or_below_fraction": 1.0
+            }
+          },
+          "maximum": 1995,
+          "mean": 534.651,
+          "median": 431.0,
+          "minimum": 27,
+          "p90_nearest_rank": 1194,
+          "p95_nearest_rank": 1515,
+          "p99_nearest_rank": 1892,
+          "record_count": 1000,
+          "total_tokens": 534651
+        },
+        "xy_factorized": {
+          "context_thresholds": {
+            "2304": {
+              "above_count": 60,
+              "above_fraction": 0.06,
+              "at_or_below_count": 940,
+              "at_or_below_fraction": 0.94
+            },
+            "4096": {
+              "above_count": 0,
+              "above_fraction": 0.0,
+              "at_or_below_count": 1000,
+              "at_or_below_fraction": 1.0
+            },
+            "8192": {
+              "above_count": 0,
+              "above_fraction": 0.0,
+              "at_or_below_count": 1000,
+              "at_or_below_fraction": 1.0
+            }
+          },
+          "maximum": 3376,
+          "mean": 855.519,
+          "median": 673.5,
+          "minimum": 40,
+          "p90_nearest_rank": 1922,
+          "p95_nearest_rank": 2466,
+          "p99_nearest_rank": 3064,
+          "record_count": 1000,
+          "total_tokens": 855519
+        },
+        "xy_rgb_explicit_path_end": {
+          "context_thresholds": {
+            "2304": {
+              "above_count": 66,
+              "above_fraction": 0.066,
+              "at_or_below_count": 934,
+              "at_or_below_fraction": 0.934
+            },
+            "4096": {
+              "above_count": 0,
+              "above_fraction": 0.0,
+              "at_or_below_count": 1000,
+              "at_or_below_fraction": 1.0
+            },
+            "8192": {
+              "above_count": 0,
+              "above_fraction": 0.0,
+              "at_or_below_count": 1000,
+              "at_or_below_fraction": 1.0
+            }
+          },
+          "maximum": 3489,
+          "mean": 875.988,
+          "median": 681.5,
+          "minimum": 41,
+          "p90_nearest_rank": 1963,
+          "p95_nearest_rank": 2532,
+          "p99_nearest_rank": 3193,
+          "record_count": 1000,
+          "total_tokens": 875988
+        }
+      },
+      "paired_inflation_from_atomic": {
+        "xy_factorized": {
+          "maximum_per_record_length_ratio": 1.72340426,
+          "maximum_token_delta": 1412,
+          "mean_per_record_length_ratio": 1.58138161,
+          "mean_token_delta": 320.868,
+          "total_length_ratio": 1.60014477,
+          "total_token_delta": 320868
+        },
+        "xy_rgb_explicit_path_end": {
+          "maximum_per_record_length_ratio": 1.78571429,
+          "maximum_token_delta": 1494,
+          "mean_per_record_length_ratio": 1.61529029,
+          "mean_token_delta": 341.337,
+          "total_length_ratio": 1.63842955,
+          "total_token_delta": 341337
+        }
+      },
+      "record_count": 1000,
+      "record_order_sha256": "e6011bb9b11e39cee0781a198baa4db443de243b1b0a9aec69f9a1f1d20ff06a",
+      "sequence_sha256": {
+        "atomic": "5b67adb90f3512f880cfd7bdc54cad57a21a39570233983864bf54e97b3f77ec",
+        "xy_factorized": "66734cad9be4f8b10f1cb28b04f7c952f884f9824fb87cad99d8c1b0652b263c",
+        "xy_rgb_explicit_path_end": "066a6b19b6f848aea1b060bc55b7560e32297a6cd8c444e5933a447eebee2be5"
+      },
+      "token_class_occurrences": {
+        "arc": 32529,
+        "bos": 1000,
+        "color": 7635,
+        "command": 171619,
+        "coordinate": 320868,
+        "eos": 1000
+      }
+    },
+    "train": {
+      "ambiguous_white_or_gradient_token_occurrences": 12501,
+      "complete_path_count": 141623,
+      "component_frequency_coverage": {
+        "arc": {
+          "coverage_fraction": 0.65,
+          "dense_histogram_sha256": "af79400477ff2d4abe5032a62b64057f7a9eba983cd132a4206b4d381048a419",
+          "least_frequent_observed": [
+            {
+              "count": 2,
+              "value": 2
+            },
+            {
+              "count": 2,
+              "value": 3
+            },
+            {
+              "count": 2,
+              "value": 21
+            },
+            {
+              "count": 2,
+              "value": 23
+            },
+            {
+              "count": 2,
+              "value": 25
+            },
+            {
+              "count": 2,
+              "value": 27
+            },
+            {
+              "count": 2,
+              "value": 31
+            },
+            {
+              "count": 2,
+              "value": 34
+            },
+            {
+              "count": 2,
+              "value": 43
+            },
+            {
+              "count": 2,
+              "value": 44
+            }
+          ],
+          "maximum_frequency": 459139,
+          "minimum_nonzero_frequency": 2,
+          "most_frequent_observed": [
+            {
+              "count": 459139,
+              "value": 0
+            },
+            {
+              "count": 143485,
+              "value": 1
+            },
+            {
+              "count": 314,
+              "value": 90
+            },
+            {
+              "count": 122,
+              "value": 45
+            },
+            {
+              "count": 38,
+              "value": 30
+            },
+            {
+              "count": 28,
+              "value": 60
+            },
+            {
+              "count": 16,
+              "value": 35
+            },
+            {
+              "count": 14,
+              "value": 15
+            },
+            {
+              "count": 14,
+              "value": 19
+            },
+            {
+              "count": 14,
+              "value": 57
+            }
+          ],
+          "observed_values": 65,
+          "possible_values": 100,
+          "total_occurrences": 603492,
+          "unobserved_value_count": 35,
+          "unobserved_value_examples": [
+            4,
+            9,
+            10,
+            12,
+            13,
+            14,
+            16,
+            32,
+            37,
+            38,
+            39,
+            41,
+            42,
+            48,
+            49,
+            50,
+            51,
+            53,
+            59,
+            61
+          ],
+          "unobserved_values_sha256": "d8f86c083227b0fdf57dd18984df8d495e2090887dff92b9811307b7aaafdabc"
+        },
+        "atomic_color": {
+          "coverage_fraction": 0.75402635,
+          "dense_histogram_sha256": "2f8043a6aa95cefdd578392f61b32aa6ac71310cf910337bdb6dae23b0a9d29c",
+          "least_frequent_observed": [
+            {
+              "count": 1,
+              "value": 15
+            },
+            {
+              "count": 1,
+              "value": 30
+            },
+            {
+              "count": 1,
+              "value": 32
+            },
+            {
+              "count": 1,
+              "value": 44
+            },
+            {
+              "count": 1,
+              "value": 50
+            },
+            {
+              "count": 1,
+              "value": 64
+            },
+            {
+              "count": 1,
+              "value": 79
+            },
+            {
+              "count": 1,
+              "value": 85
+            },
+            {
+              "count": 1,
+              "value": 87
+            },
+            {
+              "count": 1,
+              "value": 131
+            }
+          ],
+          "maximum_frequency": 17106,
+          "minimum_nonzero_frequency": 1,
+          "most_frequent_observed": [
+            {
+              "count": 17106,
+              "value": 0
+            },
+            {
+              "count": 12501,
+              "value": 4097
+            },
+            {
+              "count": 3778,
+              "value": 1
+            },
+            {
+              "count": 3368,
+              "value": 2
+            },
+            {
+              "count": 3170,
+              "value": 821
+            },
+            {
+              "count": 1936,
+              "value": 3824
+            },
+            {
+              "count": 1254,
+              "value": 822
+            },
+            {
+              "count": 1168,
+              "value": 275
+            },
+            {
+              "count": 1023,
+              "value": 1094
+            },
+            {
+              "count": 972,
+              "value": 548
+            }
+          ],
+          "observed_values": 3090,
+          "possible_values": 4098,
+          "total_occurrences": 141623,
+          "unobserved_value_count": 1008,
+          "unobserved_value_examples": [
+            11,
+            16,
+            25,
+            26,
+            27,
+            29,
+            31,
+            33,
+            45,
+            47,
+            51,
+            52,
+            63,
+            67,
+            83,
+            84,
+            99,
+            166,
+            179,
+            196
+          ],
+          "unobserved_values_sha256": "bcd80dc675c14a9d6fc4639d39c8fdecadce6905954da70c2c29bc856806ea46"
+        },
+        "b": {
+          "coverage_fraction": 1.0,
+          "dense_histogram_sha256": "3545e505c1d5510a68ed4b526005ac78c959984f17d8bec77a7d570a6a9901b9",
+          "least_frequent_observed": [
+            {
+              "count": 4220,
+              "value": 10
+            },
+            {
+              "count": 4628,
+              "value": 11
+            },
+            {
+              "count": 4854,
+              "value": 13
+            },
+            {
+              "count": 5012,
+              "value": 8
+            },
+            {
+              "count": 5402,
+              "value": 1
+            },
+            {
+              "count": 5494,
+              "value": 12
+            },
+            {
+              "count": 5525,
+              "value": 7
+            },
+            {
+              "count": 5705,
+              "value": 9
+            },
+            {
+              "count": 6074,
+              "value": 2
+            },
+            {
+              "count": 6805,
+              "value": 14
+            }
+          ],
+          "maximum_frequency": 23732,
+          "minimum_nonzero_frequency": 4220,
+          "most_frequent_observed": [
+            {
+              "count": 23732,
+              "value": 15
+            },
+            {
+              "count": 9626,
+              "value": 3
+            },
+            {
+              "count": 8904,
+              "value": 5
+            },
+            {
+              "count": 8563,
+              "value": 4
+            },
+            {
+              "count": 8540,
+              "value": 0
+            },
+            {
+              "count": 7655,
+              "value": 6
+            },
+            {
+              "count": 6805,
+              "value": 14
+            },
+            {
+              "count": 6074,
+              "value": 2
+            },
+            {
+              "count": 5705,
+              "value": 9
+            },
+            {
+              "count": 5525,
+              "value": 7
+            }
+          ],
+          "observed_values": 16,
+          "possible_values": 16,
+          "total_occurrences": 120739,
+          "unobserved_value_count": 0,
+          "unobserved_value_examples": [],
+          "unobserved_values_sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+        },
+        "command": {
+          "coverage_fraction": 1.0,
+          "dense_histogram_sha256": "d716f909dcc58693212f795f317f5a3d41a3fb7085df97b811809b748608e94d",
+          "least_frequent_observed": [
+            {
+              "count": 201164,
+              "value": 3
+            },
+            {
+              "count": 460606,
+              "value": 4
+            },
+            {
+              "count": 472722,
+              "value": 0
+            },
+            {
+              "count": 997681,
+              "value": 1
+            },
+            {
+              "count": 1057204,
+              "value": 2
+            }
+          ],
+          "maximum_frequency": 1057204,
+          "minimum_nonzero_frequency": 201164,
+          "most_frequent_observed": [
+            {
+              "count": 1057204,
+              "value": 2
+            },
+            {
+              "count": 997681,
+              "value": 1
+            },
+            {
+              "count": 472722,
+              "value": 0
+            },
+            {
+              "count": 460606,
+              "value": 4
+            },
+            {
+              "count": 201164,
+              "value": 3
+            }
+          ],
+          "observed_values": 5,
+          "possible_values": 5,
+          "total_occurrences": 3189377,
+          "unobserved_value_count": 0,
+          "unobserved_value_examples": [],
+          "unobserved_values_sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+        },
+        "g": {
+          "coverage_fraction": 1.0,
+          "dense_histogram_sha256": "6a68a0856d358a0be9590d98ae33154a7b4fc8cb791718495e9e1ecdf666a1a9",
+          "least_frequent_observed": [
+            {
+              "count": 4650,
+              "value": 7
+            },
+            {
+              "count": 5076,
+              "value": 1
+            },
+            {
+              "count": 5396,
+              "value": 8
+            },
+            {
+              "count": 5705,
+              "value": 9
+            },
+            {
+              "count": 5972,
+              "value": 5
+            },
+            {
+              "count": 6067,
+              "value": 0
+            },
+            {
+              "count": 6169,
+              "value": 2
+            },
+            {
+              "count": 6263,
+              "value": 10
+            },
+            {
+              "count": 7098,
+              "value": 4
+            },
+            {
+              "count": 7308,
+              "value": 6
+            }
+          ],
+          "maximum_frequency": 15752,
+          "minimum_nonzero_frequency": 4650,
+          "most_frequent_observed": [
+            {
+              "count": 15752,
+              "value": 15
+            },
+            {
+              "count": 10871,
+              "value": 3
+            },
+            {
+              "count": 9300,
+              "value": 14
+            },
+            {
+              "count": 8957,
+              "value": 13
+            },
+            {
+              "count": 8422,
+              "value": 12
+            },
+            {
+              "count": 7733,
+              "value": 11
+            },
+            {
+              "count": 7308,
+              "value": 6
+            },
+            {
+              "count": 7098,
+              "value": 4
+            },
+            {
+              "count": 6263,
+              "value": 10
+            },
+            {
+              "count": 6169,
+              "value": 2
+            }
+          ],
+          "observed_values": 16,
+          "possible_values": 16,
+          "total_occurrences": 120739,
+          "unobserved_value_count": 0,
+          "unobserved_value_examples": [],
+          "unobserved_values_sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+        },
+        "joint_xy": {
+          "coverage_fraction": 1.0,
+          "dense_histogram_sha256": "e3ecaec49e5ef973503ba672a3fd944e1889f4bc7c259afe2b95fb15b18d54bb",
+          "least_frequent_observed": [
+            {
+              "count": 1,
+              "value": 1196
+            },
+            {
+              "count": 2,
+              "value": 997
+            },
+            {
+              "count": 3,
+              "value": 213
+            },
+            {
+              "count": 3,
+              "value": 214
+            },
+            {
+              "count": 3,
+              "value": 395
+            },
+            {
+              "count": 3,
+              "value": 411
+            },
+            {
+              "count": 3,
+              "value": 415
+            },
+            {
+              "count": 3,
+              "value": 594
+            },
+            {
+              "count": 3,
+              "value": 1601
+            },
+            {
+              "count": 3,
+              "value": 2605
+            }
+          ],
+          "maximum_frequency": 565670,
+          "minimum_nonzero_frequency": 1,
+          "most_frequent_observed": [
+            {
+              "count": 565670,
+              "value": 0
+            },
+            {
+              "count": 22330,
+              "value": 603
+            },
+            {
+              "count": 20802,
+              "value": 402
+            },
+            {
+              "count": 18135,
+              "value": 804
+            },
+            {
+              "count": 14718,
+              "value": 1206
+            },
+            {
+              "count": 12112,
+              "value": 201
+            },
+            {
+              "count": 11014,
+              "value": 1005
+            },
+            {
+              "count": 9838,
+              "value": 1608
+            },
+            {
+              "count": 7235,
+              "value": 1407
+            },
+            {
+              "count": 5386,
+              "value": 1809
+            }
+          ],
+          "observed_values": 40000,
+          "possible_values": 40000,
+          "total_occurrences": 5977671,
+          "unobserved_value_count": 0,
+          "unobserved_value_examples": [],
+          "unobserved_values_sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+        },
+        "path_end": {
+          "coverage_fraction": 1.0,
+          "dense_histogram_sha256": "ceeeba235d20dd74faa036fee095f9d93a9782aff3c117cf68f2d1a82001103c",
+          "least_frequent_observed": [
+            {
+              "count": 141623,
+              "value": 0
+            }
+          ],
+          "maximum_frequency": 141623,
+          "minimum_nonzero_frequency": 141623,
+          "most_frequent_observed": [
+            {
+              "count": 141623,
+              "value": 0
+            }
+          ],
+          "observed_values": 1,
+          "possible_values": 1,
+          "total_occurrences": 141623,
+          "unobserved_value_count": 0,
+          "unobserved_value_examples": [],
+          "unobserved_values_sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+        },
+        "r": {
+          "coverage_fraction": 1.0,
+          "dense_histogram_sha256": "d60ce280a351ea88bc7f0de9b70bbf2f11ca20da3cac3fd246b3b8cf1b22a0b0",
+          "least_frequent_observed": [
+            {
+              "count": 3050,
+              "value": 9
+            },
+            {
+              "count": 3144,
+              "value": 7
+            },
+            {
+              "count": 3147,
+              "value": 10
+            },
+            {
+              "count": 3467,
+              "value": 8
+            },
+            {
+              "count": 3536,
+              "value": 11
+            },
+            {
+              "count": 4208,
+              "value": 5
+            },
+            {
+              "count": 4417,
+              "value": 1
+            },
+            {
+              "count": 4511,
+              "value": 12
+            },
+            {
+              "count": 5536,
+              "value": 13
+            },
+            {
+              "count": 5627,
+              "value": 6
+            }
+          ],
+          "maximum_frequency": 36531,
+          "minimum_nonzero_frequency": 3050,
+          "most_frequent_observed": [
+            {
+              "count": 36531,
+              "value": 15
+            },
+            {
+              "count": 9741,
+              "value": 0
+            },
+            {
+              "count": 9649,
+              "value": 14
+            },
+            {
+              "count": 9626,
+              "value": 3
+            },
+            {
+              "count": 7970,
+              "value": 2
+            },
+            {
+              "count": 6579,
+              "value": 4
+            },
+            {
+              "count": 5627,
+              "value": 6
+            },
+            {
+              "count": 5536,
+              "value": 13
+            },
+            {
+              "count": 4511,
+              "value": 12
+            },
+            {
+              "count": 4417,
+              "value": 1
+            }
+          ],
+          "observed_values": 16,
+          "possible_values": 16,
+          "total_occurrences": 120739,
+          "unobserved_value_count": 0,
+          "unobserved_value_examples": [],
+          "unobserved_values_sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+        },
+        "special_color": {
+          "coverage_fraction": 1.0,
+          "dense_histogram_sha256": "bdaaf0b6162f82753634ba0d0f748a83b6deb174b088921877b7dac84935ea6f",
+          "least_frequent_observed": [
+            {
+              "count": 3778,
+              "value": 1
+            },
+            {
+              "count": 17106,
+              "value": 0
+            }
+          ],
+          "maximum_frequency": 17106,
+          "minimum_nonzero_frequency": 3778,
+          "most_frequent_observed": [
+            {
+              "count": 17106,
+              "value": 0
+            },
+            {
+              "count": 3778,
+              "value": 1
+            }
+          ],
+          "observed_values": 2,
+          "possible_values": 2,
+          "total_occurrences": 20884,
+          "unobserved_value_count": 0,
+          "unobserved_value_examples": [],
+          "unobserved_values_sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+        },
+        "x": {
+          "coverage_fraction": 1.0,
+          "dense_histogram_sha256": "2f0bda251429c094c859d0b0bb1e0c8e77a62a15ce44371cfc5c270351f8b477",
+          "least_frequent_observed": [
+            {
+              "count": 5435,
+              "value": 198
+            },
+            {
+              "count": 6351,
+              "value": 195
+            },
+            {
+              "count": 7734,
+              "value": 196
+            },
+            {
+              "count": 8449,
+              "value": 193
+            },
+            {
+              "count": 8486,
+              "value": 197
+            },
+            {
+              "count": 8978,
+              "value": 189
+            },
+            {
+              "count": 9338,
+              "value": 191
+            },
+            {
+              "count": 9387,
+              "value": 190
+            },
+            {
+              "count": 9491,
+              "value": 192
+            },
+            {
+              "count": 10046,
+              "value": 194
+            }
+          ],
+          "maximum_frequency": 583613,
+          "minimum_nonzero_frequency": 5435,
+          "most_frequent_observed": [
+            {
+              "count": 583613,
+              "value": 0
+            },
+            {
+              "count": 107358,
+              "value": 100
+            },
+            {
+              "count": 39752,
+              "value": 97
+            },
+            {
+              "count": 39114,
+              "value": 112
+            },
+            {
+              "count": 39038,
+              "value": 94
+            },
+            {
+              "count": 38854,
+              "value": 103
+            },
+            {
+              "count": 38735,
+              "value": 125
+            },
+            {
+              "count": 38520,
+              "value": 106
+            },
+            {
+              "count": 38429,
+              "value": 92
+            },
+            {
+              "count": 38409,
+              "value": 199
+            }
+          ],
+          "observed_values": 200,
+          "possible_values": 200,
+          "total_occurrences": 5977671,
+          "unobserved_value_count": 0,
+          "unobserved_value_examples": [],
+          "unobserved_values_sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+        },
+        "y": {
+          "coverage_fraction": 1.0,
+          "dense_histogram_sha256": "cff9dec1cae8b6e688893398981219f7c9c13f2ed1b08044748095bf2fadaf76",
+          "least_frequent_observed": [
+            {
+              "count": 6484,
+              "value": 198
+            },
+            {
+              "count": 6661,
+              "value": 195
+            },
+            {
+              "count": 7836,
+              "value": 196
+            },
+            {
+              "count": 9860,
+              "value": 193
+            },
+            {
+              "count": 9885,
+              "value": 191
+            },
+            {
+              "count": 10060,
+              "value": 189
+            },
+            {
+              "count": 10429,
+              "value": 197
+            },
+            {
+              "count": 10755,
+              "value": 190
+            },
+            {
+              "count": 11188,
+              "value": 192
+            },
+            {
+              "count": 11607,
+              "value": 194
+            }
+          ],
+          "maximum_frequency": 589064,
+          "minimum_nonzero_frequency": 6484,
+          "most_frequent_observed": [
+            {
+              "count": 589064,
+              "value": 0
+            },
+            {
+              "count": 60010,
+              "value": 100
+            },
+            {
+              "count": 39334,
+              "value": 88
+            },
+            {
+              "count": 39218,
+              "value": 92
+            },
+            {
+              "count": 38992,
+              "value": 75
+            },
+            {
+              "count": 38756,
+              "value": 94
+            },
+            {
+              "count": 38145,
+              "value": 106
+            },
+            {
+              "count": 37964,
+              "value": 108
+            },
+            {
+              "count": 37577,
+              "value": 112
+            },
+            {
+              "count": 37049,
+              "value": 199
+            }
+          ],
+          "observed_values": 200,
+          "possible_values": 200,
+          "total_occurrences": 5977671,
+          "unobserved_value_count": 0,
+          "unobserved_value_examples": [],
+          "unobserved_values_sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+        }
+      },
+      "digest_composition": "direct_length_prefixed_record_stream",
+      "invertibility": {
+        "atomic_to_xy_rgb_path_end_to_atomic": {
+          "failed_records": 0,
+          "passed_records": 18000
+        },
+        "atomic_to_xy_to_atomic": {
+          "failed_records": 0,
+          "passed_records": 18000
+        }
+      },
+      "lengths": {
+        "atomic": {
+          "context_thresholds": {
+            "2304": {
+              "above_count": 0,
+              "above_fraction": 0.0,
+              "at_or_below_count": 18000,
+              "at_or_below_fraction": 1.0
+            },
+            "4096": {
+              "above_count": 0,
+              "above_fraction": 0.0,
+              "at_or_below_count": 18000,
+              "at_or_below_fraction": 1.0
+            },
+            "8192": {
+              "above_count": 0,
+              "above_fraction": 0.0,
+              "at_or_below_count": 18000,
+              "at_or_below_fraction": 1.0
+            }
+          },
+          "maximum": 2048,
+          "mean": 552.675722,
+          "median": 439.0,
+          "minimum": 13,
+          "p90_nearest_rank": 1265,
+          "p95_nearest_rank": 1586,
+          "p99_nearest_rank": 1936,
+          "record_count": 18000,
+          "total_tokens": 9948163
+        },
+        "xy_factorized": {
+          "context_thresholds": {
+            "2304": {
+              "above_count": 1300,
+              "above_fraction": 0.07222222,
+              "at_or_below_count": 16700,
+              "at_or_below_fraction": 0.92777778
+            },
+            "4096": {
+              "above_count": 0,
+              "above_fraction": 0.0,
+              "at_or_below_count": 18000,
+              "at_or_below_fraction": 1.0
+            },
+            "8192": {
+              "above_count": 0,
+              "above_fraction": 0.0,
+              "at_or_below_count": 18000,
+              "at_or_below_fraction": 1.0
+            }
+          },
+          "maximum": 3528,
+          "mean": 884.768556,
+          "median": 684.0,
+          "minimum": 19,
+          "p90_nearest_rank": 2044,
+          "p95_nearest_rank": 2575,
+          "p99_nearest_rank": 3169,
+          "record_count": 18000,
+          "total_tokens": 15925834
+        },
+        "xy_rgb_explicit_path_end": {
+          "context_thresholds": {
+            "2304": {
+              "above_count": 1402,
+              "above_fraction": 0.07788889,
+              "at_or_below_count": 16598,
+              "at_or_below_fraction": 0.92211111
+            },
+            "4096": {
+              "above_count": 0,
+              "above_fraction": 0.0,
+              "at_or_below_count": 18000,
+              "at_or_below_fraction": 1.0
+            },
+            "8192": {
+              "above_count": 0,
+              "above_fraction": 0.0,
+              "at_or_below_count": 18000,
+              "at_or_below_fraction": 1.0
+            }
+          },
+          "maximum": 3587,
+          "mean": 906.051944,
+          "median": 697.0,
+          "minimum": 20,
+          "p90_nearest_rank": 2095,
+          "p95_nearest_rank": 2647,
+          "p99_nearest_rank": 3256,
+          "record_count": 18000,
+          "total_tokens": 16308935
+        }
+      },
+      "paired_inflation_from_atomic": {
+        "xy_factorized": {
+          "maximum_per_record_length_ratio": 1.74700315,
+          "maximum_token_delta": 1495,
+          "mean_per_record_length_ratio": 1.58246117,
+          "mean_token_delta": 332.092833,
+          "total_length_ratio": 1.60088189,
+          "total_token_delta": 5977671
+        },
+        "xy_rgb_explicit_path_end": {
+          "maximum_per_record_length_ratio": 1.79637527,
+          "maximum_token_delta": 1540,
+          "mean_per_record_length_ratio": 1.6170703,
+          "mean_token_delta": 353.376222,
+          "total_length_ratio": 1.63939161,
+          "total_token_delta": 6360772
+        }
+      },
+      "record_count": 18000,
+      "record_order_sha256": "4a755940a1240744c4ef4fd641e5971072834aa0674f2760ba63aa2edacc71b5",
+      "sequence_sha256": {
+        "atomic": "afc1e3c1976485b56566725d6a588ba1046d1cd8c8402b1647c6edb36f2b9d4d",
+        "xy_factorized": "e623f9ecaa1be42c6be3fca6fd5a656b4a58dbdf10dbd3f000c455f61e2c1ed4",
+        "xy_rgb_explicit_path_end": "ffa570f73368ab07144c9c6fad3be1911edbb000b141d1c9a59fba08ec71da5a"
+      },
+      "token_class_occurrences": {
+        "arc": 603492,
+        "bos": 18000,
+        "color": 141623,
+        "command": 3189377,
+        "coordinate": 5977671,
+        "eos": 18000
+      }
+    },
+    "validation": {
+      "ambiguous_white_or_gradient_token_occurrences": 680,
+      "complete_path_count": 7951,
+      "component_frequency_coverage": {
+        "arc": {
+          "coverage_fraction": 0.08,
+          "dense_histogram_sha256": "428bfeea65465587a8db0b1cf66518eff630f196c6ac9201ce8e23d545899654",
+          "least_frequent_observed": [
+            {
+              "count": 2,
+              "value": 45
+            },
+            {
+              "count": 2,
+              "value": 87
+            },
+            {
+              "count": 4,
+              "value": 60
+            },
+            {
+              "count": 4,
+              "value": 90
+            },
+            {
+              "count": 8,
+              "value": 27
+            },
+            {
+              "count": 18,
+              "value": 30
+            },
+            {
+              "count": 6914,
+              "value": 1
+            },
+            {
+              "count": 22805,
+              "value": 0
+            }
+          ],
+          "maximum_frequency": 22805,
+          "minimum_nonzero_frequency": 2,
+          "most_frequent_observed": [
+            {
+              "count": 22805,
+              "value": 0
+            },
+            {
+              "count": 6914,
+              "value": 1
+            },
+            {
+              "count": 18,
+              "value": 30
+            },
+            {
+              "count": 8,
+              "value": 27
+            },
+            {
+              "count": 4,
+              "value": 60
+            },
+            {
+              "count": 4,
+              "value": 90
+            },
+            {
+              "count": 2,
+              "value": 45
+            },
+            {
+              "count": 2,
+              "value": 87
+            }
+          ],
+          "observed_values": 8,
+          "possible_values": 100,
+          "total_occurrences": 29757,
+          "unobserved_value_count": 92,
+          "unobserved_value_examples": [
+            2,
+            3,
+            4,
+            5,
+            6,
+            7,
+            8,
+            9,
+            10,
+            11,
+            12,
+            13,
+            14,
+            15,
+            16,
+            17,
+            18,
+            19,
+            20,
+            21
+          ],
+          "unobserved_values_sha256": "c134b0de89d5c84b70cd359e0241726e8ecbb4c4aa4877d36fd63cd11bf90be5"
+        },
+        "atomic_color": {
+          "coverage_fraction": 0.26232308,
+          "dense_histogram_sha256": "318ac3628b8f81ab5f610ddc7189f9f80a24654da67755564fcdc31f1ef02fd8",
+          "least_frequent_observed": [
+            {
+              "count": 1,
+              "value": 10
+            },
+            {
+              "count": 1,
+              "value": 37
+            },
+            {
+              "count": 1,
+              "value": 71
+            },
+            {
+              "count": 1,
+              "value": 75
+            },
+            {
+              "count": 1,
+              "value": 80
+            },
+            {
+              "count": 1,
+              "value": 87
+            },
+            {
+              "count": 1,
+              "value": 91
+            },
+            {
+              "count": 1,
+              "value": 98
+            },
+            {
+              "count": 1,
+              "value": 101
+            },
+            {
+              "count": 1,
+              "value": 105
+            }
+          ],
+          "maximum_frequency": 984,
+          "minimum_nonzero_frequency": 1,
+          "most_frequent_observed": [
+            {
+              "count": 984,
+              "value": 0
+            },
+            {
+              "count": 680,
+              "value": 4097
+            },
+            {
+              "count": 268,
+              "value": 2
+            },
+            {
+              "count": 226,
+              "value": 1
+            },
+            {
+              "count": 177,
+              "value": 821
+            },
+            {
+              "count": 83,
+              "value": 3824
+            },
+            {
+              "count": 73,
+              "value": 822
+            },
+            {
+              "count": 64,
+              "value": 275
+            },
+            {
+              "count": 62,
+              "value": 1094
+            },
+            {
+              "count": 62,
+              "value": 3551
+            }
+          ],
+          "observed_values": 1075,
+          "possible_values": 4098,
+          "total_occurrences": 7951,
+          "unobserved_value_count": 3023,
+          "unobserved_value_examples": [
+            4,
+            6,
+            7,
+            8,
+            9,
+            11,
+            12,
+            13,
+            14,
+            15,
+            16,
+            18,
+            19,
+            20,
+            21,
+            23,
+            24,
+            26,
+            27,
+            28
+          ],
+          "unobserved_values_sha256": "723d42274e37bce68c8b870f63c7d673a9ec5553cd231846dc43a597abbfa294"
+        },
+        "b": {
+          "coverage_fraction": 1.0,
+          "dense_histogram_sha256": "ebb9d12adbe28b9324b4ebcb89c96cf8d534cda567710305b969370af24d4cdb",
+          "least_frequent_observed": [
+            {
+              "count": 263,
+              "value": 1
+            },
+            {
+              "count": 274,
+              "value": 13
+            },
+            {
+              "count": 290,
+              "value": 10
+            },
+            {
+              "count": 293,
+              "value": 7
+            },
+            {
+              "count": 299,
+              "value": 11
+            },
+            {
+              "count": 300,
+              "value": 2
+            },
+            {
+              "count": 312,
+              "value": 8
+            },
+            {
+              "count": 321,
+              "value": 9
+            },
+            {
+              "count": 322,
+              "value": 12
+            },
+            {
+              "count": 357,
+              "value": 14
+            }
+          ],
+          "maximum_frequency": 1235,
+          "minimum_nonzero_frequency": 263,
+          "most_frequent_observed": [
+            {
+              "count": 1235,
+              "value": 15
+            },
+            {
+              "count": 586,
+              "value": 0
+            },
+            {
+              "count": 519,
+              "value": 5
+            },
+            {
+              "count": 497,
+              "value": 3
+            },
+            {
+              "count": 483,
+              "value": 4
+            },
+            {
+              "count": 390,
+              "value": 6
+            },
+            {
+              "count": 357,
+              "value": 14
+            },
+            {
+              "count": 322,
+              "value": 12
+            },
+            {
+              "count": 321,
+              "value": 9
+            },
+            {
+              "count": 312,
+              "value": 8
+            }
+          ],
+          "observed_values": 16,
+          "possible_values": 16,
+          "total_occurrences": 6741,
+          "unobserved_value_count": 0,
+          "unobserved_value_examples": [],
+          "unobserved_values_sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+        },
+        "command": {
+          "coverage_fraction": 1.0,
+          "dense_histogram_sha256": "aab2d1642aa2fd21189edcbfc330006dc71b321aa37cbb18735d27e836cd7987",
+          "least_frequent_observed": [
+            {
+              "count": 9919,
+              "value": 3
+            },
+            {
+              "count": 24928,
+              "value": 4
+            },
+            {
+              "count": 25922,
+              "value": 0
+            },
+            {
+              "count": 55343,
+              "value": 1
+            },
+            {
+              "count": 58836,
+              "value": 2
+            }
+          ],
+          "maximum_frequency": 58836,
+          "minimum_nonzero_frequency": 9919,
+          "most_frequent_observed": [
+            {
+              "count": 58836,
+              "value": 2
+            },
+            {
+              "count": 55343,
+              "value": 1
+            },
+            {
+              "count": 25922,
+              "value": 0
+            },
+            {
+              "count": 24928,
+              "value": 4
+            },
+            {
+              "count": 9919,
+              "value": 3
+            }
+          ],
+          "observed_values": 5,
+          "possible_values": 5,
+          "total_occurrences": 174948,
+          "unobserved_value_count": 0,
+          "unobserved_value_examples": [],
+          "unobserved_values_sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+        },
+        "g": {
+          "coverage_fraction": 1.0,
+          "dense_histogram_sha256": "ae780dd293ec76c0ae136de7894f5f77477b86bd9ecbeb2692fee1b2e4ef951c",
+          "least_frequent_observed": [
+            {
+              "count": 218,
+              "value": 7
+            },
+            {
+              "count": 251,
+              "value": 1
+            },
+            {
+              "count": 310,
+              "value": 2
+            },
+            {
+              "count": 348,
+              "value": 9
+            },
+            {
+              "count": 350,
+              "value": 5
+            },
+            {
+              "count": 353,
+              "value": 8
+            },
+            {
+              "count": 358,
+              "value": 6
+            },
+            {
+              "count": 375,
+              "value": 10
+            },
+            {
+              "count": 409,
+              "value": 4
+            },
+            {
+              "count": 429,
+              "value": 11
+            }
+          ],
+          "maximum_frequency": 846,
+          "minimum_nonzero_frequency": 218,
+          "most_frequent_observed": [
+            {
+              "count": 846,
+              "value": 15
+            },
+            {
+              "count": 549,
+              "value": 13
+            },
+            {
+              "count": 533,
+              "value": 12
+            },
+            {
+              "count": 518,
+              "value": 3
+            },
+            {
+              "count": 452,
+              "value": 14
+            },
+            {
+              "count": 442,
+              "value": 0
+            },
+            {
+              "count": 429,
+              "value": 11
+            },
+            {
+              "count": 409,
+              "value": 4
+            },
+            {
+              "count": 375,
+              "value": 10
+            },
+            {
+              "count": 358,
+              "value": 6
+            }
+          ],
+          "observed_values": 16,
+          "possible_values": 16,
+          "total_occurrences": 6741,
+          "unobserved_value_count": 0,
+          "unobserved_value_examples": [],
+          "unobserved_values_sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+        },
+        "joint_xy": {
+          "coverage_fraction": 0.943175,
+          "dense_histogram_sha256": "0f23c74ddb917304a07e667d35bbaf534f588b72d8fabd4f1c2769bcd29de242",
+          "least_frequent_observed": [
+            {
+              "count": 1,
+              "value": 7
+            },
+            {
+              "count": 1,
+              "value": 9
+            },
+            {
+              "count": 1,
+              "value": 10
+            },
+            {
+              "count": 1,
+              "value": 14
+            },
+            {
+              "count": 1,
+              "value": 17
+            },
+            {
+              "count": 1,
+              "value": 18
+            },
+            {
+              "count": 1,
+              "value": 21
+            },
+            {
+              "count": 1,
+              "value": 36
+            },
+            {
+              "count": 1,
+              "value": 43
+            },
+            {
+              "count": 1,
+              "value": 48
+            }
+          ],
+          "maximum_frequency": 31561,
+          "minimum_nonzero_frequency": 1,
+          "most_frequent_observed": [
+            {
+              "count": 31561,
+              "value": 0
+            },
+            {
+              "count": 1110,
+              "value": 603
+            },
+            {
+              "count": 944,
+              "value": 1206
+            },
+            {
+              "count": 880,
+              "value": 402
+            },
+            {
+              "count": 784,
+              "value": 804
+            },
+            {
+              "count": 557,
+              "value": 201
+            },
+            {
+              "count": 545,
+              "value": 1005
+            },
+            {
+              "count": 455,
+              "value": 1608
+            },
+            {
+              "count": 353,
+              "value": 1407
+            },
+            {
+              "count": 286,
+              "value": 1809
+            }
+          ],
+          "observed_values": 37727,
+          "possible_values": 40000,
+          "total_occurrences": 328461,
+          "unobserved_value_count": 2273,
+          "unobserved_value_examples": [
+            5,
+            8,
+            12,
+            44,
+            80,
+            124,
+            207,
+            209,
+            213,
+            214,
+            216,
+            217,
+            218,
+            219,
+            222,
+            223,
+            224,
+            227,
+            232,
+            236
+          ],
+          "unobserved_values_sha256": "613a5f2de99192ee24ca971967799dc29898ae16104ed645892dbc54581751c4"
+        },
+        "path_end": {
+          "coverage_fraction": 1.0,
+          "dense_histogram_sha256": "9a35d95ba57a4ea1a70692fe3097cba12b62cf7fec7e1d8e9910783f05ca3126",
+          "least_frequent_observed": [
+            {
+              "count": 7951,
+              "value": 0
+            }
+          ],
+          "maximum_frequency": 7951,
+          "minimum_nonzero_frequency": 7951,
+          "most_frequent_observed": [
+            {
+              "count": 7951,
+              "value": 0
+            }
+          ],
+          "observed_values": 1,
+          "possible_values": 1,
+          "total_occurrences": 7951,
+          "unobserved_value_count": 0,
+          "unobserved_value_examples": [],
+          "unobserved_values_sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+        },
+        "r": {
+          "coverage_fraction": 1.0,
+          "dense_histogram_sha256": "79fbd30f86968320a9e86c416faeeec44e95a86d82a3d444e73c8670723a891c",
+          "least_frequent_observed": [
+            {
+              "count": 173,
+              "value": 8
+            },
+            {
+              "count": 180,
+              "value": 9
+            },
+            {
+              "count": 212,
+              "value": 7
+            },
+            {
+              "count": 212,
+              "value": 10
+            },
+            {
+              "count": 218,
+              "value": 11
+            },
+            {
+              "count": 246,
+              "value": 12
+            },
+            {
+              "count": 256,
+              "value": 5
+            },
+            {
+              "count": 295,
+              "value": 1
+            },
+            {
+              "count": 307,
+              "value": 6
+            },
+            {
+              "count": 315,
+              "value": 13
+            }
+          ],
+          "maximum_frequency": 1967,
+          "minimum_nonzero_frequency": 173,
+          "most_frequent_observed": [
+            {
+              "count": 1967,
+              "value": 15
+            },
+            {
+              "count": 641,
+              "value": 0
+            },
+            {
+              "count": 482,
+              "value": 14
+            },
+            {
+              "count": 472,
+              "value": 3
+            },
+            {
+              "count": 394,
+              "value": 4
+            },
+            {
+              "count": 371,
+              "value": 2
+            },
+            {
+              "count": 315,
+              "value": 13
+            },
+            {
+              "count": 307,
+              "value": 6
+            },
+            {
+              "count": 295,
+              "value": 1
+            },
+            {
+              "count": 256,
+              "value": 5
+            }
+          ],
+          "observed_values": 16,
+          "possible_values": 16,
+          "total_occurrences": 6741,
+          "unobserved_value_count": 0,
+          "unobserved_value_examples": [],
+          "unobserved_values_sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+        },
+        "special_color": {
+          "coverage_fraction": 1.0,
+          "dense_histogram_sha256": "666af75288e0483038eee0daf55b6deb936efe65074ed667970b2a3b72cfb0ef",
+          "least_frequent_observed": [
+            {
+              "count": 226,
+              "value": 1
+            },
+            {
+              "count": 984,
+              "value": 0
+            }
+          ],
+          "maximum_frequency": 984,
+          "minimum_nonzero_frequency": 226,
+          "most_frequent_observed": [
+            {
+              "count": 984,
+              "value": 0
+            },
+            {
+              "count": 226,
+              "value": 1
+            }
+          ],
+          "observed_values": 2,
+          "possible_values": 2,
+          "total_occurrences": 1210,
+          "unobserved_value_count": 0,
+          "unobserved_value_examples": [],
+          "unobserved_values_sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+        },
+        "x": {
+          "coverage_fraction": 1.0,
+          "dense_histogram_sha256": "8147e74c85859d235edd033c93dbda8dc125b80c60781b452edb8229f71c5c3c",
+          "least_frequent_observed": [
+            {
+              "count": 381,
+              "value": 189
+            },
+            {
+              "count": 433,
+              "value": 195
+            },
+            {
+              "count": 434,
+              "value": 193
+            },
+            {
+              "count": 437,
+              "value": 198
+            },
+            {
+              "count": 476,
+              "value": 196
+            },
+            {
+              "count": 481,
+              "value": 190
+            },
+            {
+              "count": 502,
+              "value": 191
+            },
+            {
+              "count": 527,
+              "value": 192
+            },
+            {
+              "count": 556,
+              "value": 194
+            },
+            {
+              "count": 591,
+              "value": 197
+            }
+          ],
+          "maximum_frequency": 32490,
+          "minimum_nonzero_frequency": 381,
+          "most_frequent_observed": [
+            {
+              "count": 32490,
+              "value": 0
+            },
+            {
+              "count": 5871,
+              "value": 100
+            },
+            {
+              "count": 2661,
+              "value": 199
+            },
+            {
+              "count": 2296,
+              "value": 103
+            },
+            {
+              "count": 2248,
+              "value": 97
+            },
+            {
+              "count": 2223,
+              "value": 101
+            },
+            {
+              "count": 2205,
+              "value": 88
+            },
+            {
+              "count": 2193,
+              "value": 84
+            },
+            {
+              "count": 2124,
+              "value": 99
+            },
+            {
+              "count": 2121,
+              "value": 94
+            }
+          ],
+          "observed_values": 200,
+          "possible_values": 200,
+          "total_occurrences": 328461,
+          "unobserved_value_count": 0,
+          "unobserved_value_examples": [],
+          "unobserved_values_sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+        },
+        "y": {
+          "coverage_fraction": 1.0,
+          "dense_histogram_sha256": "ad2ff101a6e52bb09336dba1f5de48cee5a095f2eb631d4c77ed0e3c1ccae151",
+          "least_frequent_observed": [
+            {
+              "count": 385,
+              "value": 195
+            },
+            {
+              "count": 394,
+              "value": 196
+            },
+            {
+              "count": 527,
+              "value": 193
+            },
+            {
+              "count": 530,
+              "value": 198
+            },
+            {
+              "count": 579,
+              "value": 191
+            },
+            {
+              "count": 587,
+              "value": 190
+            },
+            {
+              "count": 628,
+              "value": 189
+            },
+            {
+              "count": 644,
+              "value": 194
+            },
+            {
+              "count": 688,
+              "value": 192
+            },
+            {
+              "count": 691,
+              "value": 197
+            }
+          ],
+          "maximum_frequency": 32936,
+          "minimum_nonzero_frequency": 385,
+          "most_frequent_observed": [
+            {
+              "count": 32936,
+              "value": 0
+            },
+            {
+              "count": 3499,
+              "value": 100
+            },
+            {
+              "count": 2450,
+              "value": 88
+            },
+            {
+              "count": 2421,
+              "value": 108
+            },
+            {
+              "count": 2362,
+              "value": 199
+            },
+            {
+              "count": 2169,
+              "value": 112
+            },
+            {
+              "count": 2125,
+              "value": 106
+            },
+            {
+              "count": 2100,
+              "value": 75
+            },
+            {
+              "count": 2077,
+              "value": 81
+            },
+            {
+              "count": 2068,
+              "value": 86
+            }
+          ],
+          "observed_values": 200,
+          "possible_values": 200,
+          "total_occurrences": 328461,
+          "unobserved_value_count": 0,
+          "unobserved_value_examples": [],
+          "unobserved_values_sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+        }
+      },
+      "digest_composition": "direct_length_prefixed_record_stream",
+      "invertibility": {
+        "atomic_to_xy_rgb_path_end_to_atomic": {
+          "failed_records": 0,
+          "passed_records": 1000
+        },
+        "atomic_to_xy_to_atomic": {
+          "failed_records": 0,
+          "passed_records": 1000
+        }
+      },
+      "lengths": {
+        "atomic": {
+          "context_thresholds": {
+            "2304": {
+              "above_count": 0,
+              "above_fraction": 0.0,
+              "at_or_below_count": 1000,
+              "at_or_below_fraction": 1.0
+            },
+            "4096": {
+              "above_count": 0,
+              "above_fraction": 0.0,
+              "at_or_below_count": 1000,
+              "at_or_below_fraction": 1.0
+            },
+            "8192": {
+              "above_count": 0,
+              "above_fraction": 0.0,
+              "at_or_below_count": 1000,
+              "at_or_below_fraction": 1.0
+            }
+          },
+          "maximum": 1996,
+          "mean": 543.117,
+          "median": 428.5,
+          "minimum": 21,
+          "p90_nearest_rank": 1235,
+          "p95_nearest_rank": 1504,
+          "p99_nearest_rank": 1840,
+          "record_count": 1000,
+          "total_tokens": 543117
+        },
+        "xy_factorized": {
+          "context_thresholds": {
+            "2304": {
+              "above_count": 69,
+              "above_fraction": 0.069,
+              "at_or_below_count": 931,
+              "at_or_below_fraction": 0.931
+            },
+            "4096": {
+              "above_count": 0,
+              "above_fraction": 0.0,
+              "at_or_below_count": 1000,
+              "at_or_below_fraction": 1.0
+            },
+            "8192": {
+              "above_count": 0,
+              "above_fraction": 0.0,
+              "at_or_below_count": 1000,
+              "at_or_below_fraction": 1.0
+            }
+          },
+          "maximum": 3359,
+          "mean": 871.578,
+          "median": 667.0,
+          "minimum": 31,
+          "p90_nearest_rank": 2034,
+          "p95_nearest_rank": 2444,
+          "p99_nearest_rank": 3045,
+          "record_count": 1000,
+          "total_tokens": 871578
+        },
+        "xy_rgb_explicit_path_end": {
+          "context_thresholds": {
+            "2304": {
+              "above_count": 75,
+              "above_fraction": 0.075,
+              "at_or_below_count": 925,
+              "at_or_below_fraction": 0.925
+            },
+            "4096": {
+              "above_count": 0,
+              "above_fraction": 0.0,
+              "at_or_below_count": 1000,
+              "at_or_below_fraction": 1.0
+            },
+            "8192": {
+              "above_count": 0,
+              "above_fraction": 0.0,
+              "at_or_below_count": 1000,
+              "at_or_below_fraction": 1.0
+            }
+          },
+          "maximum": 3467,
+          "mean": 893.011,
+          "median": 678.5,
+          "minimum": 32,
+          "p90_nearest_rank": 2063,
+          "p95_nearest_rank": 2532,
+          "p99_nearest_rank": 3128,
+          "record_count": 1000,
+          "total_tokens": 893011
+        }
+      },
+      "paired_inflation_from_atomic": {
+        "xy_factorized": {
+          "maximum_per_record_length_ratio": 1.73166369,
+          "maximum_token_delta": 1363,
+          "mean_per_record_length_ratio": 1.58765535,
+          "mean_token_delta": 328.461,
+          "total_length_ratio": 1.60477024,
+          "total_token_delta": 328461
+        },
+        "xy_rgb_explicit_path_end": {
+          "maximum_per_record_length_ratio": 1.76086957,
+          "maximum_token_delta": 1472,
+          "mean_per_record_length_ratio": 1.62229099,
+          "mean_token_delta": 349.894,
+          "total_length_ratio": 1.64423319,
+          "total_token_delta": 349894
+        }
+      },
+      "record_count": 1000,
+      "record_order_sha256": "30abd50031603004fc073c9c52650aa89f6a875e6ffe1c98f212f794ebd6c0da",
+      "sequence_sha256": {
+        "atomic": "1d0ccfdc8b853ff900f9f97c5bf1a616255b95925e67ef3e0958314d4f810d05",
+        "xy_factorized": "fa15b6741e872aa8b1a23a1394d7e50c83c78fe7d36b5814917d31aa748aae54",
+        "xy_rgb_explicit_path_end": "e4f15aef460350af002372bcd70edd0c9c9f49288930625e3f1e73ef2ec63102"
+      },
+      "token_class_occurrences": {
+        "arc": 29757,
+        "bos": 1000,
+        "color": 7951,
+        "command": 174948,
+        "coordinate": 328461,
+        "eos": 1000
+      }
+    }
+  },
+  "status": "PASS",
+  "vocabulary_size_formulas": {
+    "atomic_exact_encoder_producible": {
+      "formula": "5 command + 40000 joint_xy + 4098 color + 100 arc + 2 framing",
+      "size": 44205,
+      "terms": {
+        "arc": 100,
+        "color": 4098,
+        "command": 5,
+        "framing": 2,
+        "joint_xy": 40000
+      }
+    },
+    "current_contiguous_named_namespace": {
+      "formula": "196999 - 151938 + 1",
+      "includes_reserved_encoder_gaps": true,
+      "size": 45062,
+      "terms": {
+        "contiguous_upstream_ids": 45062
+      }
+    },
+    "xy_factorized": {
+      "channel_namespaces_are_distinct": true,
+      "formula": "5 command + 200 x + 200 y + 4098 color + 100 arc + 2 framing",
+      "size": 4605,
+      "terms": {
+        "arc": 100,
+        "color": 4098,
+        "command": 5,
+        "framing": 2,
+        "x": 200,
+        "y": 200
+      }
+    },
+    "xy_rgb_explicit_path_end": {
+      "channel_namespaces_are_distinct": true,
+      "formula": "5 command + 200 x + 200 y + (16 r + 16 g + 16 b) + 2 special_color + 1 path_end + 100 arc + 2 framing",
+      "size": 558,
+      "terms": {
+        "arc": 100,
+        "b": 16,
+        "command": 5,
+        "framing": 2,
+        "g": 16,
+        "path_end": 1,
+        "r": 16,
+        "special_color": 2,
+        "x": 200,
+        "y": 200
+      }
+    }
+  }
+}

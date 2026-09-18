@@ -51,20 +51,27 @@ class _FakeTokenizer:
         *,
         tokenize: bool,
         add_generation_prompt: bool,
-    ) -> list[int]:
-        assert tokenize
-        prefix = [
-            message
-            for message in messages
-            if message["role"] != "assistant"
-        ]
+    ) -> str | list[int]:
         text = "|".join(
-            f"{message['role']}:{message['content']}" for message in prefix
+            f"{message['role']}:{message['content']}" for message in messages
         )
-        ids = [1, *(ord(character) for character in text), 2]
-        if messages and messages[-1]["role"] == "assistant":
-            ids.extend(ord(character) for character in messages[-1]["content"])
-        return ids
+        return [ord(character) for character in text] if tokenize else text
+
+    def __call__(
+        self,
+        text: str,
+        *,
+        add_special_tokens: bool,
+        return_offsets_mapping: bool,
+    ) -> dict[str, list[Any]]:
+        assert add_special_tokens is False
+        assert return_offsets_mapping is True
+        return {
+            "input_ids": [ord(character) for character in text],
+            "offset_mapping": [
+                (index, index + 1) for index in range(len(text))
+            ],
+        }
 
 
 class _RecordingBackend:
@@ -107,6 +114,7 @@ def _sft_record(*, policy: bool | str = True) -> dict[str, Any]:
             "dataset_type": "icon",
             "record_id": "target",
             "canonical_svg_sha256": canonical_svg_sha256(target_svg),
+            "full_chat_token_length": 1,
             "instruction_policy": {
                 "r1_detail_60_description_40": policy,
             },

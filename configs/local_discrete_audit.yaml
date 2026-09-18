@@ -1,0 +1,39 @@
+local_discrete_audit:
+  tokenizer:
+    path: "/home/minjun_dev/.cache/huggingface/hub/models--google--gemma-4-12B-it-qat-q4_0-unquantized/snapshots/b6ed86275a6a5735884e208bfed95b445a684ca2"
+    revision: "b6ed86275a6a5735884e208bfed95b445a684ca2"
+    local_files_only: true
+    trust_remote_code: false
+  official_cache:
+    cache_path: "/home/minjun_dev/svg-agentic-slm/artifacts/omnisvg_train_4b_mmsvg_20k_tokens.sqlite3"
+    expected_cache_sha256: "da25dc3db8739e846d952b3044e5f7977eaf8820f4ea0c45c46ed8111f91a3fa"
+    audit_manifest_path: "/home/minjun_dev/svg-agentic-slm/artifacts/omnisvg_train_4b_mmsvg_20k_token_audit.json"
+    expected_audit_sha256: "30e3deb8a8cf443a1c32a58bc48e41b35b4adc615c14eb7fb9dee1f48d4e35c7"
+    prepared_root: "/data/minjun_dev/mmsvg_sft_prepared_seed42_20k/mmsvg_sft_20k"
+    expected_input_sha256:
+      train: "7920c33235ede566657003ac63166b01b3e594b6ccc521d34d9fbe937e5642bd"
+      validation: "ab4a24667b19160a3c3337ad9b25a8e1c4c4ba58116ec690c3829d25b621ef2a"
+      test: "381d28d516273698a1c4e0b793376fe90aa7135ad89b69a04ec6cbda57ab9d3b"
+    expected_split_counts:
+      train: 18000
+      validation: 1000
+      test: 1000
+    allow_live_reencode: false
+  data:
+    train_path: "/data/minjun_dev/mmsvg_sft_prepared_seed42_20k/mmsvg_sft_20k/train.jsonl"
+    validation_path: "/data/minjun_dev/mmsvg_sft_prepared_seed42_20k/mmsvg_sft_20k/validation.jsonl"
+    test_path: "/data/minjun_dev/mmsvg_sft_prepared_seed42_20k/mmsvg_sft_20k/test.jsonl"
+  output:
+    report_path: "../artifacts/official_discrete_gemma_20k_audit.json"
+    longest_record_path: "../artifacts/official_discrete_gemma_20k_longest.jsonl"
+  grid_size: 200
+  dataset_max_seq_length: 8192
+  expected_total_records: 20000
+  maximum_failure_details: 100
+  thresholds:
+    codec_tokens: [1024, 2048, 4096, 8192]
+    labeled_tokens: [1024, 2048, 4096, 8192]
+    full_chat_tokens: [2048, 2304, 4096, 8192]
+    maximum_codec_tokens: 8192
+    maximum_labeled_tokens: 8192
+    maximum_full_chat_tokens: 8192

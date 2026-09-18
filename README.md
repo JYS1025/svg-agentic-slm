@@ -211,6 +211,27 @@ svg-agentic-slm/
 - Conda or Mamba package manager
 - Python 3.11 or later
 
+### Supported training environment
+
+The SFT portability workflow checks Ubuntu and Windows with Python 3.11 and 3.13.
+Training requires PyTorch 2.5 or later. The supplied QLoRA configurations additionally require
+a working accelerator build of PyTorch, `bitsandbytes`, native BF16 support, enough GPU memory for
+the selected model and sequence length, model repository access, and the configured datasets.
+Multi-GPU training is intended for Linux CUDA servers.
+
+Install the PyTorch build selected for the server by the official PyTorch installer first, then
+install this repository:
+
+```bash
+python -m pip install -e ".[train]"
+python scripts/check_sft_environment.py --config configs/train_lora.yaml
+```
+
+The check executes small CUDA, NF4, and 8-bit optimizer operations. It catches an unavailable GPU,
+unsupported BF16, and a broken PyTorch/`bitsandbytes` binary combination before model download.
+No repository can guarantee execution on every server: driver compatibility, model credentials,
+dataset paths, disk capacity, and full-model VRAM are properties of the target environment.
+
 ### Local Setup
 
 To prepare your environment and install the package locally:

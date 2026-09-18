@@ -24,7 +24,19 @@ from typing import Any, Final
 from svg_agentic_slm.models.base import BaseModelBackend
 from svg_agentic_slm.models.generation_config import GenerationConfig
 from svg_agentic_slm.models.schemas import ModelResponse
-from svg_agentic_slm.svg.discrete_codec import OmniSVGDiscreteCodec
+from svg_agentic_slm.svg.codec_backends import (
+    CodecCompatibilityError,
+    GemmaOmniSVGInspiredBackend,
+)
+from svg_agentic_slm.svg.discrete_runtime import (
+    DiscreteSVGGrammar,
+    as_local_gemma_codec,
+    create_gemma_named_codec,
+    discrete_generation_kwargs,
+)
+from svg_agentic_slm.svg.official_discrete_cache import (
+    OFFICIAL_CACHED_GEMMA_BACKEND_ID,
+)
 
 DEFAULT_MODEL_ID: Final = "google/gemma-4-12B-it-qat-q4_0-unquantized"
 DEFAULT_MODEL_REVISION: Final = "b6ed86275a6a5735884e208bfed95b445a684ca2"
@@ -65,6 +77,8 @@ class TransformersTextBackend(BaseModelBackend):
         output_format: str = "raw_xml",
         codec_manifest_path: str | Path | None = None,
         codec_grid_size: int = 200,
+        codec_backend_id: str = OFFICIAL_CACHED_GEMMA_BACKEND_ID,
+        allow_legacy_toy_codec: bool = False,
         auto_model_class: str = "multimodal_lm",
         device: str = "cuda:0",
         dtype: str = "bfloat16",
@@ -130,8 +144,26 @@ class TransformersTextBackend(BaseModelBackend):
                 raise ValueError("discrete_svg requires codec_manifest_path.")
         if not isinstance(codec_grid_size, int) or isinstance(codec_grid_size, bool):
             raise TypeError("codec_grid_size must be an integer.")
+        if not isinstance(allow_legacy_toy_codec, bool):
+            raise TypeError("allow_legacy_toy_codec must be boolean.")
+        if (
+            self._output_format == "discrete_svg"
+            and codec_backend_id == OFFICIAL_CACHED_GEMMA_BACKEND_ID
+        ):
+            raise CodecCompatibilityError(
+                "Official cached OpenVGLab targets are training-only: no audited "
+                "decoder or generation grammar exists, so discrete inference is disabled",
+                backend_id=codec_backend_id,
+                code="official_cached_generation_unsupported",
+            )
         self._codec = (
-            OmniSVGDiscreteCodec(grid_size=codec_grid_size)
+            as_local_gemma_codec(
+                create_gemma_named_codec(
+                    codec_backend_id,
+                    grid_size=codec_grid_size,
+                    allow_legacy_toy_codec=allow_legacy_toy_codec,
+                )
+            )
             if self._output_format == "discrete_svg"
             else None
         )
@@ -142,6 +174,7 @@ class TransformersTextBackend(BaseModelBackend):
         self._torch_dtype: Any = None
         self._codec_id_to_token: dict[int, str] = {}
         self._codec_manifest_sha256: str | None = None
+        self._codec_grammar: DiscreteSVGGrammar | None = None
         self._lock = threading.RLock()
 
     @property
@@ -163,6 +196,7 @@ class TransformersTextBackend(BaseModelBackend):
             model: Any = None
             codec_id_to_token: dict[int, str] = {}
             codec_manifest_sha256: str | None = None
+            codec_grammar: DiscreteSVGGrammar | None = None
             try:
                 import torch
                 import transformers
@@ -231,6 +265,7 @@ class TransformersTextBackend(BaseModelBackend):
                             manifest_path=self._codec_manifest_path,
                         )
                     )
+                    codec_grammar = DiscreteSVGGrammar(self._codec, codec_id_to_token)
 
                 model = model_loader.from_pretrained(
                     model_source,
@@ -274,6 +309,7 @@ class TransformersTextBackend(BaseModelBackend):
             self._torch_dtype = torch_dtype
             self._codec_id_to_token = codec_id_to_token
             self._codec_manifest_sha256 = codec_manifest_sha256
+            self._codec_grammar = codec_grammar
 
     def generate(self, prompt: str, **kwargs: Any) -> ModelResponse:
         """Generate raw SVG XML or decode a discrete SVG token-ID sequence."""
@@ -319,6 +355,14 @@ class TransformersTextBackend(BaseModelBackend):
                 if self._device.startswith("cuda"):
                     torch.cuda.manual_seed_all(options.seed)
             call_kwargs = _generation_call_kwargs(options)
+            if self._codec_grammar is not None:
+                call_kwargs.update(
+                    discrete_generation_kwargs(
+                        self._codec_grammar,
+                        prompt_tokens=prompt_tokens,
+                        pad_token_id=getattr(self._tokenizer, "pad_token_id", None),
+                    )
+                )
             started_at = time.perf_counter()
             try:
                 with torch.inference_mode():
@@ -352,7 +396,11 @@ class TransformersTextBackend(BaseModelBackend):
                 )
 
             completion_tokens = len(completion_ids)
-            eos_token_id = getattr(self._tokenizer, "eos_token_id", None)
+            eos_token_id = (
+                self._codec_grammar.eos_token_id
+                if self._codec_grammar is not None
+                else getattr(self._tokenizer, "eos_token_id", None)
+            )
             finish_reason = (
                 "stop"
                 if eos_token_id is not None and completion_ids[-1] == int(eos_token_id)
@@ -429,6 +477,7 @@ class TransformersTextBackend(BaseModelBackend):
                 base_loaded
                 and bool(self._codec_id_to_token)
                 and self._codec_manifest_sha256 is not None
+                and self._codec_grammar is not None
             )
         return base_loaded
 
@@ -441,6 +490,7 @@ class TransformersTextBackend(BaseModelBackend):
             self._torch_dtype = None
             self._codec_id_to_token = {}
             self._codec_manifest_sha256 = None
+            self._codec_grammar = None
             gc.collect()
             if self._device.startswith("cuda"):
                 try:
@@ -566,7 +616,7 @@ def _tokenizer_length(tokenizer: Any) -> int:
 
 def _validate_discrete_checkpoint_contract(
     *,
-    codec: OmniSVGDiscreteCodec,
+    codec: GemmaOmniSVGInspiredBackend,
     tokenizer: Any,
     manifest_path: Path,
 ) -> tuple[dict[int, str], str]:
@@ -579,7 +629,7 @@ def _validate_discrete_checkpoint_contract(
         raise RuntimeError("Discrete checkpoint manifest must be a JSON object.")
     if payload.get("schema_version") != DISCRETE_MANIFEST_SCHEMA_VERSION:
         raise RuntimeError("Unsupported discrete checkpoint manifest schema_version.")
-    if payload.get("codec") != codec.manifest():
+    if payload.get("codec") != codec.codec_manifest():
         raise RuntimeError("Discrete checkpoint codec contract does not match runtime codec.")
     tokenizer_contract = payload.get("tokenizer")
     if not isinstance(tokenizer_contract, dict):
@@ -623,7 +673,7 @@ def _validate_discrete_checkpoint_contract(
 def _decode_discrete_completion(
     completion_ids: list[int],
     *,
-    codec: OmniSVGDiscreteCodec,
+    codec: GemmaOmniSVGInspiredBackend,
     id_to_token: dict[int, str],
 ) -> str:
     sop_id = _id_for_token(codec.sop_token, id_to_token)
@@ -645,7 +695,7 @@ def _decode_discrete_completion(
     if not tokens or tokens[-1] != codec.eos_token:
         raise RuntimeError("Discrete generation did not emit the codec EOS token.")
     try:
-        return codec.decode_tokens(tokens)
+        return codec.decode(tokens).svg
     except Exception as exc:
         raise RuntimeError("Generated discrete token IDs do not form a valid SVG.") from exc
 
