@@ -10,7 +10,7 @@ dependencies:
   - cairosvg>=2.7
   - cairocffi
   - pip:
-    - torch>=2.5,<3
+    - torch>=2.6,<3
     - numpy>=1.26
     - transformers>=5.15,<6
     - peft>=0.20,<1
