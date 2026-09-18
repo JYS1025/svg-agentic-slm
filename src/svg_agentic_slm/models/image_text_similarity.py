@@ -5,6 +5,7 @@ from __future__ import annotations
 import math
 import re
 from abc import ABC, abstractmethod
+from collections.abc import Sequence
 from dataclasses import dataclass
 
 SIGLIP2_PAIR_PROBABILITY = "siglip2_pair_probability"
@@ -46,6 +47,62 @@ class BaseImageTextSimilarityScorer(ABC):
     ) -> ImageTextSimilarityEvidence:
         """Score one instruction against one rendered PNG."""
         ...
+
+    def score_batch(
+        self,
+        instruction: str,
+        image_pngs: Sequence[bytes],
+        *,
+        attempt_ids: Sequence[str],
+    ) -> list[ImageTextSimilarityEvidence]:
+        """Score an ordered image batch with a compatibility fallback."""
+        if isinstance(image_pngs, (bytes, bytearray, str)) or not isinstance(
+            image_pngs, Sequence
+        ):
+            raise TypeError("image_pngs must be a sequence of PNG byte strings.")
+        if isinstance(attempt_ids, (str, bytes, bytearray)) or not isinstance(
+            attempt_ids, Sequence
+        ):
+            raise TypeError("attempt_ids must be a sequence of strings.")
+        if not image_pngs:
+            raise ValueError("image_pngs and attempt_ids must be non-empty.")
+        if len(image_pngs) != len(attempt_ids):
+            raise ValueError("image_pngs and attempt_ids must have equal lengths.")
+        return [
+            self.score(instruction, image_png, attempt_id=attempt_id)
+            for image_png, attempt_id in zip(image_pngs, attempt_ids, strict=True)
+        ]
+
+    def score_pairs_batch(
+        self,
+        instructions: Sequence[str],
+        image_pngs: Sequence[bytes],
+        *,
+        attempt_ids: Sequence[str],
+    ) -> list[ImageTextSimilarityEvidence]:
+        """Score ordered text-image pairs with a compatibility fallback."""
+        for name, values in (
+            ("instructions", instructions),
+            ("image_pngs", image_pngs),
+            ("attempt_ids", attempt_ids),
+        ):
+            if isinstance(values, (str, bytes, bytearray)) or not isinstance(
+                values, Sequence
+            ):
+                raise TypeError(f"{name} must be a sequence.")
+        if not instructions:
+            raise ValueError("Pair batches must be non-empty.")
+        if len(instructions) != len(image_pngs) or len(instructions) != len(attempt_ids):
+            raise ValueError("Pair batch inputs must have equal lengths.")
+        return [
+            self.score(instruction, image_png, attempt_id=attempt_id)
+            for instruction, image_png, attempt_id in zip(
+                instructions,
+                image_pngs,
+                attempt_ids,
+                strict=True,
+            )
+        ]
 
     @abstractmethod
     def is_loaded(self) -> bool:

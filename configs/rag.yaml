@@ -8,13 +8,21 @@ rag:
   similarity_threshold: 0.5
 
   chromadb:
-    collection_name: "mmsvg_description_qwen3_0_6b_1024_v1"
-    persist_directory: "./data/chroma_db"
+    # Runtime strategy: one shared Qwen query vector -> description/detail
+    # collections -> overlap priority -> raw-prompt SigLIP2 reranking.
+    strategy: "mmsvg_dual_siglip2"
+    branch_top_k: 3
+    # Query more than three so target/self and exact-SVG exclusions can backfill.
+    search_k: 32
+
+    # Shared, manifest-validated embedding contract.
     embedding_model: "Qwen/Qwen3-Embedding-0.6B"
     embedding_revision: "97b0c614be4d77ee51c0cef4e5f07c00f9eb65b3"
     embedding_dimension: 1024
     precomputed_embeddings: true
     device: "cuda:0"
+    # A100 80GB: encode the fixed SFT prompts together on GPU 0.
+    query_encoder_batch_size: 512
     overfetch_factor: 5
     similarity_threshold: 0.0
     query_instruction: >-
@@ -24,6 +32,30 @@ rag:
     dataset_roots:
       icon: "./data/raw/mmsvg_icon_v2/data"
       illustration: "./data/raw/mmsvg_illustration_v2/data"
+
+    # The top-level values preserve description-index CLI compatibility.
+    collection_name: "mmsvg_description_qwen3_0_6b_1024_v1"
+    persist_directory: "./data/chroma_db"
+    document_field: "description"
+    description_index:
+      collection_name: "mmsvg_description_qwen3_0_6b_1024_v1"
+      persist_directory: "./data/chroma_db"
+    detail_index:
+      collection_name: "mmsvg_detail_qwen3_0_6b_1024_v1"
+      persist_directory: "./data/chroma_db_detail"
+
+    reranker:
+      model_id: "google/siglip2-base-patch16-224"
+      model_revision: "75de2d55ec2d0b4efc50b3e9ad70dba96a7b2fa2"
+      device: "cuda:1"
+      dtype: "bfloat16"
+      attn_implementation: "sdpa"
+      local_files_only: true
+      trust_remote_code: false
+      # Batch distinct prompt/image pairs on GPU 1; CUDA OOM halves this.
+      max_pair_batch_size: 2048
+      # The user/SFT instruction is passed unchanged.
+      text_template: "{instruction}"
 
   # Credentials are read only from these environment-variable names.
   qdrant:

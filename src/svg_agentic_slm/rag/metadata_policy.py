@@ -33,3 +33,27 @@ class RetrievalMetadataPolicy:
 # Add a key here only after its owner, semantics, and artifact retention policy
 # are documented in the cross-team contract.
 MINIMAL_RETRIEVAL_METADATA_POLICY = RetrievalMetadataPolicy()
+
+MMSVG_HYBRID_RETRIEVAL_METADATA_POLICY = RetrievalMetadataPolicy(
+    allowed_keys=frozenset(
+        {
+            "retrieval_strategy",
+            "row_index_in_shard",
+            "shard",
+            "record_id",
+            "dataset_type",
+            "canonical_svg_sha256",
+            "description_rank",
+            "description_score",
+            "detail_rank",
+            "detail_score",
+            "is_overlap",
+            "siglip2_score",
+            "siglip2_raw_logit",
+            "siglip2_model_id",
+            "siglip2_model_revision",
+            "image_sha256",
+            "selection_reason",
+        }
+    )
+)

@@ -6,7 +6,8 @@ import hashlib
 import json
 import logging
 from collections import OrderedDict
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -15,6 +16,33 @@ from svg_agentic_slm.rag.schemas import RetrievedExample
 from svg_agentic_slm.svg.validator import safe_svg_element_names
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True)
+class ChromaQueryHit:
+    """Unhydrated result from a precomputed MMSVG Chroma collection."""
+
+    item_id: str
+    document: str
+    metadata: dict[str, Any]
+    distance: float
+    score: float
+    raw_rank: int
+    document_field: str
+
+
+@dataclass(frozen=True)
+class MMSVGCorpusRecord:
+    """Trusted MMSVG payload resolved from a manifest-validated Parquet pointer."""
+
+    item_id: str
+    description: str
+    detail: str
+    svg: str
+    image_png: bytes
+    source: str
+    corpus_version: str | None
+    metadata: dict[str, Any]
 
 
 class ChromaRetriever(BaseRetriever):
@@ -43,6 +71,7 @@ class ChromaRetriever(BaseRetriever):
         embedding_dimension: int | None = None,
         query_instruction: str | None = None,
         device: str = "cuda:0",
+        query_encoder_batch_size: int = 1,
         dataset_roots: Mapping[str, str | Path] | None = None,
         precomputed_embeddings: bool = False,
         overfetch_factor: int = 5,
@@ -54,6 +83,12 @@ class ChromaRetriever(BaseRetriever):
             raise ValueError("embedding_dimension must be positive when provided.")
         if overfetch_factor <= 0:
             raise ValueError("overfetch_factor must be positive.")
+        if (
+            isinstance(query_encoder_batch_size, bool)
+            or not isinstance(query_encoder_batch_size, int)
+            or query_encoder_batch_size <= 0
+        ):
+            raise ValueError("query_encoder_batch_size must be a positive integer.")
         if precomputed_embeddings and not embedding_revision:
             raise ValueError("precomputed embeddings require embedding_revision.")
         if precomputed_embeddings and not (query_instruction or "").strip():
@@ -73,6 +108,7 @@ class ChromaRetriever(BaseRetriever):
         self._embedding_dimension = embedding_dimension
         self._query_instruction = (query_instruction or "").strip()
         self._device = device
+        self._query_encoder_batch_size = query_encoder_batch_size
         self._precomputed_embeddings = precomputed_embeddings
         self._overfetch_factor = overfetch_factor
         self._document_field = normalized_document_field
@@ -88,7 +124,7 @@ class ChromaRetriever(BaseRetriever):
         self._source_info: dict[str, dict[str, Any]] = {}
         self._allowed_shards: dict[str, dict[str, Path]] = {}
         self._parquet_files: dict[Path, Any] = {}
-        self._row_group_cache: OrderedDict[tuple[Path, int], Any] = OrderedDict()
+        self._row_group_cache: OrderedDict[tuple[Path, int, tuple[str, ...]], Any] = OrderedDict()
 
     def _ensure_initialized(self) -> None:
         """Lazily initialize the local client, embedding model, and collection."""
@@ -275,6 +311,180 @@ class ChromaRetriever(BaseRetriever):
         logger.info("Retrieved %d SVG examples for: %s", len(examples), query[:80])
         return examples
 
+    def encode_queries(self, queries: Sequence[str]) -> list[list[float]]:
+        """Encode an ordered query batch for compatible precomputed indexes."""
+        if isinstance(queries, (str, bytes, bytearray)) or not isinstance(
+            queries, Sequence
+        ):
+            raise TypeError("queries must be a sequence of strings.")
+        normalized: list[str] = []
+        for query in queries:
+            if not isinstance(query, str):
+                raise TypeError("queries must contain only strings.")
+            value = query.strip()
+            if not value:
+                raise ValueError("queries must contain only non-empty strings.")
+            normalized.append(value)
+        if not normalized:
+            raise ValueError("queries must be non-empty.")
+        if not self._precomputed_embeddings:
+            raise RuntimeError("Shared query encoding requires a precomputed collection.")
+        self._ensure_initialized()
+        rows = _embedding_rows(self._ensure_query_encoder().encode_queries(normalized))
+        if len(rows) != len(normalized):
+            raise RuntimeError("Query encoder returned an unexpected number of rows.")
+        if self._embedding_dimension is not None and any(
+            len(row) != self._embedding_dimension for row in rows
+        ):
+            raise RuntimeError("Query encoder returned an unexpected embedding dimension.")
+        return rows
+
+    def encode_query(self, query: str) -> list[float]:
+        """Encode one query once for reuse across compatible precomputed indexes."""
+        return self.encode_queries([query])[0]
+
+    def query_hits_by_embedding(
+        self,
+        query_embedding: Sequence[float],
+        *,
+        n_results: int,
+    ) -> list[ChromaQueryHit]:
+        """Query a precomputed collection without hydrating Parquet payloads."""
+        return self.query_hits_many_by_embeddings(
+            [query_embedding],
+            n_results=n_results,
+        )[0]
+
+    def query_hits_many_by_embeddings(
+        self,
+        query_embeddings: Sequence[Sequence[float]],
+        *,
+        n_results: int,
+    ) -> list[list[ChromaQueryHit]]:
+        """Query an ordered embedding batch without hydrating Parquet payloads."""
+        if not self._precomputed_embeddings:
+            raise RuntimeError(
+                "query_hits_many_by_embeddings requires precomputed embeddings."
+            )
+        if isinstance(query_embeddings, (str, bytes, bytearray)) or not isinstance(
+            query_embeddings, Sequence
+        ):
+            raise TypeError("query_embeddings must be a sequence of embedding rows.")
+        if n_results <= 0:
+            return [[] for _ in query_embeddings]
+        vectors: list[list[float]] = []
+        for embedding in query_embeddings:
+            if isinstance(embedding, (str, bytes, bytearray)) or not isinstance(
+                embedding, Sequence
+            ):
+                raise TypeError("Every query embedding must be a numeric sequence.")
+            vector = [float(component) for component in embedding]
+            if not vector:
+                raise ValueError("Query embeddings must be non-empty.")
+            if (
+                self._embedding_dimension is not None
+                and len(vector) != self._embedding_dimension
+            ):
+                raise ValueError("query_embedding has an unexpected dimension.")
+            vectors.append(vector)
+        if not vectors:
+            return []
+        self._ensure_initialized()
+        result_count = min(n_results, int(self._collection.count()))
+        if result_count == 0:
+            return [[] for _ in vectors]
+        results = self._collection.query(
+            query_embeddings=vectors,
+            n_results=result_count,
+            include=["documents", "metadatas", "distances"],
+        )
+        query_count = len(vectors)
+        ids_rows = _result_rows(results, "ids", expected_rows=query_count)
+        document_rows = _result_rows(results, "documents", expected_rows=query_count)
+        metadata_rows = _result_rows(results, "metadatas", expected_rows=query_count)
+        distance_rows = _result_rows(results, "distances", expected_rows=query_count)
+        result_batches: list[list[ChromaQueryHit]] = []
+        for query_index, ids in enumerate(ids_rows):
+            documents = document_rows[query_index]
+            metadatas = metadata_rows[query_index]
+            distances = distance_rows[query_index]
+            hits: list[ChromaQueryHit] = []
+            for index, record_id in enumerate(ids):
+                metadata = (
+                    dict(metadatas[index] or {}) if index < len(metadatas) else {}
+                )
+                dataset_type = str(metadata.get("dataset_type", "")).strip().casefold()
+                metadata_record_id = str(metadata.get("record_id", "")).strip()
+                if str(record_id) != f"{dataset_type}:{metadata_record_id}":
+                    logger.warning("Skipped mismatched MMSVG Chroma ID: %s", record_id)
+                    continue
+                distance = float(distances[index]) if index < len(distances) else 1.0
+                score = max(-1.0, min(1.0, 1.0 - distance))
+                if score < self._similarity_threshold:
+                    continue
+                raw_document = documents[index] if index < len(documents) else None
+                document = "" if raw_document is None else str(raw_document).strip()
+                if not document:
+                    logger.warning(
+                        "Skipped MMSVG hit with an empty indexed document: %s",
+                        record_id,
+                    )
+                    continue
+                hits.append(
+                    ChromaQueryHit(
+                        item_id=str(record_id),
+                        document=document,
+                        metadata=metadata,
+                        distance=distance,
+                        score=score,
+                        raw_rank=index + 1,
+                        document_field=self._document_field,
+                    )
+                )
+            result_batches.append(hits)
+        return result_batches
+
+    def index_contract(self) -> dict[str, Any]:
+        """Return the manifest fields that must match across dual MMSVG indexes."""
+        if not self._precomputed_embeddings:
+            raise RuntimeError("Index contracts exist only for precomputed collections.")
+        self._ensure_initialized()
+        return {
+            key: self._manifest.get(key)
+            for key in (
+                "index_schema_version",
+                "embedding_model",
+                "embedding_revision",
+                "embedding_dimension",
+                "normalized_embeddings",
+                "query_instruction",
+                "distance",
+                "sources",
+            )
+        }
+
+    def hydrate_mmsvg_hit(self, hit: ChromaQueryHit) -> MMSVGCorpusRecord:
+        """Resolve description, detail, SVG, and image.bytes for one trusted hit."""
+        if hit.document_field != self._document_field:
+            raise ValueError("Chroma hit belongs to a different document field.")
+        self._ensure_initialized()
+        payload = self._resolve_mmsvg_pointer(
+            hit.metadata,
+            expected_document=hit.document,
+            include_image=True,
+        )
+        source, corpus_version = self._source_identity(hit.metadata, hit.item_id)
+        return MMSVGCorpusRecord(
+            item_id=hit.item_id,
+            description=payload["description"],
+            detail=payload["detail"],
+            svg=payload["svg"],
+            image_png=payload["image_png"],
+            source=source,
+            corpus_version=corpus_version,
+            metadata=_restore_metadata(hit.metadata),
+        )
+
     def clear(self) -> None:
         """Delete all indexed examples while keeping the retriever reusable."""
         if self._precomputed_embeddings:
@@ -294,7 +504,7 @@ class ChromaRetriever(BaseRetriever):
             model_name=self._embedding_model,
             revision=str(self._embedding_revision),
             device=self._device,
-            batch_size=1,
+            batch_size=self._query_encoder_batch_size,
             expected_dimension=int(self._embedding_dimension or 1024),
             query_instruction=self._query_instruction,
         )
@@ -429,6 +639,20 @@ class ChromaRetriever(BaseRetriever):
         *,
         expected_document: str,
     ) -> tuple[str, str]:
+        payload = self._resolve_mmsvg_pointer(
+            metadata,
+            expected_document=expected_document,
+            include_image=False,
+        )
+        return payload["description"], payload["svg"]
+
+    def _resolve_mmsvg_pointer(
+        self,
+        metadata: dict[str, Any],
+        *,
+        expected_document: str,
+        include_image: bool,
+    ) -> dict[str, Any]:
         dataset_type = str(metadata.get("dataset_type", "")).strip().casefold()
         shard = str(metadata.get("shard", "")).strip()
         record_id = str(metadata.get("record_id", "")).strip()
@@ -451,7 +675,7 @@ class ChromaRetriever(BaseRetriever):
             try:
                 import pyarrow.parquet as pq
             except ImportError as exc:
-                raise RuntimeError("SVG pointer hydration requires pyarrow.") from exc
+                raise RuntimeError("MMSVG pointer hydration requires pyarrow.") from exc
             parquet_file = pq.ParquetFile(shard_path)
             self._parquet_files[shard_path] = parquet_file
         if row_index >= parquet_file.metadata.num_rows:
@@ -468,10 +692,15 @@ class ChromaRetriever(BaseRetriever):
         if row_group_index < 0:
             raise ValueError("Unable to locate Parquet row group.")
 
-        cache_key = (shard_path, row_group_index)
+        columns = list(
+            dict.fromkeys(
+                ["id", "description", "detail", self._document_field, "svg"]
+                + (["image"] if include_image else [])
+            )
+        )
+        cache_key = (shard_path, row_group_index, tuple(columns))
         table = self._row_group_cache.get(cache_key)
         if table is None:
-            columns = list(dict.fromkeys(["id", "description", self._document_field, "svg"]))
             table = parquet_file.read_row_group(
                 row_group_index,
                 columns=columns,
@@ -485,10 +714,9 @@ class ChromaRetriever(BaseRetriever):
 
         local_index = row_index - row_start
         actual_id = str(table.column("id")[local_index].as_py()).strip()
-        actual_description = str(table.column("description")[local_index].as_py()).strip()
-        actual_document = str(
-            table.column(self._document_field)[local_index].as_py()
-        ).strip()
+        description = str(table.column("description")[local_index].as_py()).strip()
+        detail = str(table.column("detail")[local_index].as_py()).strip()
+        actual_document = str(table.column(self._document_field)[local_index].as_py()).strip()
         svg_content = str(table.column("svg")[local_index].as_py()).strip()
         if actual_id != record_id:
             raise ValueError("Parquet record ID does not match Chroma metadata.")
@@ -496,11 +724,28 @@ class ChromaRetriever(BaseRetriever):
             raise ValueError(
                 f"Parquet {self._document_field} does not match the indexed document."
             )
+        if not description or not detail:
+            raise ValueError("Parquet MMSVG text payload is incomplete.")
         if not svg_content:
             raise ValueError("Parquet SVG payload is empty.")
         if len(svg_content) > self._MAX_SVG_CHARACTERS:
             raise ValueError("Parquet SVG payload exceeds the safety limit.")
-        return actual_description, svg_content
+
+        image_png = b""
+        if include_image:
+            raw_image = table.column("image")[local_index].as_py()
+            if not isinstance(raw_image, dict):
+                raise ValueError("Parquet image payload must be a struct.")
+            raw_bytes = raw_image.get("bytes")
+            if not isinstance(raw_bytes, bytes) or not raw_bytes.startswith(b"\x89PNG\r\n\x1a\n"):
+                raise ValueError("Parquet image.bytes must contain PNG bytes.")
+            image_png = raw_bytes
+        return {
+            "description": description,
+            "detail": detail,
+            "svg": svg_content,
+            "image_png": image_png,
+        }
 
     def _source_identity(
         self,
@@ -570,6 +815,25 @@ def _first_result_row(results: dict[str, Any], key: str) -> list[Any]:
     """Extract the first query row from Chroma's column-oriented response."""
     rows = results.get(key) or []
     return list(rows[0]) if rows and rows[0] is not None else []
+
+
+def _result_rows(
+    results: dict[str, Any],
+    key: str,
+    *,
+    expected_rows: int,
+) -> list[list[Any]]:
+    """Extract every query row while rejecting ambiguous Chroma cardinality."""
+    raw_rows = results.get(key)
+    if raw_rows is None:
+        raise RuntimeError(f"Chroma query response is missing {key!r} rows.")
+    rows = list(raw_rows)
+    if len(rows) != expected_rows:
+        raise RuntimeError(
+            f"Chroma query response returned {len(rows)} {key!r} rows; "
+            f"expected {expected_rows}."
+        )
+    return [list(row) if row is not None else [] for row in rows]
 
 
 def _optional_text(value: Any) -> str | None:

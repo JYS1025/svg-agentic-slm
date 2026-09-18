@@ -13,9 +13,15 @@ from typing import Any, Literal
 
 from svg_agentic_slm.data.jsonl import read_jsonl
 from svg_agentic_slm.prompts.system_prompts import get_svg_generator_system_prompt
-from svg_agentic_slm.prompts.text_to_svg import build_text_to_svg_prompt
+from svg_agentic_slm.prompts.text_to_svg import (
+    build_retrieval_context,
+    build_text_to_svg_prompt,
+)
+from svg_agentic_slm.rag.context import select_context_by_tokens
+from svg_agentic_slm.rag.schemas import RetrievedExample
 from svg_agentic_slm.svg.discrete_codec import OmniSVGDiscreteCodec
 from svg_agentic_slm.train.lora_config import LoRAConfig
+from svg_agentic_slm.train.rag_context import PrecomputedRAGContextStore
 
 logger = logging.getLogger(__name__)
 
@@ -27,7 +33,8 @@ _AUTO_MODEL_CLASSES = {
     "multimodal_lm": "AutoModelForMultimodalLM",
 }
 
-_DISCRETE_SYSTEM_PROMPT = """You are an SVG generator trained with the svgd1 discrete-codec ablation.
+_DISCRETE_SYSTEM_PROMPT = """You are an SVG generator trained with the svgd1 \
+discrete-codec ablation.
 Plan the composition internally, but return only the registered svgd1 discrete SVG tokens.
 Do not output XML, prose, Markdown, code fences, or reasoning. The token sequence must be
 complete and decodable, beginning with the codec start token and ending with its end token.
@@ -50,6 +57,7 @@ class SFTConfig:
     eval_steps: int = 100
     save_total_limit: int = 2
     max_seq_length: int = 8192
+    rag_max_context_tokens: int | None = None
     bf16: bool = True
     fp16: bool = False
     gradient_checkpointing: bool = True
@@ -92,6 +100,8 @@ class _ResponseOnlyDataset:
         max_seq_length: int,
         seed: int,
         codec: OmniSVGDiscreteCodec | None,
+        rag_context_store: PrecomputedRAGContextStore | None = None,
+        rag_max_context_tokens: int | None = None,
     ) -> None:
         self._records = records
         self._tokenizer = tokenizer
@@ -99,6 +109,8 @@ class _ResponseOnlyDataset:
         self._target_representation = target_representation
         self._max_seq_length = max_seq_length
         self._codec = codec
+        self._rag_context_store = rag_context_store
+        self._rag_max_context_tokens = rag_max_context_tokens
 
     def __len__(self) -> int:
         return len(self._records)
@@ -109,7 +121,11 @@ class _ResponseOnlyDataset:
         target = _select_target(row, self._target_representation, self._codec)
         if self._target_representation == "raw_xml":
             system_prompt = get_svg_generator_system_prompt()
-            user_prompt = build_text_to_svg_prompt(instruction)
+            retrieved_examples = self._select_rag_context(row)
+            user_prompt = build_text_to_svg_prompt(
+                instruction,
+                retrieved_examples=retrieved_examples,
+            )
         else:
             system_prompt = _DISCRETE_SYSTEM_PROMPT
             user_prompt = (
@@ -140,6 +156,23 @@ class _ResponseOnlyDataset:
         if not any(label != -100 for label in labels):
             raise RuntimeError("SFT record has no assistant target tokens.")
         return {"input_ids": full_ids, "attention_mask": [1] * len(full_ids), "labels": labels}
+
+    def _select_rag_context(
+        self,
+        row: dict[str, Any],
+    ) -> list[RetrievedExample] | None:
+        if self._rag_context_store is None:
+            return None
+        if self._rag_max_context_tokens is None:
+            raise RuntimeError("RAG-conditioned SFT requires rag_max_context_tokens.")
+        references = self._rag_context_store.references_for_record(row)
+        selection = select_context_by_tokens(
+            references,
+            max_tokens=self._rag_max_context_tokens,
+            count_tokens=lambda text: _count_tokens(self._tokenizer, text),
+            format_context=build_retrieval_context,
+        )
+        return selection.items
 
 
 class _ResponseOnlyCollator:
@@ -179,6 +212,7 @@ class TextToSVGSFTTrainer:
         eval_data_path: str | Path | None,
         instruction_mode: InstructionMode,
         target_representation: TargetRepresentation,
+        rag_context_store: PrecomputedRAGContextStore | None = None,
     ) -> None:
         if instruction_mode not in (
             "description_only",
@@ -188,6 +222,24 @@ class TextToSVGSFTTrainer:
             raise ValueError(f"Unsupported instruction_mode: {instruction_mode}")
         if target_representation not in ("raw_xml", "omnisvg_discrete"):
             raise ValueError(f"Unsupported target_representation: {target_representation}")
+        if rag_context_store is not None and target_representation != "raw_xml":
+            raise ValueError("RAG-conditioned SFT currently supports raw_xml targets only.")
+        if rag_context_store is not None and sft_config.rag_max_context_tokens is None:
+            raise ValueError(
+                "RAG-conditioned SFT requires an explicit sft.rag_max_context_tokens."
+            )
+        if sft_config.rag_max_context_tokens is not None and (
+            isinstance(sft_config.rag_max_context_tokens, bool)
+            or not isinstance(sft_config.rag_max_context_tokens, int)
+            or sft_config.rag_max_context_tokens < 0
+        ):
+            raise ValueError(
+                "sft.rag_max_context_tokens must be a non-negative integer."
+            )
+        if rag_context_store is None and sft_config.rag_max_context_tokens is not None:
+            raise ValueError(
+                "sft.rag_max_context_tokens is configured while RAG training is disabled."
+            )
         if model_config.auto_model_class not in _AUTO_MODEL_CLASSES:
             raise ValueError(f"Unsupported auto_model_class: {model_config.auto_model_class}")
         self._model_config = model_config
@@ -197,8 +249,31 @@ class TextToSVGSFTTrainer:
         self._eval_data_path = Path(eval_data_path) if eval_data_path else None
         self._instruction_mode = instruction_mode
         self._target_representation = target_representation
+        self._rag_context_store = rag_context_store
+        if rag_context_store is not None:
+            expected_policy = {
+                "description_only": "r0",
+                "mixed_60_detail_40_description": "r1",
+                "detail_only": "r2",
+            }[instruction_mode]
+            if rag_context_store.instruction_policy != expected_policy:
+                raise ValueError(
+                    "Precomputed RAG instruction policy does not match "
+                    f"instruction_mode: {rag_context_store.instruction_policy!r} "
+                    f"!= {expected_policy!r}."
+                )
 
     def train(self) -> dict[str, Any]:
+        if self._rag_context_store is not None:
+            self._rag_context_store.validate_input_files(
+                self._train_data_path,
+                self._eval_data_path,
+            )
+        train_records = _load_records(self._train_data_path)
+        eval_records = _load_records(self._eval_data_path) if self._eval_data_path else []
+        if self._rag_context_store is not None:
+            self._rag_context_store.validate_records(train_records + eval_records)
+
         try:
             import torch
             import transformers
@@ -223,7 +298,11 @@ class TextToSVGSFTTrainer:
         if tokenizer is None:
             raise RuntimeError("Gemma4 AutoProcessor did not expose a tokenizer.")
 
-        codec = OmniSVGDiscreteCodec() if self._target_representation == "omnisvg_discrete" else None
+        codec = (
+            OmniSVGDiscreteCodec()
+            if self._target_representation == "omnisvg_discrete"
+            else None
+        )
         if codec is not None:
             tokenizer.add_special_tokens({"additional_special_tokens": codec.vocabulary_tokens()})
 
@@ -236,11 +315,10 @@ class TextToSVGSFTTrainer:
                 bnb_4bit_compute_dtype=dtype,
                 bnb_4bit_use_double_quant=model_config.bnb_4bit_use_double_quant,
             )
-        model_loader = getattr(transformers, _AUTO_MODEL_CLASSES[model_config.auto_model_class], None)
+        model_class_name = _AUTO_MODEL_CLASSES[model_config.auto_model_class]
+        model_loader = getattr(transformers, model_class_name, None)
         if model_loader is None:
-            raise RuntimeError(
-                f"Transformers does not provide {_AUTO_MODEL_CLASSES[model_config.auto_model_class]}."
-            )
+            raise RuntimeError(f"Transformers does not provide {model_class_name}.")
         local_rank = int(os.environ.get("LOCAL_RANK", "0"))
         model_kwargs: dict[str, Any] = {
             **hub_kwargs,
@@ -271,8 +349,6 @@ class TextToSVGSFTTrainer:
         if self._sft_config.gradient_checkpointing and hasattr(model.config, "use_cache"):
             model.config.use_cache = False
 
-        train_records = _load_records(self._train_data_path)
-        eval_records = _load_records(self._eval_data_path) if self._eval_data_path else []
         train_dataset = _ResponseOnlyDataset(
             train_records,
             tokenizer=tokenizer,
@@ -281,6 +357,8 @@ class TextToSVGSFTTrainer:
             max_seq_length=self._sft_config.max_seq_length,
             seed=self._sft_config.seed,
             codec=codec,
+            rag_context_store=self._rag_context_store,
+            rag_max_context_tokens=self._sft_config.rag_max_context_tokens,
         )
         eval_dataset = (
             _ResponseOnlyDataset(
@@ -291,6 +369,8 @@ class TextToSVGSFTTrainer:
                 max_seq_length=self._sft_config.max_seq_length,
                 seed=self._sft_config.seed,
                 codec=codec,
+                rag_context_store=self._rag_context_store,
+                rag_max_context_tokens=self._sft_config.rag_max_context_tokens,
             )
             if eval_records
             else None
@@ -349,11 +429,27 @@ class TextToSVGSFTTrainer:
             "instruction_mode": self._instruction_mode,
             "target_representation": self._target_representation,
             "response_only_loss": True,
-            "rag_context_in_training": False,
+            "rag_context_in_training": self._rag_context_store is not None,
+            "rag_context_artifacts": (
+                self._rag_context_store.provenance()
+                if self._rag_context_store is not None
+                else None
+            ),
+            "rag_context_selection": (
+                {
+                    "selector": "select_context_by_tokens",
+                    "max_context_tokens": self._sft_config.rag_max_context_tokens,
+                    "partial_svg_policy": "whole top-level elements only",
+                }
+                if self._rag_context_store is not None
+                else None
+            ),
             "train_data_path": str(self._train_data_path.resolve()),
             "train_data_sha256": _file_sha256(self._train_data_path),
             "eval_data_path": str(self._eval_data_path.resolve()) if self._eval_data_path else None,
-            "eval_data_sha256": _file_sha256(self._eval_data_path) if self._eval_data_path else None,
+            "eval_data_sha256": (
+                _file_sha256(self._eval_data_path) if self._eval_data_path else None
+            ),
             "lora": asdict(lora_config),
             "sft": asdict(self._sft_config),
             "codec_manifest": codec_manifest,
@@ -405,9 +501,14 @@ def _select_instruction(row: dict[str, Any], mode: InstructionMode) -> str:
         else None
     )
     if not isinstance(use_detail, bool):
+        if isinstance(use_detail, str) and use_detail.strip() in {
+            "description",
+            "detail",
+        }:
+            return detail if use_detail.strip() == "detail" else description
         raise ValueError(
             "Mixed-instruction SFT requires boolean metadata.instruction_policy."
-            "r1_detail_60_description_40 from the deterministic data-preparation contract."
+            "r1_detail_60_description_40 or a legacy description/detail string."
         )
     return detail if use_detail else description
 
@@ -427,7 +528,12 @@ def _select_target(
     return "".join(codec.encode_svg(svg))
 
 
-def _template_ids(tokenizer: Any, messages: list[dict[str, str]], *, add_generation_prompt: bool) -> list[int]:
+def _template_ids(
+    tokenizer: Any,
+    messages: list[dict[str, str]],
+    *,
+    add_generation_prompt: bool,
+) -> list[int]:
     encoded = tokenizer.apply_chat_template(
         messages, tokenize=True, add_generation_prompt=add_generation_prompt
     )
@@ -438,6 +544,19 @@ def _template_ids(tokenizer: Any, messages: list[dict[str, str]], *, add_generat
     if not isinstance(encoded, list) or not all(isinstance(value, int) for value in encoded):
         raise RuntimeError("Tokenizer chat template returned invalid token IDs.")
     return encoded
+
+
+def _count_tokens(tokenizer: Any, text: str) -> int:
+    """Count context tokens exactly like the Transformers inference backend."""
+    try:
+        token_ids = tokenizer.encode(text, add_special_tokens=False)
+    except Exception as exc:
+        raise RuntimeError("Failed to tokenize text for context budgeting.") from exc
+    if not isinstance(token_ids, list) or any(
+        not isinstance(item, int) for item in token_ids
+    ):
+        raise RuntimeError("Tokenizer returned an unexpected token sequence.")
+    return len(token_ids)
 
 
 def _load_records(path: Path) -> list[dict[str, Any]]:

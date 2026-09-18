@@ -66,6 +66,8 @@ def build_retrieval_context(
         parts.append(f"--- Retrieved item {i} ({example.kind}) ---")
         parts.append(f"Source: {example.source or example.item_id}")
         parts.append(f"Description: {example.description}")
+        if example.detail:
+            parts.append(f"Detail: {example.detail}")
         parts.append("Content:")
         parts.append(example.content)
         parts.append("")

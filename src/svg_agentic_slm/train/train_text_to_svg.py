@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Any
 
 from svg_agentic_slm.train.lora_config import LoRAConfig
+from svg_agentic_slm.train.rag_context import PrecomputedRAGContextStore
 from svg_agentic_slm.train.sft_trainer import (
     ModelTrainingConfig,
     SFTConfig,
@@ -54,6 +55,11 @@ def run_training(
         trust_remote_code=bool(model.get("trust_remote_code", False)),
         token_env=model.get("token_env"),
     )
+    rag_context_store = _load_rag_context_store(
+        experiment,
+        dataset,
+        rag_max_context_tokens=sft_config.rag_max_context_tokens,
+    )
     trainer = TextToSVGSFTTrainer(
         model_config=model_config,
         lora_config=LoRAConfig.from_dict(train_config.get("lora", {})),
@@ -64,9 +70,40 @@ def run_training(
         ),
         instruction_mode=str(experiment.get("instruction_mode", "description_only")),
         target_representation=str(experiment.get("target_representation", "raw_xml")),
+        rag_context_store=rag_context_store,
     )
     logger.info("Starting auditable SFT experiment from %s", config_path)
     return trainer.train()
+
+
+def _load_rag_context_store(
+    experiment: dict[str, Any],
+    dataset: dict[str, Any],
+    *,
+    rag_max_context_tokens: int | None,
+) -> PrecomputedRAGContextStore | None:
+    enabled = experiment.get("rag_context_in_training", False)
+    if type(enabled) is not bool:
+        raise ValueError("train.experiment.rag_context_in_training must be boolean.")
+
+    final_path = dataset.get("rag_final_references_path")
+    corpus_path = dataset.get("rag_corpus_items_path")
+    if not enabled:
+        if final_path is not None or corpus_path is not None:
+            raise ValueError(
+                "RAG artifact paths are configured while RAG training is disabled."
+            )
+        return None
+
+    if rag_max_context_tokens is None:
+        raise ValueError(
+            "train.sft.rag_max_context_tokens is required for RAG-conditioned SFT."
+        )
+    if not isinstance(final_path, (str, Path)) or not str(final_path).strip():
+        raise ValueError("train.dataset.rag_final_references_path is required.")
+    if not isinstance(corpus_path, (str, Path)) or not str(corpus_path).strip():
+        raise ValueError("train.dataset.rag_corpus_items_path is required.")
+    return PrecomputedRAGContextStore.from_parquet(final_path, corpus_path)
 
 
 def main() -> None:

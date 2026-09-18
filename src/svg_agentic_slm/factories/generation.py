@@ -51,12 +51,20 @@ from svg_agentic_slm.models.llama_cpp_backend import (
     LlamaCppModelBackend,
 )
 from svg_agentic_slm.models.openai_compatible_backend import OpenAICompatibleBackend
-from svg_agentic_slm.models.siglip2_similarity import Siglip2SimilarityScorer
+from svg_agentic_slm.models.siglip2_similarity import (
+    DEFAULT_SIGLIP2_MODEL_ID,
+    DEFAULT_SIGLIP2_MODEL_REVISION,
+    Siglip2SimilarityScorer,
+)
 from svg_agentic_slm.models.transformers_text_backend import TransformersTextBackend
 from svg_agentic_slm.models.transformers_vlm_backend import TransformersVLMBackend
 from svg_agentic_slm.rag.base import BaseRetriever
 from svg_agentic_slm.rag.chroma_store import ChromaRetriever
 from svg_agentic_slm.rag.document_loader import load_svg_corpus
+from svg_agentic_slm.rag.metadata_policy import (
+    MMSVG_HYBRID_RETRIEVAL_METADATA_POLICY,
+)
+from svg_agentic_slm.rag.mmsvg_hybrid import MMSVGHybridRetriever
 from svg_agentic_slm.rag.qdrant_store import QdrantRetriever
 from svg_agentic_slm.svg.gates import SmokeRenderGate
 from svg_agentic_slm.svg.labeler import CriticLabeler
@@ -811,32 +819,12 @@ def build_rag_retriever(
     backend = str(rag_config.get("backend", "chromadb")).strip().lower()
     if backend in {"chroma", "chromadb"}:
         settings = _merge_backend_settings(rag_config, "chromadb")
-        dataset_roots = settings.get("dataset_roots", {})
-        if not isinstance(dataset_roots, dict):
-            raise ValueError("rag.chromadb.dataset_roots must be a mapping.")
-        embedding_dimension = settings.get("embedding_dimension")
-        retriever = ChromaRetriever(
-            collection_name=settings.get("collection_name", "svg_patterns"),
-            persist_directory=settings.get(
-                "persist_directory",
-                "./data/chroma_db",
-            ),
-            embedding_model=settings.get(
-                "embedding_model",
-                "all-MiniLM-L6-v2",
-            ),
-            similarity_threshold=settings.get("similarity_threshold", 0.0),
-            embedding_revision=settings.get("embedding_revision"),
-            embedding_dimension=(
-                int(embedding_dimension) if embedding_dimension is not None else None
-            ),
-            query_instruction=settings.get("query_instruction"),
-            device=settings.get("device", "cuda:0"),
-            dataset_roots=dataset_roots,
-            precomputed_embeddings=bool(settings.get("precomputed_embeddings", False)),
-            overfetch_factor=int(settings.get("overfetch_factor", 5)),
-            document_field=settings.get("document_field", "description"),
-        )
+        strategy = str(settings.get("strategy", "single_index")).strip().lower()
+        if strategy == "mmsvg_dual_siglip2":
+            return _build_mmsvg_hybrid_retriever(settings)
+        if strategy != "single_index":
+            raise ValueError(f"Unsupported rag.chromadb.strategy: {strategy!r}.")
+        retriever = _build_chroma_retriever(settings)
         corpus_path = settings.get("corpus_path")
         if index_chroma_corpus and corpus_path:
             load_svg_corpus(corpus_path, retriever)
@@ -868,14 +856,96 @@ def build_rag_retriever(
     raise ValueError(f"Unsupported RAG backend: {backend!r}. Choose 'chromadb' or 'qdrant'.")
 
 
+def _build_chroma_retriever(settings: dict[str, Any]) -> ChromaRetriever:
+    dataset_roots = settings.get("dataset_roots", {})
+    if not isinstance(dataset_roots, dict):
+        raise ValueError("rag.chromadb.dataset_roots must be a mapping.")
+    embedding_dimension = settings.get("embedding_dimension")
+    return ChromaRetriever(
+        collection_name=settings.get("collection_name", "svg_patterns"),
+        persist_directory=settings.get("persist_directory", "./data/chroma_db"),
+        embedding_model=settings.get("embedding_model", "all-MiniLM-L6-v2"),
+        similarity_threshold=settings.get("similarity_threshold", 0.0),
+        embedding_revision=settings.get("embedding_revision"),
+        embedding_dimension=(
+            int(embedding_dimension) if embedding_dimension is not None else None
+        ),
+        query_instruction=settings.get("query_instruction"),
+        device=settings.get("device", "cuda:0"),
+        query_encoder_batch_size=int(
+            settings.get("query_encoder_batch_size", 1)
+        ),
+        dataset_roots=dataset_roots,
+        precomputed_embeddings=bool(settings.get("precomputed_embeddings", False)),
+        overfetch_factor=int(settings.get("overfetch_factor", 5)),
+        document_field=settings.get("document_field", "description"),
+    )
+
+
+def _build_mmsvg_hybrid_retriever(
+    settings: dict[str, Any],
+) -> MMSVGHybridRetriever:
+    description_index = settings.get("description_index")
+    detail_index = settings.get("detail_index")
+    reranker = settings.get("reranker")
+    for name, value in (
+        ("description_index", description_index),
+        ("detail_index", detail_index),
+        ("reranker", reranker),
+    ):
+        if not isinstance(value, dict):
+            raise ValueError(f"rag.chromadb.{name} must be a mapping.")
+
+    description_settings = {
+        **settings,
+        **description_index,
+        "document_field": "description",
+    }
+    detail_settings = {
+        **settings,
+        **detail_index,
+        "document_field": "detail",
+    }
+    scorer = Siglip2SimilarityScorer(
+        model_id=reranker.get("model_id", DEFAULT_SIGLIP2_MODEL_ID),
+        model_revision=reranker.get(
+            "model_revision",
+            DEFAULT_SIGLIP2_MODEL_REVISION,
+        ),
+        device=reranker.get("device", "cuda:1"),
+        dtype=reranker.get("dtype", "bfloat16"),
+        attn_implementation=reranker.get("attn_implementation", "sdpa"),
+        local_files_only=bool(reranker.get("local_files_only", True)),
+        trust_remote_code=bool(reranker.get("trust_remote_code", False)),
+        token_env=reranker.get("token_env"),
+        text_template=reranker.get("text_template", "{instruction}"),
+        max_pair_batch_size=int(reranker.get("max_pair_batch_size", 64)),
+    )
+    return MMSVGHybridRetriever(
+        description_retriever=_build_chroma_retriever(description_settings),
+        detail_retriever=_build_chroma_retriever(detail_settings),
+        similarity_scorer=scorer,
+        branch_top_k=int(settings.get("branch_top_k", 3)),
+        search_k=int(settings.get("search_k", 16)),
+    )
+
+
 def _build_rag_agent(rag_config: dict[str, Any]) -> RAGAgent:
     retriever = build_rag_retriever(rag_config)
     if isinstance(retriever, QdrantRetriever):
         retriever.preflight()
-    return RAGAgent(
-        retriever=retriever,
-        top_k=rag_config.get("top_k", 3),
+    metadata_policy = (
+        MMSVG_HYBRID_RETRIEVAL_METADATA_POLICY
+        if isinstance(retriever, MMSVGHybridRetriever)
+        else None
     )
+    kwargs: dict[str, Any] = {
+        "retriever": retriever,
+        "top_k": rag_config.get("top_k", 3),
+    }
+    if metadata_policy is not None:
+        kwargs["metadata_policy"] = metadata_policy
+    return RAGAgent(**kwargs)
 
 
 def _merge_backend_settings(

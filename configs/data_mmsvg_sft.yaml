@@ -1,16 +1,21 @@
 prepare_mmsvg_sft:
-  # Replace only these Elice-local paths after mounting the dataset instance.
   sources:
     icon:
       paths:
-        - "/path/to/elice/MMSVG-Icon/**/*.parquet"
+        - "./data/raw/mmsvg_icon_v2/data/*.parquet"
       dataset_id: "OmniSVG/MMSVG-Icon"
-      dataset_revision: null
+      dataset_revision: "8b1980d64000138d9fd14c3bfbd592edcc4b0be9"
     illustration:
       paths:
-        - "/path/to/elice/MMSVG-Illustration/**/*.parquet"
+        - "./data/raw/mmsvg_illustration_v2/data/*.parquet"
       dataset_id: "OmniSVG/MMSVG-Illustration"
-      dataset_revision: null
+      dataset_revision: "6d81c98ae9bc1f4e1fca80cea496a73cb7f150c1"
+
+  # Immutable seed-42 sample. File order defines each domain's
+  # 9,000/500/500 train/validation/test membership.
+  selected_id_files:
+    icon: "./data/sft_sample_ids/mmsvg_icon_sft_10000_ids.txt"
+    illustration: "./data/sft_sample_ids/mmsvg_illustration_sft_10000_ids.txt"
 
   output_dir: "./data/processed/mmsvg_sft_20k"
   seed: 42
@@ -23,11 +28,13 @@ prepare_mmsvg_sft:
 
   filters:
     min_description_words: 2
-    max_description_words: 80
+    # Exact fixed-20K audit: max description=132 words, max target=54,182
+    # Gemma tokens / 54,803 canonical characters. Keep every approved ID.
+    max_description_words: 256
     require_detail: true
     min_svg_char_length: 32
-    max_svg_char_length: 8192
-    max_svg_token_length: 8192
+    max_svg_char_length: 65536
+    max_svg_token_length: 65536
     # Fail closed: CairoSVG must successfully render every selected target.
     require_renderable: true
 
@@ -45,8 +52,8 @@ prepare_mmsvg_sft:
 
   # JSON/JSONL records can contain IDs, canonical SVG hashes, and captions.
   exclusion_manifests:
-    - "/path/to/elice/exclusions/mmsvgbench.jsonl"
-    - "/path/to/elice/exclusions/vectorgym_vg_text.jsonl"
+    - "./data/processed/benchmark_exclusions/mmsvgbench.jsonl"
+    - "./data/processed/benchmark_exclusions/vectorgym_vg_text.jsonl"
 
   # Optional metadata-only JSONL. Add dataset_type if record IDs overlap across domains:
   # {"dataset_type": "icon", "record_id": "...", "retrieved_item_ids": ["...", "...", "..."]}

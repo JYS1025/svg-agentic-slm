@@ -53,6 +53,36 @@ class _FakeModel:
         )
 
 
+class _FakePairProcessor:
+    def __init__(self) -> None:
+        self.calls: list[dict[str, object]] = []
+
+    def __call__(self, **kwargs):
+        self.calls.append(kwargs)
+        batch_size = len(kwargs["text"])
+        return {
+            "input_ids": torch.ones((batch_size, 2), dtype=torch.long),
+            "pixel_values": torch.ones(
+                (batch_size, 3, 2, 2),
+                dtype=torch.float32,
+            ),
+        }
+
+
+class _FakePairModel(_FakeModel):
+    def __init__(self) -> None:
+        super().__init__()
+        self.forward_count = 0
+
+    def __call__(self, **kwargs):
+        self.inputs = kwargs
+        self.forward_count += 1
+        batch_size = int(kwargs["input_ids"].shape[0])
+        logits = torch.full((batch_size, batch_size), 100.0, dtype=torch.float32)
+        logits.diagonal().copy_(torch.arange(1, batch_size + 1, dtype=torch.float32))
+        return SimpleNamespace(logits_per_image=logits)
+
+
 def _png_bytes() -> bytes:
     output = BytesIO()
     Image.new("RGB", (4, 3), "white").save(output, format="PNG")
@@ -130,6 +160,80 @@ def test_siglip2_requires_loaded_model_and_valid_png() -> None:
         scorer.score("Draw a circle", b"not-png", attempt_id="attempt-1")
     with pytest.raises(RuntimeError, match="not loaded"):
         scorer.score("Draw a circle", _png_bytes(), attempt_id="attempt-1")
+
+
+def test_siglip2_scores_distinct_pairs_in_one_forward_using_diagonal_logits() -> None:
+    processor = _FakePairProcessor()
+    model = _FakePairModel()
+    scorer = Siglip2SimilarityScorer(device="cpu", dtype="float32")
+    scorer._processor = processor
+    scorer._model = model
+    scorer._torch_dtype = torch.float32
+    pngs = [_png_bytes(), _png_bytes(), _png_bytes()]
+
+    evidence = scorer.score_pairs_batch(
+        ["first image", "second image", "third image"],
+        pngs,
+        attempt_ids=["attempt-1", "attempt-2", "attempt-3"],
+    )
+
+    assert model.forward_count == 1
+    assert len(processor.calls) == 1
+    assert processor.calls[0]["text"] == [
+        "This is a photo of first image.",
+        "This is a photo of second image.",
+        "This is a photo of third image.",
+    ]
+    assert [item.attempt_id for item in evidence] == [
+        "attempt-1",
+        "attempt-2",
+        "attempt-3",
+    ]
+    assert [item.raw_logit for item in evidence] == pytest.approx([1.0, 2.0, 3.0])
+    assert [item.score for item in evidence] == pytest.approx(
+        [
+            torch.sigmoid(torch.tensor(1.0)).item(),
+            torch.sigmoid(torch.tensor(2.0)).item(),
+            torch.sigmoid(torch.tensor(3.0)).item(),
+        ]
+    )
+
+
+def test_siglip2_pair_batch_chunks_at_configured_maximum() -> None:
+    processor = _FakePairProcessor()
+    model = _FakePairModel()
+    scorer = Siglip2SimilarityScorer(
+        device="cpu",
+        dtype="float32",
+        max_pair_batch_size=2,
+    )
+    scorer._processor = processor
+    scorer._model = model
+    scorer._torch_dtype = torch.float32
+
+    evidence = scorer.score_pairs_batch(
+        ["first", "second", "third", "fourth", "fifth"],
+        [_png_bytes() for _ in range(5)],
+        attempt_ids=[f"attempt-{index}" for index in range(5)],
+    )
+
+    assert model.forward_count == 3
+    assert [len(call["text"]) for call in processor.calls] == [2, 2, 1]
+    assert [item.attempt_id for item in evidence] == [
+        "attempt-0",
+        "attempt-1",
+        "attempt-2",
+        "attempt-3",
+        "attempt-4",
+    ]
+
+
+@pytest.mark.parametrize("max_pair_batch_size", [0, -1, True, 1.5])
+def test_siglip2_rejects_invalid_pair_batch_size(
+    max_pair_batch_size: object,
+) -> None:
+    with pytest.raises(ValueError, match="max_pair_batch_size"):
+        Siglip2SimilarityScorer(max_pair_batch_size=max_pair_batch_size)  # type: ignore[arg-type]
 
 
 @pytest.mark.parametrize(

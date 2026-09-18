@@ -21,7 +21,8 @@ class RetrievedExample:
         content: The retrieved content (e.g., SVG code or snippet).
         item_id: Stable identifier for the same logical corpus item.
         source: Stable source document or collection identifier.
-        description: Human-readable description of the content.
+        description: Short human-readable description of the content.
+        detail: Detailed MMSVG description retained for Generator conditioning.
         score: Similarity score from the retriever.
         metadata: Whitelisted metadata crossing the shared boundary.
     """
@@ -30,6 +31,7 @@ class RetrievedExample:
     item_id: str
     source: str
     description: str = ""
+    detail: str = ""
     score: float = 0.0
     score_kind: str = "similarity"
     rank: int | None = None

@@ -1,0 +1,1099 @@
+{
+  "algorithm_version": "mmsvg-critic-diverse-v1",
+  "chroma": {
+    "batch_size": 8192,
+    "description": {
+      "collection_name": "mmsvg_description_qwen3_0_6b_1024_v1",
+      "distance": "cosine",
+      "document_field": "description",
+      "document_template": "{description}",
+      "embedding_dimension": 1024,
+      "embedding_model": "Qwen/Qwen3-Embedding-0.6B",
+      "embedding_revision": "97b0c614be4d77ee51c0cef4e5f07c00f9eb65b3",
+      "index_schema_version": 1,
+      "manifest_path": "/home/elicer/svg-agentic-slm/data/chroma_db/mmsvg_description_qwen3_0_6b_1024_v1.manifest.json",
+      "manifest_sha256": "fa979707b5f1b7e3b35a05ede1e24c33d93c3eec0ff5649f77cca5c5b855ea85",
+      "normalized_embeddings": true,
+      "query_instruction": "Given a user description of a desired SVG image, retrieve SVG examples matching the objects, attributes, colors, style, composition, and spatial relationships.",
+      "sources": [
+        {
+          "data_dir": "data/raw/mmsvg_icon_v2/data",
+          "dataset_id": "OmniSVG/MMSVG-Icon",
+          "dataset_revision": "8b1980d64000138d9fd14c3bfbd592edcc4b0be9",
+          "dataset_type": "icon",
+          "expected_rows": 904011,
+          "expected_shards": 91
+        },
+        {
+          "data_dir": "data/raw/mmsvg_illustration_v2/data",
+          "dataset_id": "OmniSVG/MMSVG-Illustration",
+          "dataset_revision": "6d81c98ae9bc1f4e1fca80cea496a73cb7f150c1",
+          "dataset_type": "illustration",
+          "expected_rows": 255412,
+          "expected_shards": 26
+        }
+      ]
+    },
+    "detail": {
+      "collection_name": "mmsvg_detail_qwen3_0_6b_1024_v1",
+      "distance": "cosine",
+      "document_field": "detail",
+      "document_template": "{detail}",
+      "embedding_dimension": 1024,
+      "embedding_model": "Qwen/Qwen3-Embedding-0.6B",
+      "embedding_revision": "97b0c614be4d77ee51c0cef4e5f07c00f9eb65b3",
+      "index_schema_version": 1,
+      "manifest_path": "/home/elicer/svg-agentic-slm/data/chroma_db_detail/mmsvg_detail_qwen3_0_6b_1024_v1.manifest.json",
+      "manifest_sha256": "693e165c71d90aee6a5bae316417c52c831e85e397c0e4909787890ffa9926f8",
+      "max_seq_length": 512,
+      "normalized_embeddings": true,
+      "query_instruction": "Given a user description of a desired SVG image, retrieve SVG examples matching the objects, attributes, colors, style, composition, and spatial relationships.",
+      "sources": [
+        {
+          "data_dir": "data/raw/mmsvg_icon_v2/data",
+          "dataset_id": "OmniSVG/MMSVG-Icon",
+          "dataset_revision": "8b1980d64000138d9fd14c3bfbd592edcc4b0be9",
+          "dataset_type": "icon",
+          "expected_rows": 904011,
+          "expected_shards": 91
+        },
+        {
+          "data_dir": "data/raw/mmsvg_illustration_v2/data",
+          "dataset_id": "OmniSVG/MMSVG-Illustration",
+          "dataset_revision": "6d81c98ae9bc1f4e1fca80cea496a73cb7f150c1",
+          "dataset_type": "illustration",
+          "expected_rows": 255412,
+          "expected_shards": 26
+        }
+      ]
+    },
+    "export_api": "collection.get(ids=batch, include=['embeddings','metadatas']); explicit returned-ID join",
+    "semantic": {
+      "combination": "l2_normalize(0.4*description + 0.6*detail)",
+      "embedding_dimension": 1024,
+      "lsh_bits": 16,
+      "projection_dimension": 64,
+      "projection_seed": 42,
+      "projection_sha256": "d2ceb70d0c1eeda7fb1585ce5ebc81aba8a8a5fed70ef2862bc771ca7bc00aa8"
+    }
+  },
+  "created_at": "2026-09-02T09:24:25.014936+00:00",
+  "domain_results": {
+    "icon": {
+      "eligible_semantic_buckets": 11215,
+      "quota_actual": {
+        "arc_heavy": 60,
+        "clip_path": 0,
+        "curve_heavy": 60,
+        "filter": 0,
+        "gradient": 0,
+        "image_element": 0,
+        "long_svg": 60,
+        "long_token": 100,
+        "many_colors": 60,
+        "many_elements": 60,
+        "many_path_commands": 60,
+        "many_paths": 60,
+        "mask": 0,
+        "minimal": 100,
+        "opacity": 30,
+        "rare_commands": 50,
+        "stroke": 0,
+        "text_element": 0,
+        "transform": 0,
+        "use_element": 0,
+        "viewbox_aspect_extreme": 0
+      },
+      "quota_targets": {
+        "arc_heavy": 60,
+        "clip_path": 30,
+        "curve_heavy": 60,
+        "filter": 30,
+        "gradient": 30,
+        "image_element": 30,
+        "long_svg": 60,
+        "long_token": 100,
+        "many_colors": 60,
+        "many_elements": 60,
+        "many_path_commands": 60,
+        "many_paths": 60,
+        "mask": 30,
+        "minimal": 100,
+        "opacity": 30,
+        "rare_commands": 50,
+        "stroke": 30,
+        "text_element": 30,
+        "transform": 30,
+        "use_element": 30,
+        "viewbox_aspect_extreme": 30
+      },
+      "selected_feature_coverage": {
+        "arc_command": 2563,
+        "clip_path": 0,
+        "curve_command": 4245,
+        "filter": 0,
+        "gradient": 0,
+        "image_element": 0,
+        "mask": 0,
+        "opacity": 5000,
+        "stroke": 0,
+        "text_element": 0,
+        "transform": 0,
+        "use_element": 0,
+        "viewbox_aspect_extreme_ge_2": 0
+      },
+      "statistics": {
+        "rejected_selected_text_pair_duplicate": 5,
+        "selected_edge": 1000,
+        "selected_semantic": 4000,
+        "selected_semantic_buckets": 4000,
+        "selected_total": 5000
+      }
+    },
+    "illustration": {
+      "eligible_semantic_buckets": 10980,
+      "quota_actual": {
+        "arc_heavy": 60,
+        "clip_path": 0,
+        "curve_heavy": 60,
+        "filter": 0,
+        "gradient": 0,
+        "image_element": 0,
+        "long_svg": 60,
+        "long_token": 100,
+        "many_colors": 60,
+        "many_elements": 60,
+        "many_path_commands": 60,
+        "many_paths": 60,
+        "mask": 0,
+        "minimal": 100,
+        "opacity": 30,
+        "rare_commands": 50,
+        "stroke": 0,
+        "text_element": 0,
+        "transform": 0,
+        "use_element": 0,
+        "viewbox_aspect_extreme": 0
+      },
+      "quota_targets": {
+        "arc_heavy": 60,
+        "clip_path": 30,
+        "curve_heavy": 60,
+        "filter": 30,
+        "gradient": 30,
+        "image_element": 30,
+        "long_svg": 60,
+        "long_token": 100,
+        "many_colors": 60,
+        "many_elements": 60,
+        "many_path_commands": 60,
+        "many_paths": 60,
+        "mask": 30,
+        "minimal": 100,
+        "opacity": 30,
+        "rare_commands": 50,
+        "stroke": 30,
+        "text_element": 30,
+        "transform": 30,
+        "use_element": 30,
+        "viewbox_aspect_extreme": 30
+      },
+      "selected_feature_coverage": {
+        "arc_command": 2727,
+        "clip_path": 0,
+        "curve_command": 4737,
+        "filter": 0,
+        "gradient": 0,
+        "image_element": 0,
+        "mask": 0,
+        "opacity": 5000,
+        "stroke": 0,
+        "text_element": 0,
+        "transform": 0,
+        "use_element": 0,
+        "viewbox_aspect_extreme_ge_2": 0
+      },
+      "statistics": {
+        "rejected_selected_text_pair_duplicate": 5,
+        "selected_edge": 1000,
+        "selected_semantic": 4000,
+        "selected_semantic_buckets": 4000,
+        "selected_total": 5000
+      }
+    }
+  },
+  "exclusions": {
+    "benchmark_files": [
+      {
+        "path": "/home/elicer/svg-agentic-slm/data/processed/benchmark_exclusions/mmsvgbench.jsonl",
+        "rows": 300,
+        "sha256": "40eaa0a2001e2ec6839fc5c10513565180628457bf694b2c454c55143b8379e2",
+        "size_bytes": 27186
+      },
+      {
+        "path": "/home/elicer/svg-agentic-slm/data/processed/benchmark_exclusions/vectorgym_vg_text.jsonl",
+        "rows": 293,
+        "sha256": "f73661a5db84d998597adb674cec3ae3e3792cdbe07c0b3aba122d9f00ba7962",
+        "size_bytes": 192422
+      }
+    ],
+    "benchmark_raw_ids": 593,
+    "benchmark_svg_hashes": 471,
+    "benchmark_text_hashes": 743,
+    "final_reference_item_ids": 52999,
+    "final_reference_svg_hashes": 52999,
+    "final_references": {
+      "path": "/home/elicer/svg-agentic-slm/data/processed/mmsvg_sft_20k_rag/final_references.parquet",
+      "rows": 60000,
+      "sha256": "c314e93fa57a0b7cfbb16cf54b4d3686f1a147b7b9c0d9fb86f36f8e712067de",
+      "size_bytes": 3989099,
+      "unique_canonical_svg_hashes": 52999,
+      "unique_item_ids": 52999
+    },
+    "generator_id_files": {
+      "icon": {
+        "path": "/home/elicer/svg-agentic-slm/data/sft_sample_ids/mmsvg_icon_sft_10000_ids.txt",
+        "rows": 10000,
+        "sha256": "bf017a997880265f5d5861bdcfa17473990ff79219b34681be83a505df0082cc"
+      },
+      "illustration": {
+        "path": "/home/elicer/svg-agentic-slm/data/sft_sample_ids/mmsvg_illustration_sft_10000_ids.txt",
+        "rows": 10000,
+        "sha256": "645d3b53bd22dca63a27058a738856d47522c8d84d388025eb5fb43bcabaa7df"
+      }
+    },
+    "generator_raw_ids": 20000,
+    "generator_svg_hashes": 20000
+  },
+  "final_audit": {
+    "benchmark_raw_id_overlap": 0,
+    "benchmark_svg_hash_overlap": 0,
+    "benchmark_text_hash_overlap": 0,
+    "final_reference_item_id_overlap": 0,
+    "final_reference_svg_hash_overlap": 0,
+    "generator_raw_id_overlap": 0,
+    "generator_svg_hash_overlap": 0,
+    "rows": 10000,
+    "unique_canonical_svg_hashes": 10000,
+    "unique_caption_detail_hash_pairs": 10000,
+    "unique_item_ids": 10000,
+    "unique_raw_ids": 10000
+  },
+  "leakage_policy": {
+    "benchmark": [
+      "raw_id",
+      "caption_or_detail_sha256",
+      "canonical_svg_sha256"
+    ],
+    "caption_hash_contract": "SHA-256(casefold + whitespace collapse)",
+    "generator": [
+      "raw_id",
+      "canonical_svg_sha256"
+    ],
+    "generator_final_top3": [
+      "item_id",
+      "canonical_svg_sha256"
+    ],
+    "selected_deduplication": "global canonical_svg_sha256",
+    "selected_text_deduplication": "global exact (caption_sha256, detail_sha256)",
+    "svg_hash_contract": "SHA-256(strict lxml XML C14N, comments removed)"
+  },
+  "outputs": {
+    "icon": {
+      "file": "mmsvg_icon_critic_rollout_5000_ids.txt",
+      "rows": 5000,
+      "sha256": "ac0782b6b0411332eb2cc6f26ff490ba062fab28e480b22e30fcb6c7a636a589",
+      "unique_ids": 5000
+    },
+    "illustration": {
+      "file": "mmsvg_illustration_critic_rollout_5000_ids.txt",
+      "rows": 5000,
+      "sha256": "16a4c39205999acd29ab0bb5e3cf544210958f8bedeb8d5c2d674cf0d7acd3cb",
+      "unique_ids": 5000
+    },
+    "selection_audit": {
+      "file": "selection_audit.parquet",
+      "rows": 10000,
+      "sha256": "4619cfe97c4b1bfe62e0d967f4724aa17d096fc2e2480e761a65cf30919e5125"
+    }
+  },
+  "purpose": "MMSVG critic rollout diverse holdout IDs",
+  "render_gate": {
+    "height": 64,
+    "renderer": "CairoSVGRenderer.render_bytes",
+    "scope": "ranked final candidates and deterministic backfills",
+    "validator": "SVGValidator strict static policy",
+    "width": 64
+  },
+  "schema_version": 1,
+  "selection": {
+    "domain_order": [
+      "icon",
+      "illustration"
+    ],
+    "edge_quota_per_domain": 1000,
+    "edge_strata_weights": {
+      "arc_heavy": 6,
+      "clip_path": 3,
+      "curve_heavy": 6,
+      "filter": 3,
+      "gradient": 3,
+      "image_element": 3,
+      "long_svg": 6,
+      "long_token": 10,
+      "many_colors": 6,
+      "many_elements": 6,
+      "many_path_commands": 6,
+      "many_paths": 6,
+      "mask": 3,
+      "minimal": 10,
+      "opacity": 3,
+      "rare_commands": 5,
+      "stroke": 3,
+      "text_element": 3,
+      "transform": 3,
+      "use_element": 3,
+      "viewbox_aspect_extreme": 3
+    },
+    "sample_size_per_domain": 5000,
+    "seed": 42,
+    "semantic_method": "dual-Qwen weighted embedding, seeded random projection, LSH bucket maximin Hamming coverage",
+    "semantic_quota_per_domain": 4000
+  },
+  "sources": {
+    "icon": {
+      "dataset_id": "OmniSVG/MMSVG-Icon",
+      "expected_rows": 904011,
+      "expected_shards": 91,
+      "files": [
+        {
+          "mtime_ns": 1786681367822730854,
+          "path": "/home/elicer/svg-agentic-slm/data/raw/mmsvg_icon_v2/data/train-00000-of-00091.parquet",
+          "rows": 10000,
+          "size_bytes": 250495797
+        },
+        {
+          "mtime_ns": 1786681370370736472,
+          "path": "/home/elicer/svg-agentic-slm/data/raw/mmsvg_icon_v2/data/train-00001-of-00091.parquet",
+          "rows": 10000,
+          "size_bytes": 252619286
+        },
+        {
+          "mtime_ns": 1786681372494741158,
+          "path": "/home/elicer/svg-agentic-slm/data/raw/mmsvg_icon_v2/data/train-00002-of-00091.parquet",
+          "rows": 10000,
+          "size_bytes": 252626858
+        },
+        {
+          "mtime_ns": 1786681376518750044,
+          "path": "/home/elicer/svg-agentic-slm/data/raw/mmsvg_icon_v2/data/train-00003-of-00091.parquet",
+          "rows": 10000,
+          "size_bytes": 251993692
+        },
+        {
+          "mtime_ns": 1786681373906744275,
+          "path": "/home/elicer/svg-agentic-slm/data/raw/mmsvg_icon_v2/data/train-00004-of-00091.parquet",
+          "rows": 10000,
+          "size_bytes": 253113633
+        },
+        {
+          "mtime_ns": 1786681377954753217,
+          "path": "/home/elicer/svg-agentic-slm/data/raw/mmsvg_icon_v2/data/train-00005-of-00091.parquet",
+          "rows": 10000,
+          "size_bytes": 250373855
+        },
+        {
+          "mtime_ns": 1786681379430756481,
+          "path": "/home/elicer/svg-agentic-slm/data/raw/mmsvg_icon_v2/data/train-00006-of-00091.parquet",
+          "rows": 10000,
+          "size_bytes": 252515648
+        },
+        {
+          "mtime_ns": 1786681375426747632,
+          "path": "/home/elicer/svg-agentic-slm/data/raw/mmsvg_icon_v2/data/train-00007-of-00091.parquet",
+          "rows": 10000,
+          "size_bytes": 251649690
+        },
+        {
+          "mtime_ns": 1786681380974759897,
+          "path": "/home/elicer/svg-agentic-slm/data/raw/mmsvg_icon_v2/data/train-00008-of-00091.parquet",
+          "rows": 10000,
+          "size_bytes": 250776459
+        },
+        {
+          "mtime_ns": 1786681382746763820,
+          "path": "/home/elicer/svg-agentic-slm/data/raw/mmsvg_icon_v2/data/train-00009-of-00091.parquet",
+          "rows": 10000,
+          "size_bytes": 251237006
+        },
+        {
+          "mtime_ns": 1786681384562767841,
+          "path": "/home/elicer/svg-agentic-slm/data/raw/mmsvg_icon_v2/data/train-00010-of-00091.parquet",
+          "rows": 10000,
+          "size_bytes": 251097494
+        },
+        {
+          "mtime_ns": 1786681385994771013,
+          "path": "/home/elicer/svg-agentic-slm/data/raw/mmsvg_icon_v2/data/train-00011-of-00091.parquet",
+          "rows": 10000,
+          "size_bytes": 250875161
+        },
+        {
+          "mtime_ns": 1786681388138775766,
+          "path": "/home/elicer/svg-agentic-slm/data/raw/mmsvg_icon_v2/data/train-00012-of-00091.parquet",
+          "rows": 10000,
+          "size_bytes": 253393929
+        },
+        {
+          "mtime_ns": 1786681389758779359,
+          "path": "/home/elicer/svg-agentic-slm/data/raw/mmsvg_icon_v2/data/train-00013-of-00091.parquet",
+          "rows": 10000,
+          "size_bytes": 252833475
+        },
+        {
+          "mtime_ns": 1786681395902793002,
+          "path": "/home/elicer/svg-agentic-slm/data/raw/mmsvg_icon_v2/data/train-00014-of-00091.parquet",
+          "rows": 10000,
+          "size_bytes": 252566987
+        },
+        {
+          "mtime_ns": 1786681395942793090,
+          "path": "/home/elicer/svg-agentic-slm/data/raw/mmsvg_icon_v2/data/train-00015-of-00091.parquet",
+          "rows": 10000,
+          "size_bytes": 249887545
+        },
+        {
+          "mtime_ns": 1786681398262798249,
+          "path": "/home/elicer/svg-agentic-slm/data/raw/mmsvg_icon_v2/data/train-00016-of-00091.parquet",
+          "rows": 10000,
+          "size_bytes": 251550474
+        },
+        {
+          "mtime_ns": 1786681399338800642,
+          "path": "/home/elicer/svg-agentic-slm/data/raw/mmsvg_icon_v2/data/train-00017-of-00091.parquet",
+          "rows": 10000,
+          "size_bytes": 251154330
+        },
+        {
+          "mtime_ns": 1786681400294802770,
+          "path": "/home/elicer/svg-agentic-slm/data/raw/mmsvg_icon_v2/data/train-00018-of-00091.parquet",
+          "rows": 10000,
+          "size_bytes": 252606043
+        },
+        {
+          "mtime_ns": 1786681403718810393,
+          "path": "/home/elicer/svg-agentic-slm/data/raw/mmsvg_icon_v2/data/train-00019-of-00091.parquet",
+          "rows": 10000,
+          "size_bytes": 251570961
+        },
+        {
+          "mtime_ns": 1786681404314811720,
+          "path": "/home/elicer/svg-agentic-slm/data/raw/mmsvg_icon_v2/data/train-00020-of-00091.parquet",
+          "rows": 10000,
+          "size_bytes": 250946193
+        },
+        {
+          "mtime_ns": 1786681407778819441,
+          "path": "/home/elicer/svg-agentic-slm/data/raw/mmsvg_icon_v2/data/train-00021-of-00091.parquet",
+          "rows": 10000,
+          "size_bytes": 251237314
+        },
+        {
+          "mtime_ns": 1786681409062822305,
+          "path": "/home/elicer/svg-agentic-slm/data/raw/mmsvg_icon_v2/data/train-00022-of-00091.parquet",
+          "rows": 10000,
+          "size_bytes": 250961782
+        },
+        {
+          "mtime_ns": 1786681408434820904,
+          "path": "/home/elicer/svg-agentic-slm/data/raw/mmsvg_icon_v2/data/train-00023-of-00091.parquet",
+          "rows": 10000,
+          "size_bytes": 251200777
+        },
+        {
+          "mtime_ns": 1786681412982831055,
+          "path": "/home/elicer/svg-agentic-slm/data/raw/mmsvg_icon_v2/data/train-00024-of-00091.parquet",
+          "rows": 10000,
+          "size_bytes": 251322375
+        },
+        {
+          "mtime_ns": 1786681412818830689,
+          "path": "/home/elicer/svg-agentic-slm/data/raw/mmsvg_icon_v2/data/train-00025-of-00091.parquet",
+          "rows": 10000,
+          "size_bytes": 254410304
+        },
+        {
+          "mtime_ns": 1786681417122840307,
+          "path": "/home/elicer/svg-agentic-slm/data/raw/mmsvg_icon_v2/data/train-00026-of-00091.parquet",
+          "rows": 10000,
+          "size_bytes": 252069777
+        },
+        {
+          "mtime_ns": 1786681419350845289,
+          "path": "/home/elicer/svg-agentic-slm/data/raw/mmsvg_icon_v2/data/train-00027-of-00091.parquet",
+          "rows": 10000,
+          "size_bytes": 253176227
+        },
+        {
+          "mtime_ns": 1786681418682843796,
+          "path": "/home/elicer/svg-agentic-slm/data/raw/mmsvg_icon_v2/data/train-00028-of-00091.parquet",
+          "rows": 10000,
+          "size_bytes": 250794915
+        },
+        {
+          "mtime_ns": 1786681423266854056,
+          "path": "/home/elicer/svg-agentic-slm/data/raw/mmsvg_icon_v2/data/train-00029-of-00091.parquet",
+          "rows": 10000,
+          "size_bytes": 252306207
+        },
+        {
+          "mtime_ns": 1786681427070862580,
+          "path": "/home/elicer/svg-agentic-slm/data/raw/mmsvg_icon_v2/data/train-00030-of-00091.parquet",
+          "rows": 10000,
+          "size_bytes": 252903932
+        },
+        {
+          "mtime_ns": 1786681427838864303,
+          "path": "/home/elicer/svg-agentic-slm/data/raw/mmsvg_icon_v2/data/train-00031-of-00091.parquet",
+          "rows": 10000,
+          "size_bytes": 251455228
+        },
+        {
+          "mtime_ns": 1786681427406863333,
+          "path": "/home/elicer/svg-agentic-slm/data/raw/mmsvg_icon_v2/data/train-00032-of-00091.parquet",
+          "rows": 10000,
+          "size_bytes": 251841400
+        },
+        {
+          "mtime_ns": 1786681428230865182,
+          "path": "/home/elicer/svg-agentic-slm/data/raw/mmsvg_icon_v2/data/train-00033-of-00091.parquet",
+          "rows": 10000,
+          "size_bytes": 252522251
+        },
+        {
+          "mtime_ns": 1786681431494872505,
+          "path": "/home/elicer/svg-agentic-slm/data/raw/mmsvg_icon_v2/data/train-00034-of-00091.parquet",
+          "rows": 10000,
+          "size_bytes": 251150678
+        },
+        {
+          "mtime_ns": 1786681432202874094,
+          "path": "/home/elicer/svg-agentic-slm/data/raw/mmsvg_icon_v2/data/train-00035-of-00091.parquet",
+          "rows": 10000,
+          "size_bytes": 250322430
+        },
+        {
+          "mtime_ns": 1786681436246883179,
+          "path": "/home/elicer/svg-agentic-slm/data/raw/mmsvg_icon_v2/data/train-00036-of-00091.parquet",
+          "rows": 10000,
+          "size_bytes": 250870619
+        },
+        {
+          "mtime_ns": 1786681438474888188,
+          "path": "/home/elicer/svg-agentic-slm/data/raw/mmsvg_icon_v2/data/train-00037-of-00091.parquet",
+          "rows": 10000,
+          "size_bytes": 249956300
+        },
+        {
+          "mtime_ns": 1786681439442890365,
+          "path": "/home/elicer/svg-agentic-slm/data/raw/mmsvg_icon_v2/data/train-00038-of-00091.parquet",
+          "rows": 10000,
+          "size_bytes": 253220893
+        },
+        {
+          "mtime_ns": 1786681439482890455,
+          "path": "/home/elicer/svg-agentic-slm/data/raw/mmsvg_icon_v2/data/train-00039-of-00091.parquet",
+          "rows": 10000,
+          "size_bytes": 251879176
+        },
+        {
+          "mtime_ns": 1786681443546899603,
+          "path": "/home/elicer/svg-agentic-slm/data/raw/mmsvg_icon_v2/data/train-00040-of-00091.parquet",
+          "rows": 10000,
+          "size_bytes": 249569210
+        },
+        {
+          "mtime_ns": 1786681443982900584,
+          "path": "/home/elicer/svg-agentic-slm/data/raw/mmsvg_icon_v2/data/train-00041-of-00091.parquet",
+          "rows": 10000,
+          "size_bytes": 232375025
+        },
+        {
+          "mtime_ns": 1786681444918902693,
+          "path": "/home/elicer/svg-agentic-slm/data/raw/mmsvg_icon_v2/data/train-00042-of-00091.parquet",
+          "rows": 10000,
+          "size_bytes": 119217538
+        },
+        {
+          "mtime_ns": 1786681447922909463,
+          "path": "/home/elicer/svg-agentic-slm/data/raw/mmsvg_icon_v2/data/train-00043-of-00091.parquet",
+          "rows": 10000,
+          "size_bytes": 118712218
+        },
+        {
+          "mtime_ns": 1786681448314910346,
+          "path": "/home/elicer/svg-agentic-slm/data/raw/mmsvg_icon_v2/data/train-00044-of-00091.parquet",
+          "rows": 10000,
+          "size_bytes": 119652181
+        },
+        {
+          "mtime_ns": 1786681452654920137,
+          "path": "/home/elicer/svg-agentic-slm/data/raw/mmsvg_icon_v2/data/train-00045-of-00091.parquet",
+          "rows": 10000,
+          "size_bytes": 118939651
+        },
+        {
+          "mtime_ns": 1786681456314928402,
+          "path": "/home/elicer/svg-agentic-slm/data/raw/mmsvg_icon_v2/data/train-00046-of-00091.parquet",
+          "rows": 10000,
+          "size_bytes": 119353050
+        },
+        {
+          "mtime_ns": 1786681452190919090,
+          "path": "/home/elicer/svg-agentic-slm/data/raw/mmsvg_icon_v2/data/train-00047-of-00091.parquet",
+          "rows": 10000,
+          "size_bytes": 120075244
+        },
+        {
+          "mtime_ns": 1786681457934932064,
+          "path": "/home/elicer/svg-agentic-slm/data/raw/mmsvg_icon_v2/data/train-00048-of-00091.parquet",
+          "rows": 10000,
+          "size_bytes": 119903968
+        },
+        {
+          "mtime_ns": 1786681457906932000,
+          "path": "/home/elicer/svg-agentic-slm/data/raw/mmsvg_icon_v2/data/train-00049-of-00091.parquet",
+          "rows": 10000,
+          "size_bytes": 118735684
+        },
+        {
+          "mtime_ns": 1786681461434939979,
+          "path": "/home/elicer/svg-agentic-slm/data/raw/mmsvg_icon_v2/data/train-00050-of-00091.parquet",
+          "rows": 10000,
+          "size_bytes": 120416815
+        },
+        {
+          "mtime_ns": 1786681461422939951,
+          "path": "/home/elicer/svg-agentic-slm/data/raw/mmsvg_icon_v2/data/train-00051-of-00091.parquet",
+          "rows": 10000,
+          "size_bytes": 119270981
+        },
+        {
+          "mtime_ns": 1786681462810943091,
+          "path": "/home/elicer/svg-agentic-slm/data/raw/mmsvg_icon_v2/data/train-00052-of-00091.parquet",
+          "rows": 10000,
+          "size_bytes": 119937901
+        },
+        {
+          "mtime_ns": 1786681464350946578,
+          "path": "/home/elicer/svg-agentic-slm/data/raw/mmsvg_icon_v2/data/train-00053-of-00091.parquet",
+          "rows": 10000,
+          "size_bytes": 120481023
+        },
+        {
+          "mtime_ns": 1786681468850956771,
+          "path": "/home/elicer/svg-agentic-slm/data/raw/mmsvg_icon_v2/data/train-00054-of-00091.parquet",
+          "rows": 10000,
+          "size_bytes": 119514358
+        },
+        {
+          "mtime_ns": 1786681468918956925,
+          "path": "/home/elicer/svg-agentic-slm/data/raw/mmsvg_icon_v2/data/train-00055-of-00091.parquet",
+          "rows": 10000,
+          "size_bytes": 119762429
+        },
+        {
+          "mtime_ns": 1786681468926956943,
+          "path": "/home/elicer/svg-agentic-slm/data/raw/mmsvg_icon_v2/data/train-00056-of-00091.parquet",
+          "rows": 10000,
+          "size_bytes": 119773610
+        },
+        {
+          "mtime_ns": 1786681471010961667,
+          "path": "/home/elicer/svg-agentic-slm/data/raw/mmsvg_icon_v2/data/train-00057-of-00091.parquet",
+          "rows": 10000,
+          "size_bytes": 119495641
+        },
+        {
+          "mtime_ns": 1786681475158971079,
+          "path": "/home/elicer/svg-agentic-slm/data/raw/mmsvg_icon_v2/data/train-00058-of-00091.parquet",
+          "rows": 10000,
+          "size_bytes": 118953657
+        },
+        {
+          "mtime_ns": 1786681471462962693,
+          "path": "/home/elicer/svg-agentic-slm/data/raw/mmsvg_icon_v2/data/train-00059-of-00091.parquet",
+          "rows": 10000,
+          "size_bytes": 120187087
+        },
+        {
+          "mtime_ns": 1786681477106975502,
+          "path": "/home/elicer/svg-agentic-slm/data/raw/mmsvg_icon_v2/data/train-00060-of-00091.parquet",
+          "rows": 10000,
+          "size_bytes": 119940143
+        },
+        {
+          "mtime_ns": 1786681475042970816,
+          "path": "/home/elicer/svg-agentic-slm/data/raw/mmsvg_icon_v2/data/train-00061-of-00091.parquet",
+          "rows": 10000,
+          "size_bytes": 119975398
+        },
+        {
+          "mtime_ns": 1786681477534976474,
+          "path": "/home/elicer/svg-agentic-slm/data/raw/mmsvg_icon_v2/data/train-00062-of-00091.parquet",
+          "rows": 10000,
+          "size_bytes": 120233399
+        },
+        {
+          "mtime_ns": 1786681477842977174,
+          "path": "/home/elicer/svg-agentic-slm/data/raw/mmsvg_icon_v2/data/train-00063-of-00091.parquet",
+          "rows": 10000,
+          "size_bytes": 120612445
+        },
+        {
+          "mtime_ns": 1786681478330978283,
+          "path": "/home/elicer/svg-agentic-slm/data/raw/mmsvg_icon_v2/data/train-00064-of-00091.parquet",
+          "rows": 10000,
+          "size_bytes": 119230985
+        },
+        {
+          "mtime_ns": 1786681483810990739,
+          "path": "/home/elicer/svg-agentic-slm/data/raw/mmsvg_icon_v2/data/train-00065-of-00091.parquet",
+          "rows": 10000,
+          "size_bytes": 118538315
+        },
+        {
+          "mtime_ns": 1786681483374989749,
+          "path": "/home/elicer/svg-agentic-slm/data/raw/mmsvg_icon_v2/data/train-00066-of-00091.parquet",
+          "rows": 10000,
+          "size_bytes": 118862767
+        },
+        {
+          "mtime_ns": 1786681484214991659,
+          "path": "/home/elicer/svg-agentic-slm/data/raw/mmsvg_icon_v2/data/train-00067-of-00091.parquet",
+          "rows": 10000,
+          "size_bytes": 119403101
+        },
+        {
+          "mtime_ns": 1786681484010991195,
+          "path": "/home/elicer/svg-agentic-slm/data/raw/mmsvg_icon_v2/data/train-00068-of-00091.parquet",
+          "rows": 10000,
+          "size_bytes": 119609093
+        },
+        {
+          "mtime_ns": 1786681491263007707,
+          "path": "/home/elicer/svg-agentic-slm/data/raw/mmsvg_icon_v2/data/train-00069-of-00091.parquet",
+          "rows": 10000,
+          "size_bytes": 119516349
+        },
+        {
+          "mtime_ns": 1786681491095007324,
+          "path": "/home/elicer/svg-agentic-slm/data/raw/mmsvg_icon_v2/data/train-00070-of-00091.parquet",
+          "rows": 10000,
+          "size_bytes": 119012156
+        },
+        {
+          "mtime_ns": 1786681491147007442,
+          "path": "/home/elicer/svg-agentic-slm/data/raw/mmsvg_icon_v2/data/train-00071-of-00091.parquet",
+          "rows": 10000,
+          "size_bytes": 119088176
+        },
+        {
+          "mtime_ns": 1786681491719008746,
+          "path": "/home/elicer/svg-agentic-slm/data/raw/mmsvg_icon_v2/data/train-00072-of-00091.parquet",
+          "rows": 10000,
+          "size_bytes": 120685312
+        },
+        {
+          "mtime_ns": 1786681494399014855,
+          "path": "/home/elicer/svg-agentic-slm/data/raw/mmsvg_icon_v2/data/train-00073-of-00091.parquet",
+          "rows": 10000,
+          "size_bytes": 119521915
+        },
+        {
+          "mtime_ns": 1786681498827024959,
+          "path": "/home/elicer/svg-agentic-slm/data/raw/mmsvg_icon_v2/data/train-00074-of-00091.parquet",
+          "rows": 10000,
+          "size_bytes": 119554866
+        },
+        {
+          "mtime_ns": 1786681495415017173,
+          "path": "/home/elicer/svg-agentic-slm/data/raw/mmsvg_icon_v2/data/train-00075-of-00091.parquet",
+          "rows": 10000,
+          "size_bytes": 119267927
+        },
+        {
+          "mtime_ns": 1786681495667017748,
+          "path": "/home/elicer/svg-agentic-slm/data/raw/mmsvg_icon_v2/data/train-00076-of-00091.parquet",
+          "rows": 10000,
+          "size_bytes": 119968169
+        },
+        {
+          "mtime_ns": 1786681504235037313,
+          "path": "/home/elicer/svg-agentic-slm/data/raw/mmsvg_icon_v2/data/train-00077-of-00091.parquet",
+          "rows": 10000,
+          "size_bytes": 120039156
+        },
+        {
+          "mtime_ns": 1786681504235037313,
+          "path": "/home/elicer/svg-agentic-slm/data/raw/mmsvg_icon_v2/data/train-00078-of-00091.parquet",
+          "rows": 10000,
+          "size_bytes": 120038455
+        },
+        {
+          "mtime_ns": 1786681498947025232,
+          "path": "/home/elicer/svg-agentic-slm/data/raw/mmsvg_icon_v2/data/train-00079-of-00091.parquet",
+          "rows": 10000,
+          "size_bytes": 119391279
+        },
+        {
+          "mtime_ns": 1786681501955032103,
+          "path": "/home/elicer/svg-agentic-slm/data/raw/mmsvg_icon_v2/data/train-00080-of-00091.parquet",
+          "rows": 10000,
+          "size_bytes": 118724291
+        },
+        {
+          "mtime_ns": 1786681507195044080,
+          "path": "/home/elicer/svg-agentic-slm/data/raw/mmsvg_icon_v2/data/train-00081-of-00091.parquet",
+          "rows": 10000,
+          "size_bytes": 120006354
+        },
+        {
+          "mtime_ns": 1786681507463044694,
+          "path": "/home/elicer/svg-agentic-slm/data/raw/mmsvg_icon_v2/data/train-00082-of-00091.parquet",
+          "rows": 10000,
+          "size_bytes": 119390819
+        },
+        {
+          "mtime_ns": 1786681507223044144,
+          "path": "/home/elicer/svg-agentic-slm/data/raw/mmsvg_icon_v2/data/train-00083-of-00091.parquet",
+          "rows": 10000,
+          "size_bytes": 119041051
+        },
+        {
+          "mtime_ns": 1786681509679049763,
+          "path": "/home/elicer/svg-agentic-slm/data/raw/mmsvg_icon_v2/data/train-00084-of-00091.parquet",
+          "rows": 10000,
+          "size_bytes": 119212888
+        },
+        {
+          "mtime_ns": 1786681509839050130,
+          "path": "/home/elicer/svg-agentic-slm/data/raw/mmsvg_icon_v2/data/train-00085-of-00091.parquet",
+          "rows": 10000,
+          "size_bytes": 169066661
+        },
+        {
+          "mtime_ns": 1786681513531058583,
+          "path": "/home/elicer/svg-agentic-slm/data/raw/mmsvg_icon_v2/data/train-00086-of-00091.parquet",
+          "rows": 10000,
+          "size_bytes": 165653328
+        },
+        {
+          "mtime_ns": 1786681513511058537,
+          "path": "/home/elicer/svg-agentic-slm/data/raw/mmsvg_icon_v2/data/train-00087-of-00091.parquet",
+          "rows": 10000,
+          "size_bytes": 123079152
+        },
+        {
+          "mtime_ns": 1786681513527058573,
+          "path": "/home/elicer/svg-agentic-slm/data/raw/mmsvg_icon_v2/data/train-00088-of-00091.parquet",
+          "rows": 10000,
+          "size_bytes": 96819104
+        },
+        {
+          "mtime_ns": 1786681515507063109,
+          "path": "/home/elicer/svg-agentic-slm/data/raw/mmsvg_icon_v2/data/train-00089-of-00091.parquet",
+          "rows": 10000,
+          "size_bytes": 104566206
+        },
+        {
+          "mtime_ns": 1786681516223064750,
+          "path": "/home/elicer/svg-agentic-slm/data/raw/mmsvg_icon_v2/data/train-00090-of-00091.parquet",
+          "rows": 4011,
+          "size_bytes": 52846457
+        }
+      ],
+      "relative_source": "mmsvg_icon_v2/data",
+      "revision": "8b1980d64000138d9fd14c3bfbd592edcc4b0be9",
+      "scan_statistics": {
+        "eligible_before_render": 857186,
+        "rejected_final_reference_item_id": 36825,
+        "rejected_generator_id": 10000,
+        "rows_seen": 904011,
+        "unique_source_ids": 904011
+      }
+    },
+    "illustration": {
+      "dataset_id": "OmniSVG/MMSVG-Illustration",
+      "expected_rows": 255412,
+      "expected_shards": 26,
+      "files": [
+        {
+          "mtime_ns": 1786681532439101982,
+          "path": "/home/elicer/svg-agentic-slm/data/raw/mmsvg_illustration_v2/data/train-00000-of-00026.parquet",
+          "rows": 10000,
+          "size_bytes": 487575425
+        },
+        {
+          "mtime_ns": 1786681534851107532,
+          "path": "/home/elicer/svg-agentic-slm/data/raw/mmsvg_illustration_v2/data/train-00001-of-00026.parquet",
+          "rows": 10000,
+          "size_bytes": 493284363
+        },
+        {
+          "mtime_ns": 1786681536571111491,
+          "path": "/home/elicer/svg-agentic-slm/data/raw/mmsvg_illustration_v2/data/train-00002-of-00026.parquet",
+          "rows": 10000,
+          "size_bytes": 487405448
+        },
+        {
+          "mtime_ns": 1786681533355104090,
+          "path": "/home/elicer/svg-agentic-slm/data/raw/mmsvg_illustration_v2/data/train-00003-of-00026.parquet",
+          "rows": 10000,
+          "size_bytes": 489766255
+        },
+        {
+          "mtime_ns": 1786681539539118326,
+          "path": "/home/elicer/svg-agentic-slm/data/raw/mmsvg_illustration_v2/data/train-00004-of-00026.parquet",
+          "rows": 10000,
+          "size_bytes": 496045678
+        },
+        {
+          "mtime_ns": 1786681537939114640,
+          "path": "/home/elicer/svg-agentic-slm/data/raw/mmsvg_illustration_v2/data/train-00005-of-00026.parquet",
+          "rows": 10000,
+          "size_bytes": 490181257
+        },
+        {
+          "mtime_ns": 1786681529967096298,
+          "path": "/home/elicer/svg-agentic-slm/data/raw/mmsvg_illustration_v2/data/train-00006-of-00026.parquet",
+          "rows": 10000,
+          "size_bytes": 489386959
+        },
+        {
+          "mtime_ns": 1786681533803105120,
+          "path": "/home/elicer/svg-agentic-slm/data/raw/mmsvg_illustration_v2/data/train-00007-of-00026.parquet",
+          "rows": 10000,
+          "size_bytes": 488940059
+        },
+        {
+          "mtime_ns": 1786681541927123828,
+          "path": "/home/elicer/svg-agentic-slm/data/raw/mmsvg_illustration_v2/data/train-00008-of-00026.parquet",
+          "rows": 10000,
+          "size_bytes": 492561552
+        },
+        {
+          "mtime_ns": 1786681544399129527,
+          "path": "/home/elicer/svg-agentic-slm/data/raw/mmsvg_illustration_v2/data/train-00009-of-00026.parquet",
+          "rows": 10000,
+          "size_bytes": 488839324
+        },
+        {
+          "mtime_ns": 1786681546751134952,
+          "path": "/home/elicer/svg-agentic-slm/data/raw/mmsvg_illustration_v2/data/train-00010-of-00026.parquet",
+          "rows": 10000,
+          "size_bytes": 489505507
+        },
+        {
+          "mtime_ns": 1786681549487141266,
+          "path": "/home/elicer/svg-agentic-slm/data/raw/mmsvg_illustration_v2/data/train-00011-of-00026.parquet",
+          "rows": 10000,
+          "size_bytes": 488840732
+        },
+        {
+          "mtime_ns": 1786681552135147380,
+          "path": "/home/elicer/svg-agentic-slm/data/raw/mmsvg_illustration_v2/data/train-00012-of-00026.parquet",
+          "rows": 10000,
+          "size_bytes": 484863820
+        },
+        {
+          "mtime_ns": 1786681554867153692,
+          "path": "/home/elicer/svg-agentic-slm/data/raw/mmsvg_illustration_v2/data/train-00013-of-00026.parquet",
+          "rows": 10000,
+          "size_bytes": 487972291
+        },
+        {
+          "mtime_ns": 1786681557683160201,
+          "path": "/home/elicer/svg-agentic-slm/data/raw/mmsvg_illustration_v2/data/train-00014-of-00026.parquet",
+          "rows": 10000,
+          "size_bytes": 489724460
+        },
+        {
+          "mtime_ns": 1786681559987165530,
+          "path": "/home/elicer/svg-agentic-slm/data/raw/mmsvg_illustration_v2/data/train-00015-of-00026.parquet",
+          "rows": 10000,
+          "size_bytes": 395437039
+        },
+        {
+          "mtime_ns": 1786681563919174630,
+          "path": "/home/elicer/svg-agentic-slm/data/raw/mmsvg_illustration_v2/data/train-00016-of-00026.parquet",
+          "rows": 10000,
+          "size_bytes": 251850638
+        },
+        {
+          "mtime_ns": 1786681566139179770,
+          "path": "/home/elicer/svg-agentic-slm/data/raw/mmsvg_illustration_v2/data/train-00017-of-00026.parquet",
+          "rows": 10000,
+          "size_bytes": 250938645
+        },
+        {
+          "mtime_ns": 1786681568219184589,
+          "path": "/home/elicer/svg-agentic-slm/data/raw/mmsvg_illustration_v2/data/train-00018-of-00026.parquet",
+          "rows": 10000,
+          "size_bytes": 247898080
+        },
+        {
+          "mtime_ns": 1786681570567190031,
+          "path": "/home/elicer/svg-agentic-slm/data/raw/mmsvg_illustration_v2/data/train-00019-of-00026.parquet",
+          "rows": 10000,
+          "size_bytes": 250204925
+        },
+        {
+          "mtime_ns": 1786681570879190755,
+          "path": "/home/elicer/svg-agentic-slm/data/raw/mmsvg_illustration_v2/data/train-00020-of-00026.parquet",
+          "rows": 10000,
+          "size_bytes": 249907633
+        },
+        {
+          "mtime_ns": 1786681574875200022,
+          "path": "/home/elicer/svg-agentic-slm/data/raw/mmsvg_illustration_v2/data/train-00021-of-00026.parquet",
+          "rows": 10000,
+          "size_bytes": 250356605
+        },
+        {
+          "mtime_ns": 1786681577135205268,
+          "path": "/home/elicer/svg-agentic-slm/data/raw/mmsvg_illustration_v2/data/train-00022-of-00026.parquet",
+          "rows": 10000,
+          "size_bytes": 252011267
+        },
+        {
+          "mtime_ns": 1786681577271205583,
+          "path": "/home/elicer/svg-agentic-slm/data/raw/mmsvg_illustration_v2/data/train-00023-of-00026.parquet",
+          "rows": 10000,
+          "size_bytes": 320127120
+        },
+        {
+          "mtime_ns": 1786681582119216842,
+          "path": "/home/elicer/svg-agentic-slm/data/raw/mmsvg_illustration_v2/data/train-00024-of-00026.parquet",
+          "rows": 10000,
+          "size_bytes": 266120060
+        },
+        {
+          "mtime_ns": 1786681581947216443,
+          "path": "/home/elicer/svg-agentic-slm/data/raw/mmsvg_illustration_v2/data/train-00025-of-00026.parquet",
+          "rows": 5412,
+          "size_bytes": 151364004
+        }
+      ],
+      "relative_source": "mmsvg_illustration_v2/data",
+      "revision": "6d81c98ae9bc1f4e1fca80cea496a73cb7f150c1",
+      "scan_statistics": {
+        "eligible_before_render": 230267,
+        "rejected_final_reference_item_id": 15145,
+        "rejected_generator_id": 10000,
+        "rows_seen": 255412,
+        "unique_source_ids": 255412
+      }
+    }
+  }
+}

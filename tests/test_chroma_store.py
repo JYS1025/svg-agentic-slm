@@ -16,12 +16,25 @@ _COLLECTION_NAME = "mmsvg-test"
 _DESCRIPTION = "A white star centered inside a blue circle"
 _DETAIL = "A flat blue circular badge with a crisp five-point white star in the center"
 _SVG = '<svg xmlns="http://www.w3.org/2000/svg"><circle r="4"/></svg>'
+_PNG = b"\x89PNG\r\n\x1a\nfixture"
 
 
 class _FakeQueryEncoder:
     def encode_queries(self, queries: list[str]) -> list[list[float]]:
         assert queries == ["draw a blue star badge"]
         return [[0.1, 0.2, 0.3, 0.4]]
+
+
+class _FakeBatchQueryEncoder:
+    def __init__(self) -> None:
+        self.calls: list[list[str]] = []
+
+    def encode_queries(self, queries: list[str]) -> list[list[float]]:
+        self.calls.append(list(queries))
+        return [
+            [float(index), float(index + 1), float(index + 2), float(index + 3)]
+            for index, _ in enumerate(queries)
+        ]
 
 
 class _FakeCollection:
@@ -76,6 +89,7 @@ def _build_retriever(
                 "description": [_DESCRIPTION],
                 "detail": [_DETAIL],
                 "svg": [_SVG],
+                "image": [{"bytes": _PNG, "path": None}],
             }
         ),
         dataset_root / "part-00000.parquet",
@@ -154,6 +168,109 @@ def test_precomputed_document_field_validates_index_and_returns_description_svg(
     assert "query_texts" not in collection.last_query
 
 
+def test_precomputed_hit_query_reuses_embedding_and_hydrates_full_mmsvg_payload(
+    tmp_path: Path,
+) -> None:
+    retriever, collection = _build_retriever(
+        tmp_path,
+        document_field="description",
+        indexed_document=_DESCRIPTION,
+    )
+
+    hits = retriever.query_hits_by_embedding([0.4, 0.3, 0.2, 0.1], n_results=1)
+    record = retriever.hydrate_mmsvg_hit(hits[0])
+
+    assert len(hits) == 1
+    assert hits[0].raw_rank == 1
+    assert hits[0].document_field == "description"
+    assert collection.last_query is not None
+    assert collection.last_query["query_embeddings"] == [[0.4, 0.3, 0.2, 0.1]]
+    assert record.item_id == "icon:record-1"
+    assert record.description == _DESCRIPTION
+    assert record.detail == _DETAIL
+    assert record.svg == _SVG
+    assert record.image_png == _PNG
+    assert record.metadata["row_index_in_shard"] == 0
+
+
+def test_precomputed_batch_encodes_and_queries_true_nested_chroma_rows(
+    tmp_path: Path,
+) -> None:
+    retriever, _ = _build_retriever(
+        tmp_path,
+        document_field="description",
+        indexed_document=_DESCRIPTION,
+    )
+    encoder = _FakeBatchQueryEncoder()
+    retriever._query_encoder = encoder
+
+    embeddings = retriever.encode_queries(["first prompt", "second prompt"])
+
+    assert encoder.calls == [["first prompt", "second prompt"]]
+    assert embeddings == [[0.0, 1.0, 2.0, 3.0], [1.0, 2.0, 3.0, 4.0]]
+
+    class MultiQueryCollection:
+        def __init__(self) -> None:
+            self.last_query: dict[str, Any] | None = None
+
+        def count(self) -> int:
+            return 2
+
+        def query(self, **kwargs: Any) -> dict[str, list[list[Any]]]:
+            self.last_query = kwargs
+            return {
+                "ids": [
+                    ["icon:first", "icon:second"],
+                    ["illustration:third", "illustration:fourth"],
+                ],
+                "documents": [
+                    ["first document", "second document"],
+                    ["third document", "fourth document"],
+                ],
+                "metadatas": [
+                    [
+                        {"dataset_type": "icon", "record_id": "first"},
+                        {"dataset_type": "icon", "record_id": "second"},
+                    ],
+                    [
+                        {"dataset_type": "illustration", "record_id": "third"},
+                        {"dataset_type": "illustration", "record_id": "fourth"},
+                    ],
+                ],
+                "distances": [[0.1, 0.2], [0.3, 0.4]],
+            }
+
+    collection = MultiQueryCollection()
+    retriever._collection = collection
+    hit_batches = retriever.query_hits_many_by_embeddings(
+        embeddings,
+        n_results=2,
+    )
+
+    assert collection.last_query is not None
+    assert collection.last_query["query_embeddings"] == embeddings
+    assert [hit.item_id for hit in hit_batches[0]] == ["icon:first", "icon:second"]
+    assert [hit.item_id for hit in hit_batches[1]] == [
+        "illustration:third",
+        "illustration:fourth",
+    ]
+    assert [hit.raw_rank for hit in hit_batches[0]] == [1, 2]
+    assert [hit.score for hit in hit_batches[1]] == pytest.approx([0.7, 0.6])
+
+
+def test_query_encoder_batch_size_is_forwarded_to_qwen_encoder() -> None:
+    retriever = ChromaRetriever(
+        embedding_model="Qwen/Qwen3-Embedding-0.6B",
+        embedding_revision="model-revision",
+        embedding_dimension=4,
+        query_instruction="retrieve matching SVGs",
+        query_encoder_batch_size=37,
+        precomputed_embeddings=True,
+    )
+
+    assert retriever._ensure_query_encoder().batch_size == 37
+
+
 def test_detail_pointer_rejects_document_that_does_not_match_source_parquet(
     tmp_path: Path,
 ) -> None:
@@ -179,4 +296,3 @@ def test_precomputed_retriever_rejects_unknown_document_field(
             query_instruction="query instruction",
             document_field=document_field,
         )
-

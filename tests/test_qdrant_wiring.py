@@ -135,6 +135,43 @@ def test_backend_factory_forwards_chroma_document_field(
     assert retriever.kwargs["document_field"] == "detail"
 
 
+def test_hybrid_factory_forwards_qwen_and_siglip_batch_sizes() -> None:
+    retriever = generation.build_rag_retriever(
+        {
+            "backend": "chromadb",
+            "chromadb": {
+                "strategy": "mmsvg_dual_siglip2",
+                "branch_top_k": 3,
+                "search_k": 32,
+                "embedding_model": "Qwen/Qwen3-Embedding-0.6B",
+                "embedding_revision": "embedding-revision",
+                "embedding_dimension": 4,
+                "query_instruction": "retrieve matching SVGs",
+                "query_encoder_batch_size": 37,
+                "precomputed_embeddings": True,
+                "description_index": {
+                    "collection_name": "description",
+                    "persist_directory": "description-db",
+                },
+                "detail_index": {
+                    "collection_name": "detail",
+                    "persist_directory": "detail-db",
+                },
+                "reranker": {
+                    "max_pair_batch_size": 211,
+                    "text_template": "{instruction}",
+                },
+            },
+        },
+        index_chroma_corpus=False,
+    )
+
+    assert isinstance(retriever, generation.MMSVGHybridRetriever)
+    assert retriever._description_retriever._query_encoder_batch_size == 37
+    assert retriever._detail_retriever._query_encoder_batch_size == 37
+    assert retriever._similarity_scorer._max_pair_batch_size == 211
+
+
 def test_backend_factory_rejects_unknown_backend_and_invalid_nested_config() -> None:
     with pytest.raises(ValueError, match="Unsupported RAG backend"):
         generation.build_rag_retriever({"backend": "pinecone"})
