@@ -72,6 +72,21 @@ _CRITIC_RESPONSE_FORMAT: dict[str, object] = {
 }
 
 
+def validate_critic_output_payload(
+    payload: dict[str, object],
+    *,
+    allowed_target_ids: set[str],
+    score_threshold: float = 3.0,
+) -> None:
+    """Validate a prospective Critic SFT label against the live output contract."""
+
+    _parse_critic_contract(
+        payload,
+        allowed_target_ids=allowed_target_ids,
+        score_threshold=score_threshold,
+    )
+
+
 class VisionModel(Protocol):
     """Model operation required by the VLM critic."""
 

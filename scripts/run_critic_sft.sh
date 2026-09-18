@@ -3,7 +3,7 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 REPOSITORY_ROOT="$(cd -- "${SCRIPT_DIR}/.." && pwd)"
-CONFIG="${1:-${REPOSITORY_ROOT}/configs/train_lora.yaml}"
+CONFIG="${1:-${REPOSITORY_ROOT}/configs/train_critic_a100_80gb.yaml}"
 if [[ -n "${PYTHON_BIN:-}" ]]; then
   PYTHON_EXECUTABLE="${PYTHON_BIN}"
 elif [[ -x "${REPOSITORY_ROOT}/.venv/bin/python" ]]; then
@@ -18,10 +18,7 @@ else
 fi
 
 if [[ -z "${CUDA_VISIBLE_DEVICES:-}" ]]; then
-  if ! GPU_COUNT="$("${PYTHON_EXECUTABLE}" -c 'import torch; print(torch.cuda.device_count())')"; then
-    echo "PyTorch is unavailable; install the project training dependencies first." >&2
-    exit 2
-  fi
+  GPU_COUNT="$("${PYTHON_EXECUTABLE}" -c 'import torch; print(torch.cuda.device_count())')"
   if ! [[ "${GPU_COUNT}" =~ ^[1-9][0-9]*$ ]]; then
     echo "PyTorch did not detect an NVIDIA GPU." >&2
     exit 2
@@ -40,7 +37,7 @@ for GPU_ID in "${VISIBLE_GPUS[@]}"; do
 done
 NUM_PROCESSES="${NUM_PROCESSES:-${VISIBLE_GPU_COUNT}}"
 if ! [[ "${NUM_PROCESSES}" =~ ^[1-9][0-9]*$ ]] || (( NUM_PROCESSES > VISIBLE_GPU_COUNT )); then
-  echo "NUM_PROCESSES must be a positive integer no larger than visible GPU count." >&2
+  echo "NUM_PROCESSES must be positive and no larger than visible GPU count." >&2
   exit 2
 fi
 
@@ -63,5 +60,5 @@ LAUNCH_ARGS=(
 if (( NUM_PROCESSES > 1 )); then
   LAUNCH_ARGS+=(--multi_gpu)
 fi
-LAUNCH_ARGS+=(--module svg_agentic_slm.train.train_text_to_svg --config "${CONFIG}")
+LAUNCH_ARGS+=(--module svg_agentic_slm.train.train_critic --config "${CONFIG}")
 "${PYTHON_EXECUTABLE}" -m accelerate.commands.accelerate_cli "${LAUNCH_ARGS[@]}"

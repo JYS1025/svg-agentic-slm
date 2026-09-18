@@ -14,7 +14,7 @@ authors = [
 ]
 
 dependencies = [
-    "torch>=2.5,<3",
+    "torch>=2.6,<3",
     "numpy>=1.26",
     "transformers>=5.15,<6",
     "sentence-transformers>=3,<6",
@@ -41,7 +41,7 @@ local-gpu = [
 ]
 vlm = [
     "num2words>=0.5.14",
-    "torchvision>=0.20",
+    "torchvision>=0.21",
 ]
 train = [
     "bitsandbytes>=0.46,<1",

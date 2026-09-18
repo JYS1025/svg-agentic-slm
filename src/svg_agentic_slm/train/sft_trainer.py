@@ -54,6 +54,7 @@ TargetRepresentation = Literal["raw_xml", "omnisvg_discrete"]
 TrainSamplingStrategy = Literal["random", "sequential", "group_by_length"]
 StructuralResponseLossReduction = Literal["token", "sample"]
 DetailTextNormalization = Literal["none", "mmsvg_list_repr_v1"]
+Float32MatmulPrecision = Literal["highest", "high", "medium"]
 
 _VERIFIED_LENGTH_SOURCE = "record.metadata.full_chat_token_length"
 _RUNTIME_SERIALIZATION_LENGTH_SOURCE = "runtime_serialization.input_ids_length"
@@ -198,14 +199,25 @@ class SFTConfig:
     max_seq_length: int = 8192
     bf16: bool = True
     fp16: bool = False
+    tf32: bool | None = None
+    float32_matmul_precision: Float32MatmulPrecision | None = None
     gradient_checkpointing: bool = True
     optim: str = "paged_adamw_8bit"
+    torch_compile: bool = False
+    torch_compile_backend: str | None = None
+    torch_compile_mode: str | None = None
     seed: int = 42
     dataloader_num_workers: int = 2
     dataloader_pin_memory: bool = True
     dataloader_persistent_workers: bool = False
     dataloader_prefetch_factor: int | None = None
     dataloader_non_blocking: bool = False
+    dataloader_drop_last: bool = False
+    ddp_backend: str | None = None
+    ddp_bucket_cap_mb: int | None = None
+    ddp_broadcast_buffers: bool | None = None
+    ddp_static_graph: bool | None = None
+    include_num_input_tokens_seen: bool = False
     tokenized_cache: bool = True
     tokenized_cache_dir: str | None = None
     tokenized_cache_lock_timeout_seconds: int = 3600
@@ -238,9 +250,34 @@ class SFTConfig:
             "tokenized_cache_batched_fetch",
             "collator_array_fast_path",
             "logging_nan_inf_filter",
+            "torch_compile",
+            "dataloader_drop_last",
+            "include_num_input_tokens_seen",
         ):
             if not isinstance(getattr(self, field_name), bool):
                 raise TypeError(f"sft.{field_name} must be boolean.")
+        for field_name in ("tf32", "ddp_broadcast_buffers", "ddp_static_graph"):
+            value = getattr(self, field_name)
+            if value is not None and not isinstance(value, bool):
+                raise TypeError(f"sft.{field_name} must be boolean or null.")
+        if self.float32_matmul_precision not in {None, "highest", "high", "medium"}:
+            raise ValueError(
+                "sft.float32_matmul_precision must be highest, high, medium, or null."
+            )
+        for field_name in ("torch_compile_backend", "torch_compile_mode", "ddp_backend"):
+            value = getattr(self, field_name)
+            if value is not None and (not isinstance(value, str) or not value.strip()):
+                raise ValueError(f"sft.{field_name} must be a non-empty string or null.")
+        if self.torch_compile_mode not in {None, "default", "reduce-overhead", "max-autotune"}:
+            raise ValueError(
+                "sft.torch_compile_mode must be default, reduce-overhead, max-autotune, or null."
+            )
+        if self.ddp_bucket_cap_mb is not None and (
+            isinstance(self.ddp_bucket_cap_mb, bool)
+            or not isinstance(self.ddp_bucket_cap_mb, int)
+            or self.ddp_bucket_cap_mb <= 0
+        ):
+            raise ValueError("sft.ddp_bucket_cap_mb must be a positive integer or null.")
         if self.lm_head_loss_backend not in {"auto", "checkpoint", "streamed"}:
             raise ValueError("sft.lm_head_loss_backend must be auto, checkpoint, or streamed.")
         if (
@@ -1662,6 +1699,11 @@ class TextToSVGSFTTrainer:
                 "Install training dependencies with `pip install -e '.[train]'`."
             ) from exc
 
+        if self._sft_config.float32_matmul_precision is not None:
+            torch.set_float32_matmul_precision(
+                self._sft_config.float32_matmul_precision
+            )
+
         model_config = self._model_config
         token = os.environ.get(model_config.token_env) if model_config.token_env else None
         hub_kwargs: dict[str, Any] = {
@@ -1886,15 +1928,20 @@ class TextToSVGSFTTrainer:
             eval_steps=self._sft_config.eval_steps if eval_dataset is not None else None,
             bf16=self._sft_config.bf16,
             fp16=self._sft_config.fp16,
+            tf32=self._sft_config.tf32,
             gradient_checkpointing=self._sft_config.gradient_checkpointing,
             gradient_checkpointing_kwargs={"use_reentrant": False},
             optim=self._sft_config.optim,
+            torch_compile=self._sft_config.torch_compile,
+            torch_compile_backend=self._sft_config.torch_compile_backend,
+            torch_compile_mode=self._sft_config.torch_compile_mode,
             seed=self._sft_config.seed,
             data_seed=self._sft_config.seed,
             dataloader_num_workers=self._sft_config.dataloader_num_workers,
             dataloader_pin_memory=self._sft_config.dataloader_pin_memory,
             dataloader_persistent_workers=self._sft_config.dataloader_persistent_workers,
             dataloader_prefetch_factor=self._sft_config.dataloader_prefetch_factor,
+            dataloader_drop_last=self._sft_config.dataloader_drop_last,
             accelerator_config={"non_blocking": self._sft_config.dataloader_non_blocking},
             torch_empty_cache_steps=self._sft_config.torch_empty_cache_steps,
             train_sampling_strategy=self._sft_config.train_sampling_strategy,
@@ -1913,6 +1960,15 @@ class TextToSVGSFTTrainer:
                 self._sft_config.greater_is_better if eval_dataset is not None else None
             ),
             ddp_find_unused_parameters=False,
+            ddp_backend=(
+                self._sft_config.ddp_backend
+                if int(os.environ.get("WORLD_SIZE", "1")) > 1
+                else None
+            ),
+            ddp_bucket_cap_mb=self._sft_config.ddp_bucket_cap_mb,
+            ddp_broadcast_buffers=self._sft_config.ddp_broadcast_buffers,
+            ddp_static_graph=self._sft_config.ddp_static_graph,
+            include_num_input_tokens_seen=self._sft_config.include_num_input_tokens_seen,
             report_to=self._sft_config.report_to or [],
         )
         setattr(
@@ -1972,6 +2028,8 @@ class TextToSVGSFTTrainer:
             enabled=self._sft_config.rehydrate_paged_optimizer_state_on_resume,
             checkpoint=self._sft_config.resume_from_checkpoint,
         )
+        if torch.cuda.is_available():
+            torch.cuda.reset_peak_memory_stats()
         train_result = trainer.train(resume_from_checkpoint=self._sft_config.resume_from_checkpoint)
         if self._sft_config.early_stopping_patience is not None:
             trainer.remove_callback(EarlyStoppingCallback)
@@ -2166,6 +2224,12 @@ class TextToSVGSFTTrainer:
                 name: _package_version(name)
                 for name in ("torch", "transformers", "peft", "bitsandbytes", "accelerate")
             },
+            "runtime_acceleration": _runtime_acceleration_manifest(
+                torch,
+                trainer=trainer,
+                model_config=model_config,
+                sft_config=self._sft_config,
+            ),
             "tokenized_cache": {
                 split: dataset.cache_manifest()
                 if isinstance(dataset, TokenizedDatasetCache)
@@ -2205,6 +2269,8 @@ class TextToSVGSFTTrainer:
                     codec_manifest=codec_manifest,
                 )
         trainer.accelerator.wait_for_everyone()
+        if torch.distributed.is_available() and torch.distributed.is_initialized():
+            torch.distributed.destroy_process_group()
         return training_manifest
 
 
@@ -3003,6 +3069,76 @@ def _merge_adapter(
     processor.save_pretrained(merged_dir)
     if codec_manifest is not None:
         _write_json(merged_dir / "codec_manifest.json", codec_manifest)
+
+
+def _runtime_acceleration_manifest(
+    torch: Any,
+    *,
+    trainer: Any,
+    model_config: ModelTrainingConfig,
+    sft_config: SFTConfig,
+) -> dict[str, Any]:
+    """Record effective CUDA/runtime knobs that materially affect throughput."""
+
+    cuda_available = bool(torch.cuda.is_available())
+    devices: list[dict[str, Any]] = []
+    if cuda_available:
+        for index in range(torch.cuda.device_count()):
+            properties = torch.cuda.get_device_properties(index)
+            devices.append(
+                {
+                    "index": index,
+                    "name": properties.name,
+                    "compute_capability": f"{properties.major}.{properties.minor}",
+                    "total_memory_bytes": properties.total_memory,
+                    "multiprocessor_count": properties.multi_processor_count,
+                }
+            )
+    flash_available = getattr(torch.backends.cuda, "is_flash_attention_available", None)
+    return {
+        "model_attention_implementation": model_config.attn_implementation,
+        "model_load_in_4bit": model_config.load_in_4bit,
+        "bf16": sft_config.bf16,
+        "tf32_requested": sft_config.tf32,
+        "tf32_matmul_effective": (
+            bool(torch.backends.cuda.matmul.allow_tf32) if cuda_available else None
+        ),
+        "tf32_cudnn_effective": (
+            bool(torch.backends.cudnn.allow_tf32) if cuda_available else None
+        ),
+        "float32_matmul_precision": torch.get_float32_matmul_precision(),
+        "native_sdpa_flash_available": (
+            bool(flash_available())
+            if cuda_available and callable(flash_available)
+            else None
+        ),
+        "gradient_checkpointing": sft_config.gradient_checkpointing,
+        "optimizer": sft_config.optim,
+        "torch_compile": {
+            "enabled": sft_config.torch_compile,
+            "backend": sft_config.torch_compile_backend,
+            "mode": sft_config.torch_compile_mode,
+        },
+        "distributed": {
+            "world_size": trainer.accelerator.num_processes,
+            "backend": sft_config.ddp_backend,
+            "bucket_cap_mb": sft_config.ddp_bucket_cap_mb,
+            "broadcast_buffers": sft_config.ddp_broadcast_buffers,
+            "static_graph": sft_config.ddp_static_graph,
+        },
+        "cuda_allocator_config": os.environ.get("PYTORCH_CUDA_ALLOC_CONF"),
+        "torch_cuda_arch_list": os.environ.get("TORCH_CUDA_ARCH_LIST"),
+        "local_cuda_memory": (
+            {
+                "device_index": torch.cuda.current_device(),
+                "peak_allocated_bytes": torch.cuda.max_memory_allocated(),
+                "peak_reserved_bytes": torch.cuda.max_memory_reserved(),
+            }
+            if cuda_available
+            else None
+        ),
+        "devices": devices,
+    }
 
 
 def _file_sha256(path: Path | None) -> str | None:
