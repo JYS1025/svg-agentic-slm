@@ -59,11 +59,12 @@ run_case() {
   if CUDA_VISIBLE_DEVICES=0,1 "${cli}" generate \
     "${prompt}" \
     --config configs/generation.yaml \
-    --model-config configs/models/gemma4-gemma4-critic.yaml \
+    --model-config configs/models/gemma4-qwen2.5vl3b-critic.yaml \
     --output "${output}" \
     --rag \
     --critic \
     --set generation.orchestration.critic_type=critic_v1 \
+    --set generation.orchestration.critic_score_threshold=3.0 \
     --set generation.orchestration.enable_similarity_evidence=true \
     --set generation.orchestration.max_revision_rounds=2 \
     --print-generator-parameters; then

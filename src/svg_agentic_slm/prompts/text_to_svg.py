@@ -12,9 +12,20 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from svg_agentic_slm.rag.schemas import RetrievedExample
 
-INITIAL_PROMPT_VERSION = "text-to-svg-v3-omnisvg-aligned"
-REVISION_PROMPT_VERSION = "svg-revision-v4-targeted-json"
-VALIDITY_REVISION_PROMPT_VERSION = "svg-revision-v1-validity-repair"
+INITIAL_PROMPT_VERSION = "text-to-svg-v4-shared-generation-brief"
+REVISION_PROMPT_VERSION = "svg-revision-v5-introsvg-refinement"
+VALIDITY_REVISION_PROMPT_VERSION = "svg-revision-v2-shared-generation-brief"
+
+
+def build_generation_brief(instruction: str) -> str:
+    """Build the task definition shared by initial generation and revision."""
+    return (
+        "Create a precise, valid, complete, and visually polished SVG for the user "
+        "instruction below. Use complete SVG geometry with appropriate coordinates and "
+        "colors. Accurately capture the requested objects, spatial relationships, style, "
+        "and overall composition while adding nothing unsupported by the instruction.\n"
+        f"<user_instruction>\n{instruction}\n</user_instruction>"
+    )
 
 
 def build_text_to_svg_prompt(
@@ -37,11 +48,8 @@ def build_text_to_svg_prompt(
         parts.append(retrieval_context)
 
     parts.append(
-        "Generate a precise, valid, new, and original SVG for the user instruction "
-        "below. Create complete SVG geometry with proper coordinates and colors. "
-        "Accurately capture the key shapes, spatial relationships, and visual "
-        "composition while adding nothing that the instruction does not support.\n"
-        f"<user_instruction>\n{instruction}\n</user_instruction>\n"
+        f"{build_generation_brief(instruction)}\n\n"
+        "Construct the SVG from the user instruction.\n"
         "Return only the complete standalone SVG document."
     )
 
@@ -88,17 +96,24 @@ def build_revision_prompt(
         The formatted revision prompt string.
     """
     return (
-        "<original_instruction>\n"
-        f"{instruction}\n"
-        "</original_instruction>\n\n"
-        "<previous_labeled_svg>\n"
+        f"{build_generation_brief(instruction)}\n\n"
+        "This is a refinement of an existing SVG draft. An expert SVG design "
+        "critic reviewed the rendered draft against the user instruction and identified "
+        "the most important visible corrections.\n\n"
+        "<current_labeled_svg>\n"
         f"{previous_svg}\n"
-        "</previous_labeled_svg>\n\n"
-        "<required_changes_json>\n"
+        "</current_labeled_svg>\n\n"
+        "<expert_critic_feedback_json>\n"
         f"{required_changes_json}\n"
-        "</required_changes_json>\n\n"
-        "Apply every required change and no unrelated visual changes.\n"
-        "Return the entire corrected standalone SVG document."
+        "</expert_critic_feedback_json>\n\n"
+        "Analyze the original design goal, the current draft, and every Critic finding "
+        "together. Improve the draft toward the ideal SVG implied by the user "
+        "instruction. Apply every requested correction. Use data-agent-id values only "
+        "to locate the elements named by target_ids. Preserve all content that is not "
+        "directly involved in a requested correction. When target_ids is empty, make "
+        "the smallest change sufficient to resolve that finding.\n"
+        "Return only the entire corrected standalone SVG document. Do not return a "
+        "patch, explanation, markdown, or partial fragment."
     )
 
 
@@ -117,9 +132,8 @@ def build_validity_revision_prompt(
         else ""
     )
     return (
-        "<original_instruction>\n"
-        f"{instruction}\n"
-        "</original_instruction>\n\n"
+        f"{build_generation_brief(instruction)}\n\n"
+        "This is a structural repair of a failed SVG draft.\n\n"
         "<previous_invalid_output>\n"
         f"{previous_output}\n"
         "</previous_invalid_output>\n\n"

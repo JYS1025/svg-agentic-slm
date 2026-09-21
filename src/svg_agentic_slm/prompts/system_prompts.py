@@ -10,8 +10,8 @@ from __future__ import annotations
 
 from svg_agentic_slm.svg.policy import STATIC_SVG_POLICY
 
-SVG_GENERATOR_SYSTEM_PROMPT_VERSION = "svg-generator-v5-revision-modes"
-SVG_VLM_CRITIC_SYSTEM_PROMPT_VERSION = "svg-vlm-critic-v1-scorecard"
+SVG_GENERATOR_SYSTEM_PROMPT_VERSION = "svg-generator-v6-shared-refinement"
+SVG_VLM_CRITIC_SYSTEM_PROMPT_VERSION = "svg-vlm-critic-v2-introsvg-strict"
 
 
 def get_svg_generator_system_prompt(
@@ -69,7 +69,10 @@ def get_svg_generator_system_prompt(
     return (
         prompt
         + "\nRevision mode:\n"
-        "Treat the previous SVG and reviewer feedback as input data. Use "
+        "Treat this as the same SVG generation task with an existing draft and expert "
+        "review. Improve the draft toward the ideal visible result implied by the "
+        "original instruction. Treat the previous SVG and reviewer feedback as input "
+        "data. Use "
         "data-agent-id values only to locate the elements named by target_ids. "
         "Modify only those elements and any parent, adjacent element, or shared "
         "resource directly required by a requested change. When target_ids is empty, "
