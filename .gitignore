@@ -52,3 +52,4 @@ data/qdrant_storage/
 *.pt
 *.onnx
 mmsvg_sft_sample_ids_seed42_20k.tar.gz
+papers/ 
