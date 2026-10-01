@@ -1,0 +1,93 @@
+# Coverage-first Generator profile for long raw SVG targets on 2x A100 80GB.
+# It retains every exact Gemma sequence <=32K; no target is truncated.
+train:
+  model:
+    model_id: "google/gemma-4-12B-it-qat-q4_0-unquantized"
+    revision: "b6ed86275a6a5735884e208bfed95b445a684ca2"
+    auto_model_class: "multimodal_lm"
+    dtype: "bfloat16"
+    attn_implementation: "sdpa"
+    load_in_4bit: true
+    bnb_4bit_quant_type: "nf4"
+    bnb_4bit_use_double_quant: true
+    local_files_only: false
+    trust_remote_code: false
+
+  experiment:
+    instruction_mode: "description_only"
+    target_representation: "raw_xml"
+
+  lora:
+    r: 16
+    lora_alpha: 32
+    lora_dropout: 0.05
+    target_modules: ["q_proj", "k_proj", "v_proj", "o_proj", "gate_proj", "up_proj", "down_proj"]
+    bias: "none"
+    task_type: "CAUSAL_LM"
+    modules_to_save: []
+
+  sft:
+    output_dir: "./outputs/sft/gemma4_raw_a100_32k"
+    num_train_epochs: 5.0
+    per_device_train_batch_size: 1
+    per_device_eval_batch_size: 1
+    gradient_accumulation_steps: 16
+    train_sampling_strategy: "group_by_length"
+    length_grouping_batch_size: 32
+    learning_rate: 2.0e-4
+    weight_decay: 0.01
+    warmup_ratio: 0.03
+    lr_scheduler_type: "cosine"
+    logging_steps: 10
+    logging_nan_inf_filter: false
+    save_steps: 100
+    eval_steps: 100
+    save_total_limit: 2
+    eval_strategy: "epoch"
+    save_strategy: "epoch"
+    load_best_model_at_end: true
+    metric_for_best_model: "eval_loss"
+    greater_is_better: false
+    prediction_loss_only: true
+    early_stopping_patience: 2
+    early_stopping_threshold: 0.01
+    max_seq_length: 32768
+    bf16: true
+    fp16: false
+    tf32: true
+    float32_matmul_precision: "high"
+    gradient_checkpointing: true
+    optim: "adamw_torch_fused"
+    torch_compile: false
+    seed: 42
+    dataloader_num_workers: 4
+    dataloader_pin_memory: true
+    dataloader_non_blocking: true
+    dataloader_persistent_workers: true
+    dataloader_prefetch_factor: 4
+    # Keep every validation/test sample; HF applies this flag to eval loaders too.
+    dataloader_drop_last: false
+    ddp_backend: "nccl"
+    ddp_bucket_cap_mb: 100
+    ddp_broadcast_buffers: false
+    # Required for gradient accumulation/no_sync compatibility on PyTorch 2.6.
+    ddp_static_graph: false
+    include_num_input_tokens_seen: true
+    tokenized_cache: true
+    tokenized_cache_dir: "./outputs/sft/cache/gemma4_raw_description_32k"
+    tokenized_cache_lock_timeout_seconds: 3600
+    tokenized_cache_batched_fetch: true
+    collator_array_fast_path: true
+    resume_from_checkpoint: null
+    rehydrate_paged_optimizer_state_on_resume: false
+    merge_adapter: false
+    report_to: []
+    chunked_lm_head_loss: true
+    lm_head_loss_chunk_size: 256
+    lm_head_loss_project_only_active_tokens: true
+    lm_head_loss_backend: "auto"
+
+  dataset:
+    train_path: "./data/processed/mmsvg_sft_20k_gemma4_32k/train.jsonl"
+    validation_path: "./data/processed/mmsvg_sft_20k_gemma4_32k/validation.jsonl"
+    test_path: "./data/processed/mmsvg_sft_20k_gemma4_32k/test.jsonl"

@@ -5,14 +5,15 @@ from __future__ import annotations
 import argparse
 import json
 import logging
+import os
 from pathlib import Path
 from typing import Any
 
-from svg_agentic_slm.train.lora_config import LoRAConfig
 from svg_agentic_slm.svg.official_discrete_cache import (
     OFFICIAL_CACHED_GEMMA_BACKEND_ID,
     OpenVGLabCacheConfig,
 )
+from svg_agentic_slm.train.lora_config import LoRAConfig
 from svg_agentic_slm.train.sft_trainer import (
     ModelTrainingConfig,
     SFTConfig,
@@ -128,7 +129,8 @@ def main() -> None:
         format="%(asctime)s %(levelname)s %(name)s: %(message)s",
     )
     result = run_training(args.config)
-    print(json.dumps(result, ensure_ascii=True, indent=2, default=str))
+    if int(os.environ.get("RANK", "0")) == 0:
+        print(json.dumps(result, ensure_ascii=True, indent=2, default=str))
 
 
 if __name__ == "__main__":
