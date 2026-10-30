@@ -182,6 +182,33 @@ def test_chunked_loss_rejects_multimodal_training_inputs() -> None:
         )
 
 
+def test_chunked_loss_allows_multimodal_inputs_when_explicitly_enabled() -> None:
+    model = _tiny_peft_gemma()
+    backbone = model.get_base_model().model
+    original_forward = backbone.forward
+    saw_pixels = False
+
+    def multimodal_forward(*args, pixel_values=None, **kwargs):
+        nonlocal saw_pixels
+        saw_pixels = pixel_values is not None
+        return original_forward(*args, **kwargs)
+
+    backbone.forward = multimodal_forward
+    install_chunked_causal_lm_loss(
+        model,
+        chunk_size=2,
+        allow_multimodal_inputs=True,
+    )
+    input_ids = torch.tensor([[2, 3, 4]])
+    output = model(
+        input_ids=input_ids,
+        labels=input_ids,
+        pixel_values=torch.zeros(1, 3, 8, 8),
+    )
+    assert saw_pixels is True
+    assert output.loss.isfinite()
+
+
 def _one_chunked_trainer_update(
     tmp_path: Path,
     *,

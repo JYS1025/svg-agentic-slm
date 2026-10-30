@@ -13,7 +13,11 @@ from svg_agentic_slm.agents.schemas import (
     CriticInput,
     CriticTraceError,
 )
-from svg_agentic_slm.agents.vlm_critic import _CRITIC_RESPONSE_FORMAT, VLMCritic
+from svg_agentic_slm.agents.vlm_critic import (
+    _CRITIC_RESPONSE_FORMAT,
+    VLMCritic,
+    _openai_critic_response_format,
+)
 from svg_agentic_slm.models.image_text_similarity import (
     ImageTextSimilarityEvidence,
 )
@@ -240,6 +244,21 @@ def test_vlm_missing_judgment_field_retries_with_visual_evidence() -> None:
     assert feedback.model_calls[1].generation_parameters["full_evaluation_retry"] is True
 
 
+def test_vlm_incomplete_scorecard_retries_full_evaluation_with_original_image() -> None:
+    incomplete = _scorecard_payload()
+    incomplete["evaluations"] = incomplete["evaluations"][:2]
+    model = _VisionModel([json.dumps(incomplete), json.dumps(_scorecard_payload())])
+    critic = VLMCritic(model, _UnusedRenderer())  # type: ignore[arg-type]
+
+    feedback = critic.critique_attempt(_critic_input())
+
+    assert len(feedback.evaluations) == 18
+    assert model.images == [b"png-evidence", b"png-evidence"]
+    assert "all 18 category and type pairs" in model.prompts[1]
+    assert feedback.model_calls[1].generation_parameters["full_evaluation_retry"] is True
+    assert feedback.model_calls[1].generation_parameters["format_repair_only"] is False
+
+
 def test_vlm_duplicate_issues_become_trace_failure_not_uncaught_value_error() -> None:
     target_id = next(iter(_critic_input().labeling.elements))
     issue = {
@@ -311,6 +330,13 @@ def test_vlm_prompt_separates_static_contract_from_task_input() -> None:
     assert "OUTPUT JSON FORMAT" not in user_prompt
     assert "ISSUE TAXONOMY" not in user_prompt
     assert "Rules:" not in user_prompt
+
+
+def test_vlm_system_prompt_omits_explicit_scorecard_order() -> None:
+    system_prompt = get_svg_vlm_critic_system_prompt()
+    assert "Required evaluations order:" not in system_prompt
+    assert "1. semantic / presence" not in system_prompt
+    assert "including properties that have no defect or do not apply" in system_prompt
 
 
 def test_critic_prompt_excludes_nonvisual_text_from_labeled_svg() -> None:
@@ -418,6 +444,134 @@ def test_vlm_allows_not_applicable_evaluation_without_score() -> None:
     assert feedback.status == "pass"
 
 
+def test_tolerant_contract_repairs_presentation_errors_with_warnings() -> None:
+    payload = _scorecard_payload(not_applicable={("semantic", "text_content")})
+    text_evaluation = next(
+        item
+        for item in payload["evaluations"]
+        if (item["category"], item["type"]) == ("semantic", "text_content")
+    )
+    del text_evaluation["score"]
+    payload["commentary"] = "extra field"
+    payload["issues"] = [
+        {
+            "category": "layout",
+            "type": "scale",
+            "scope": "global",
+            "target_ids": [],
+            "observed": "Unnecessary issue.",
+            "expected": "All scores pass.",
+            "fix": "No change needed.",
+        }
+    ]
+    model = _VisionModel([json.dumps(payload)])
+    critic = VLMCritic(
+        model,
+        _UnusedRenderer(),  # type: ignore[arg-type]
+        contract_mode="tolerant",
+    )
+
+    feedback = critic.critique_attempt(_critic_input())
+
+    assert feedback.status == "pass"
+    assert len(model.prompts) == 1
+    assert feedback.structured_issues == []
+    assert feedback.metadata["contract_status"] == "warning"
+    warning_codes = {
+        warning["code"] for warning in feedback.metadata["contract_warnings"]
+    }
+    assert "extra_top_level_fields_removed" in warning_codes
+    assert "not_applicable_score_defaulted" in warning_codes
+    assert "unmatched_issue_removed" in warning_codes
+    assert feedback.model_calls[0].validation_warnings
+
+
+def test_tolerant_contract_remaps_visible_reference_id() -> None:
+    target_id = next(
+        target_id
+        for target_id, reference in _critic_input().labeling.elements.items()
+        if reference.original_id == "circle"
+    )
+    issue = {
+        "category": "layout",
+        "type": "scale",
+        "scope": "object",
+        "target_ids": ["ref0001"],
+        "observed": "The circle is too small.",
+        "expected": "The circle should be larger.",
+        "fix": "Increase the circle size.",
+    }
+    payload = _scorecard_payload(
+        scores={("layout", "scale"): 2},
+        issues=[issue],
+    )
+    critic = VLMCritic(
+        _VisionModel([json.dumps(payload)]),
+        _UnusedRenderer(),  # type: ignore[arg-type]
+        contract_mode="tolerant",
+    )
+
+    feedback = critic.critique_attempt(_critic_input())
+
+    assert feedback.status == "revise"
+    assert feedback.structured_issues[0].target_ids == [target_id]
+    assert any(
+        warning["code"] == "target_ids_normalized"
+        for warning in feedback.metadata["contract_warnings"]
+    )
+
+
+def test_tolerant_contract_synthesizes_issue_without_changing_low_score() -> None:
+    mismatched_issue = {
+        "category": "layout",
+        "type": "balance",
+        "scope": "global",
+        "target_ids": [],
+        "observed": "This issue is not backed by its score.",
+        "expected": "A matching issue.",
+        "fix": "Use the evaluated criterion.",
+    }
+    payload = _scorecard_payload(
+        scores={("layout", "scale"): 1},
+        issues=[mismatched_issue],
+    )
+    critic = VLMCritic(
+        _VisionModel([json.dumps(payload)]),
+        _UnusedRenderer(),  # type: ignore[arg-type]
+        contract_mode="tolerant",
+    )
+
+    feedback = critic.critique_attempt(_critic_input())
+
+    assert feedback.status == "revise"
+    assert feedback.score == 1.0
+    assert [(issue.category, issue.type) for issue in feedback.structured_issues] == [
+        ("layout", "scale")
+    ]
+    assert any(
+        warning["code"] == "issues_synthesized_from_evaluations"
+        for warning in feedback.metadata["contract_warnings"]
+    )
+
+
+def test_tolerant_contract_still_retries_incomplete_scorecard() -> None:
+    incomplete = _scorecard_payload()
+    incomplete["evaluations"] = incomplete["evaluations"][:-1]
+    model = _VisionModel([json.dumps(incomplete), json.dumps(_scorecard_payload())])
+    critic = VLMCritic(
+        model,
+        _UnusedRenderer(),  # type: ignore[arg-type]
+        contract_mode="tolerant",
+    )
+
+    feedback = critic.critique_attempt(_critic_input())
+
+    assert feedback.status == "pass"
+    assert len(model.prompts) == 2
+    assert model.images == [b"png-evidence", b"png-evidence"]
+    assert feedback.model_calls[1].generation_parameters["full_evaluation_retry"] is True
+
+
 def test_runtime_response_schema_encodes_scorecard_contract() -> None:
     schema_path = (
         Path(__file__).parents[1]
@@ -449,3 +603,15 @@ def test_runtime_response_schema_encodes_scorecard_contract() -> None:
         "expected",
         "fix",
     ]
+
+
+def test_openai_critic_schema_uses_supported_teacher_subset() -> None:
+    response_format = _openai_critic_response_format()
+    schema = response_format["schema"]
+
+    assert response_format["type"] == "json_schema"
+    assert response_format["strict"] is True
+    assert "allOf" not in json.dumps(schema)
+    assert schema["properties"]["evaluations"]["items"]["properties"][
+        "category"
+    ]["type"] == "string"

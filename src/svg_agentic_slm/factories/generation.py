@@ -13,7 +13,7 @@ import re
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal, cast
 from uuid import uuid4
 
 from svg_agentic_slm.agents.base import BaseCritic
@@ -306,6 +306,12 @@ def build_generation_runtime(
     ):
         raise ValueError("critic_score_threshold must be between 0 and 4.")
     critic_score_threshold = float(critic_score_threshold)
+    critic_contract_mode = orchestration_config.get("critic_contract_mode", "strict")
+    if not isinstance(critic_contract_mode, str) or critic_contract_mode not in {
+        "strict",
+        "tolerant",
+    }:
+        raise ValueError("critic_contract_mode must be strict or tolerant.")
     if critic_type not in {
         None,
         "rule",
@@ -321,10 +327,14 @@ def build_generation_runtime(
         if critic_model_config is None:
             raise ValueError(f"critic_type={critic_type!r} requires a nonempty critic_model.")
         critic_backend_type = str(critic_model_config.get("backend_type", "")).strip().lower()
-        if critic_backend_type != "transformers_vlm":
+        remote_responses_vlm = (
+            critic_backend_type == "openai_compatible"
+            and critic_model_config.get("engine") == "responses"
+        )
+        if critic_backend_type != "transformers_vlm" and not remote_responses_vlm:
             raise ValueError(
                 f"critic_type={critic_type!r} requires "
-                "critic_model.backend_type='transformers_vlm'."
+                "a transformers_vlm backend or an openai_compatible responses engine."
             )
     if similarity_enabled:
         if not critic_enabled or not grounded_visual_critic:
@@ -424,6 +434,7 @@ def build_generation_runtime(
             critic_model_backend,
             critic_model_config=critic_model_config,
             score_threshold=critic_score_threshold,
+            contract_mode=critic_contract_mode,
         )
         if critic_enabled
         else None
@@ -554,6 +565,7 @@ def _build_critic(
     *,
     critic_model_config: dict[str, Any] | None = None,
     score_threshold: float = 3.0,
+    contract_mode: str = "strict",
 ) -> BaseCritic:
     if critic_type == "rule":
         return RuleBasedCritic(validator)
@@ -567,8 +579,8 @@ def _build_critic(
             ]
         )
     if critic_type in GROUNDED_VISUAL_CRITIC_TYPES:
-        if not isinstance(model_backend, TransformersVLMBackend):
-            raise TypeError("VLM critics require a TransformersVLMBackend.")
+        if not callable(getattr(model_backend, "generate_with_image", None)):
+            raise TypeError("VLM critics require a vision-capable model backend.")
         settings = critic_model_config or {}
         vlm_critic = VLMCritic(
             model_backend,
@@ -578,6 +590,7 @@ def _build_critic(
             background_color=settings.get("background_color", "#ffffff"),
             max_new_tokens=settings.get("max_new_tokens", 2048),
             score_threshold=score_threshold,
+            contract_mode=cast(Literal["strict", "tolerant"], contract_mode),
         )
         return vlm_critic
     raise ValueError(f"Unsupported critic_type: {critic_type}")
@@ -658,25 +671,35 @@ def _build_model_backend(
         "allow_insecure_http",
         "api_key_env",
         "backend_type",
+        "background_color",
         "base_url",
         "engine",
         "max_retries",
+        "max_new_tokens",
         "model_id",
+        "reasoning_effort",
+        "render_height",
+        "render_width",
         "revision",
         "timeout_seconds",
     }
     transformers_vlm_keys = {
+        "adapter_path",
         "attn_implementation",
         "auto_model_class",
         "backend_type",
         "background_color",
+        "bnb_4bit_quant_type",
+        "bnb_4bit_use_double_quant",
         "device",
         "do_sample",
         "dtype",
         "enable_thinking",
         "local_files_only",
+        "load_in_4bit",
         "max_new_tokens",
         "model_id",
+        "processor_path",
         "render_height",
         "render_width",
         "revision",
@@ -730,6 +753,7 @@ def _build_model_backend(
             timeout_seconds=model_config.get("timeout_seconds", 120.0),
             max_retries=model_config.get("max_retries", 0),
             allow_insecure_http=model_config.get("allow_insecure_http", False),
+            reasoning_effort=model_config.get("reasoning_effort", "medium"),
             generation_config=generation_config,
         )
     if backend_type == "transformers_vlm":
@@ -747,6 +771,11 @@ def _build_model_backend(
             ("local_files_only", "local_files_only"),
             ("trust_remote_code", "trust_remote_code"),
             ("token_env", "token_env"),
+            ("adapter_path", "adapter_path"),
+            ("processor_path", "processor_path"),
+            ("load_in_4bit", "load_in_4bit"),
+            ("bnb_4bit_quant_type", "bnb_4bit_quant_type"),
+            ("bnb_4bit_use_double_quant", "bnb_4bit_use_double_quant"),
         ):
             if config_key in model_config:
                 backend_kwargs[constructor_key] = model_config[config_key]

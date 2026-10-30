@@ -14,6 +14,9 @@ An agentic pipeline utilizing Small Language Models (SLMs) to generate, validate
 
 ## Project Documents
 
+- [A100 SFT 최적화 및 서버 검증 보고서](docs/a100-sft-optimization-2026-09-18.md):
+  이 서버의 2×A100 하드웨어 조사, Generator/Critic 전용 프로필, 실제 GPU
+  스모크 벤치마크, 데이터 준비 및 실행 명령을 정리한다.
 - [Generator Development Cycle Roadmap](docs/generator-cycle-roadmap.md):
   concise Cycle 0–8 goals, dependencies, ownership boundaries, experiments,
   and exit criteria.
@@ -214,7 +217,8 @@ svg-agentic-slm/
 ### Supported training environment
 
 The SFT portability workflow checks Ubuntu and Windows with Python 3.11 and 3.13.
-Training requires PyTorch 2.5 or later. The supplied QLoRA configurations additionally require
+Training requires PyTorch 2.6 or later. Transformers blocks optimizer-checkpoint resume on older
+PyTorch releases because of CVE-2025-32434. The supplied QLoRA configurations additionally require
 a working accelerator build of PyTorch, `bitsandbytes`, native BF16 support, enough GPU memory for
 the selected model and sequence length, model repository access, and the configured datasets.
 Multi-GPU training is intended for Linux CUDA servers.

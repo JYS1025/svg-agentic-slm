@@ -1,0 +1,13 @@
+# Install torch==2.3.0 and torchvision==0.18.0 from the cu121 index first.
+transformers==4.51.3
+huggingface-hub==0.36.0
+numpy==2.2.6
+Pillow==10.1.0
+PyYAML==6.0.2
+CairoSVG==2.7.1
+moviepy==1.0.3
+shapely==2.0.7
+ipython==8.12.3
+qwen-vl-utils==0.0.11
+einops==0.4.1
+ConfigArgParse==1.7.1

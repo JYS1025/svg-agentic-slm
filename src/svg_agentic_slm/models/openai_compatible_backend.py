@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import base64
 import ipaddress
 import json
+import math
 import os
 import re
 import time
@@ -17,7 +19,8 @@ from svg_agentic_slm.models.generation_config import GenerationConfig
 from svg_agentic_slm.models.schemas import ModelResponse
 
 MAX_RESPONSE_BYTES = 4 * 1024 * 1024
-SUPPORTED_ENGINES = {"llama_cpp", "vllm"}
+SUPPORTED_ENGINES = {"llama_cpp", "responses", "vllm"}
+SUPPORTED_REASONING_EFFORTS = {"none", "low", "medium", "high", "xhigh", "max"}
 
 
 class _NoRedirectHandler(HTTPRedirectHandler):
@@ -42,6 +45,7 @@ class OpenAICompatibleBackend(BaseModelBackend):
         timeout_seconds: float = 120.0,
         max_retries: int = 0,
         allow_insecure_http: bool = False,
+        reasoning_effort: str = "medium",
         generation_config: GenerationConfig | None = None,
     ) -> None:
         if not isinstance(allow_insecure_http, bool):
@@ -68,8 +72,24 @@ class OpenAICompatibleBackend(BaseModelBackend):
             raise ValueError("max_retries must be non-negative.")
         self.timeout_seconds = float(timeout_seconds)
         self.max_retries = max_retries
+        self.reasoning_effort = _require_nonempty_string(
+            reasoning_effort, "reasoning_effort"
+        ).lower()
+        if self.reasoning_effort not in SUPPORTED_REASONING_EFFORTS:
+            supported = ", ".join(sorted(SUPPORTED_REASONING_EFFORTS))
+            raise ValueError(f"reasoning_effort must be one of: {supported}.")
         self.generation_config = generation_config or GenerationConfig()
         self._ready = False
+
+    @property
+    def supports_response_format(self) -> bool:
+        """Return whether image calls can enforce a JSON schema server-side."""
+        return self.engine == "responses"
+
+    @property
+    def response_format_dialect(self) -> str | None:
+        """Identify the structured-output JSON Schema subset in use."""
+        return "openai" if self.engine == "responses" else None
 
     def load_model(self) -> None:
         """Verify server readiness and that the configured model is being served."""
@@ -97,6 +117,14 @@ class OpenAICompatibleBackend(BaseModelBackend):
         system_prompt = kwargs.pop("system_prompt", None)
         stop = kwargs.pop("stop", None)
         config = self._resolve_generation_config(kwargs)
+        if self.engine == "responses":
+            if stop is not None:
+                raise ValueError("The Responses API backend does not support stop sequences.")
+            return self._generate_response(
+                prompt=prompt,
+                system_prompt=system_prompt,
+                config=config,
+            )
         messages: list[dict[str, str]] = []
         if system_prompt:
             messages.append({"role": "system", "content": str(system_prompt)})
@@ -150,6 +178,98 @@ class OpenAICompatibleBackend(BaseModelBackend):
             },
         )
 
+    def generate_with_image(
+        self,
+        prompt: str,
+        image_bytes: bytes,
+        *,
+        mime_type: str = "image/png",
+        **kwargs: Any,
+    ) -> ModelResponse:
+        """Generate from text and one image through the Responses API."""
+        if not self.is_loaded():
+            raise RuntimeError("Model endpoint is not ready. Call load_model() before generate().")
+        if self.engine != "responses":
+            raise ValueError("Image generation requires engine='responses'.")
+        if not isinstance(image_bytes, (bytes, bytearray)) or not image_bytes:
+            raise ValueError("image_bytes must contain encoded image data.")
+        normalized_mime = _require_nonempty_string(mime_type, "mime_type")
+        if normalized_mime not in {"image/png", "image/jpeg", "image/webp"}:
+            raise ValueError("mime_type must be image/png, image/jpeg, or image/webp.")
+        system_prompt = kwargs.pop("system_prompt", None)
+        response_format = kwargs.pop("response_format", None)
+        config = self._resolve_generation_config(kwargs)
+        image_url = (
+            f"data:{normalized_mime};base64,"
+            + base64.b64encode(bytes(image_bytes)).decode("ascii")
+        )
+        return self._generate_response(
+            prompt=prompt,
+            system_prompt=system_prompt,
+            config=config,
+            image_url=image_url,
+            response_format=response_format,
+        )
+
+    def _generate_response(
+        self,
+        *,
+        prompt: str,
+        system_prompt: object,
+        config: dict[str, Any],
+        image_url: str | None = None,
+        response_format: object = None,
+    ) -> ModelResponse:
+        content: str | list[dict[str, str]]
+        if image_url is None:
+            content = prompt
+        else:
+            content = [
+                {"type": "input_image", "image_url": image_url},
+                {"type": "input_text", "text": prompt},
+            ]
+        request_payload: dict[str, Any] = {
+            "model": self.model_id,
+            "input": [{"role": "user", "content": content}],
+            "max_output_tokens": config["max_new_tokens"],
+            "reasoning": {"effort": self.reasoning_effort},
+            "store": False,
+        }
+        if system_prompt is not None:
+            request_payload["instructions"] = str(system_prompt)
+        if response_format is not None:
+            if not isinstance(response_format, dict):
+                raise ValueError("response_format must be an object.")
+            request_payload["text"] = {"format": response_format}
+
+        started_at = time.perf_counter()
+        payload = self._request_json("POST", "/responses", request_payload)
+        latency_seconds = time.perf_counter() - started_at
+        output_text = _extract_response_output_text(payload)
+        usage = payload.get("usage", {})
+        if not isinstance(usage, dict):
+            usage = {}
+        served_model = payload.get("model")
+        return ModelResponse(
+            text=output_text,
+            model_id=self.model_id,
+            model_revision=self.model_revision,
+            finish_reason=_optional_string(payload.get("status")),
+            prompt_tokens=_optional_nonnegative_int(usage.get("input_tokens")),
+            completion_tokens=_optional_nonnegative_int(usage.get("output_tokens")),
+            latency_seconds=latency_seconds,
+            metadata={
+                "backend": "openai_compatible",
+                "client": "stdlib-urllib",
+                "engine": self.engine,
+                "base_url": self.base_url,
+                "served_model": served_model if isinstance(served_model, str) else None,
+                "response_id": _optional_string(payload.get("id")),
+                "reasoning_effort": self.reasoning_effort,
+                "usage": usage,
+            },
+        )
+
     def is_loaded(self) -> bool:
         """Return whether endpoint and model readiness were verified."""
         return self._ready
@@ -162,6 +282,10 @@ class OpenAICompatibleBackend(BaseModelBackend):
         """Count tokens through the serving engine's tokenizer endpoint."""
         if not self.is_loaded():
             raise RuntimeError("Model endpoint is not ready. Call load_model() first.")
+        if self.engine == "responses":
+            # Responses endpoints do not expose the serving tokenizer. Match the
+            # repository's established four-characters-per-token RAG fallback.
+            return math.ceil(len(text) / 4)
         request_payload: dict[str, Any] = (
             {"model": self.model_id, "prompt": text}
             if self.engine == "vllm"
@@ -212,8 +336,13 @@ class OpenAICompatibleBackend(BaseModelBackend):
                     raise RuntimeError("OpenAI-compatible response exceeded the size limit.")
                 return _decode_json_object(raw)
             except HTTPError as exc:
+                try:
+                    error_detail = exc.read(4096).decode("utf-8", errors="replace").strip()
+                except Exception:
+                    error_detail = ""
                 raise RuntimeError(
-                    f"OpenAI-compatible request failed with HTTP {exc.code}."
+                    f"OpenAI-compatible request failed with HTTP {exc.code}"
+                    + (f": {error_detail}" if error_detail else ".")
                 ) from exc
             except (TimeoutError, URLError) as exc:
                 if attempt + 1 >= attempts:
@@ -308,6 +437,32 @@ def _extract_choice(payload: dict[str, Any]) -> tuple[dict[str, Any], dict[str, 
     if not isinstance(message, dict) or not isinstance(message.get("content"), str):
         raise RuntimeError("OpenAI-compatible response choice must contain text content.")
     return choice, message
+
+
+def _extract_response_output_text(payload: dict[str, Any]) -> str:
+    direct = payload.get("output_text")
+    if isinstance(direct, str) and direct:
+        return direct
+    output = payload.get("output")
+    if not isinstance(output, list):
+        raise RuntimeError("Responses API response must contain an output array.")
+    parts: list[str] = []
+    for item in output:
+        if not isinstance(item, dict):
+            continue
+        content = item.get("content")
+        if not isinstance(content, list):
+            continue
+        for block in content:
+            if (
+                isinstance(block, dict)
+                and block.get("type") in {"output_text", "text"}
+                and isinstance(block.get("text"), str)
+            ):
+                parts.append(block["text"])
+    if not parts:
+        raise RuntimeError("Responses API response did not contain output text.")
+    return "".join(parts)
 
 
 def _optional_string(value: Any) -> str | None:

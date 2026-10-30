@@ -139,6 +139,7 @@ class CriticCallTrace:
     generation_parameters: dict[str, Any] = field(default_factory=dict)
     validation_success: bool = False
     validation_error: str | None = None
+    validation_warnings: list[dict[str, Any]] = field(default_factory=list)
 
 
 class CriticTraceError(RuntimeError):
@@ -332,6 +333,12 @@ def validate_critic_feedback(value: object) -> CriticFeedback:
             raise TypeError("CriticCallTrace.validation_success must be a boolean.")
         if call.validation_error is not None and not isinstance(call.validation_error, str):
             raise TypeError("CriticCallTrace.validation_error must be a string or None.")
+        if not isinstance(call.validation_warnings, list) or any(
+            not isinstance(warning, dict) for warning in call.validation_warnings
+        ):
+            raise TypeError(
+                "CriticCallTrace.validation_warnings must be a list of dictionaries."
+            )
     if not isinstance(value.critic_type, str) or not value.critic_type.strip():
         raise TypeError("CriticFeedback.critic_type must be a non-empty string.")
     for field_name in (

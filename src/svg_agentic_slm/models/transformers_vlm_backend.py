@@ -56,6 +56,11 @@ class TransformersVLMBackend(BaseModelBackend):
         local_files_only: bool = False,
         trust_remote_code: bool = False,
         token_env: str | None = None,
+        adapter_path: str | None = None,
+        processor_path: str | None = None,
+        load_in_4bit: bool = False,
+        bnb_4bit_quant_type: str = "nf4",
+        bnb_4bit_use_double_quant: bool = True,
     ) -> None:
         self._model_id = _require_nonempty_string(model_id, "model_id")
         self._model_revision = _require_commit_revision(model_revision)
@@ -77,6 +82,15 @@ class TransformersVLMBackend(BaseModelBackend):
         self._local_files_only = _require_bool(local_files_only, "local_files_only")
         self._trust_remote_code = _require_bool(trust_remote_code, "trust_remote_code")
         self._token_env = _validate_token_env(token_env)
+        self._adapter_path = _validate_optional_reference(adapter_path, "adapter_path")
+        self._processor_path = _validate_optional_reference(processor_path, "processor_path")
+        self._load_in_4bit = _require_bool(load_in_4bit, "load_in_4bit")
+        self._bnb_4bit_quant_type = _validate_choice(
+            bnb_4bit_quant_type, "bnb_4bit_quant_type", {"nf4", "fp4"}
+        )
+        self._bnb_4bit_use_double_quant = _require_bool(
+            bnb_4bit_use_double_quant, "bnb_4bit_use_double_quant"
+        )
 
         self._processor: Any = None
         self._model: Any = None
@@ -126,14 +140,40 @@ class TransformersVLMBackend(BaseModelBackend):
                 hub_kwargs["token"] = token
 
             try:
-                processor = AutoProcessor.from_pretrained(self._model_id, **hub_kwargs)
-                model = model_loader.from_pretrained(
-                    self._model_id,
-                    dtype=torch_dtype,
-                    attn_implementation=self._attn_implementation,
+                processor = AutoProcessor.from_pretrained(
+                    self._processor_path or self._model_id,
                     **hub_kwargs,
                 )
-                model = model.eval().to(self._device)
+                model_kwargs: dict[str, Any] = {
+                    "dtype": torch_dtype,
+                    "attn_implementation": self._attn_implementation,
+                    **hub_kwargs,
+                }
+                if self._load_in_4bit:
+                    from transformers import BitsAndBytesConfig
+
+                    model_kwargs["quantization_config"] = BitsAndBytesConfig(
+                        load_in_4bit=True,
+                        bnb_4bit_quant_type=self._bnb_4bit_quant_type,
+                        bnb_4bit_compute_dtype=torch_dtype,
+                        bnb_4bit_use_double_quant=self._bnb_4bit_use_double_quant,
+                    )
+                    model_kwargs["device_map"] = {"": self._device}
+                model = model_loader.from_pretrained(
+                    self._model_id,
+                    **model_kwargs,
+                )
+                if self._adapter_path is not None:
+                    from peft import PeftModel
+
+                    model = PeftModel.from_pretrained(
+                        model,
+                        self._adapter_path,
+                        is_trainable=False,
+                    )
+                model = model.eval()
+                if not self._load_in_4bit:
+                    model = model.to(self._device)
             except Exception as exc:
                 self._processor = None
                 self._model = None
@@ -287,6 +327,11 @@ class TransformersVLMBackend(BaseModelBackend):
                     "image_height": image_height,
                     "local_files_only": self._local_files_only,
                     "trust_remote_code": self._trust_remote_code,
+                    "adapter_path": self._adapter_path,
+                    "processor_path": self._processor_path,
+                    "load_in_4bit": self._load_in_4bit,
+                    "bnb_4bit_quant_type": self._bnb_4bit_quant_type,
+                    "bnb_4bit_use_double_quant": self._bnb_4bit_use_double_quant,
                 },
             )
 
@@ -454,6 +499,12 @@ def _validate_token_env(value: str | None) -> str | None:
     if re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", name) is None:
         raise ValueError("token_env must be a valid environment variable name.")
     return name
+
+
+def _validate_optional_reference(value: str | None, name: str) -> str | None:
+    if value is None:
+        return None
+    return _require_nonempty_string(value, name)
 
 
 def _validate_choice(value: str, name: str, choices: set[str]) -> str:

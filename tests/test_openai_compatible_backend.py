@@ -133,6 +133,73 @@ def test_llama_cpp_dialect_uses_repeat_penalty(
     assert "repetition_penalty" not in request_payload
 
 
+def test_responses_engine_supports_text_image_and_json_schema(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    opener = _RecordingURLopener(
+        [
+            {"data": [{"id": "openai/gpt-5.6-luna"}]},
+            {
+                "id": "resp-generator",
+                "model": "openai/gpt-5.6-luna",
+                "status": "completed",
+                "output": [
+                    {
+                        "type": "message",
+                        "content": [{"type": "output_text", "text": "<svg/>"}],
+                    }
+                ],
+                "usage": {"input_tokens": 10, "output_tokens": 5},
+            },
+            {
+                "id": "resp-critic",
+                "model": "openai/gpt-5.6-luna",
+                "status": "completed",
+                "output": [
+                    {
+                        "type": "message",
+                        "content": [{"type": "output_text", "text": '{"ok":true}'}],
+                    }
+                ],
+                "usage": {"input_tokens": 20, "output_tokens": 7},
+            },
+        ]
+    )
+    monkeypatch.setattr(
+        "svg_agentic_slm.models.openai_compatible_backend._URL_OPENER.open",
+        opener,
+    )
+    backend = OpenAICompatibleBackend(
+        base_url="https://api.example.com/v1",
+        model_id="openai/gpt-5.6-luna",
+        engine="responses",
+        reasoning_effort="medium",
+    )
+
+    backend.load_model()
+    generated = backend.generate("Draw.", system_prompt="Return SVG.")
+    criticized = backend.generate_with_image(
+        "Evaluate.",
+        b"png",
+        system_prompt="Return JSON.",
+        response_format={"type": "json_schema", "name": "result", "schema": {}},
+    )
+
+    assert generated.text == "<svg/>"
+    assert generated.prompt_tokens == 10
+    assert criticized.text == '{"ok":true}'
+    assert backend.supports_response_format is True
+    generator_payload = json.loads(opener.calls[1][0].data or b"{}")
+    assert generator_payload["reasoning"] == {"effort": "medium"}
+    assert generator_payload["instructions"] == "Return SVG."
+    critic_payload = json.loads(opener.calls[2][0].data or b"{}")
+    assert critic_payload["input"][0]["content"][0]["type"] == "input_image"
+    assert critic_payload["input"][0]["content"][0]["image_url"].startswith(
+        "data:image/png;base64,"
+    )
+    assert critic_payload["text"]["format"]["type"] == "json_schema"
+
+
 @pytest.mark.parametrize(
     ("engine", "token_response", "expected_payload"),
     [

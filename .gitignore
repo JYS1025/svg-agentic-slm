@@ -53,3 +53,6 @@ data/qdrant_storage/
 *.onnx
 mmsvg_sft_sample_ids_seed42_20k.tar.gz
 papers/ 
+
+# Local OmniSVG critic distillation workspace
+/.work/omnisvg_critic_distill/

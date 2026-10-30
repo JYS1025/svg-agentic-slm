@@ -14,6 +14,7 @@ def install_chunked_causal_lm_loss(
     chunk_size: int,
     project_only_active_tokens: bool = True,
     loss_backend: str = "auto",
+    allow_multimodal_inputs: bool = False,
 ) -> dict[str, Any]:
     """Patch a PEFT base model to avoid materializing full sequence logits.
 
@@ -31,6 +32,8 @@ def install_chunked_causal_lm_loss(
         raise ValueError("chunk_size must be a positive integer.")
     if not isinstance(project_only_active_tokens, bool):
         raise TypeError("project_only_active_tokens must be boolean.")
+    if not isinstance(allow_multimodal_inputs, bool):
+        raise TypeError("allow_multimodal_inputs must be boolean.")
     if loss_backend not in {"auto", "checkpoint", "streamed"}:
         raise ValueError("loss_backend must be auto, checkpoint, or streamed.")
     if not hasattr(model, "get_base_model"):
@@ -69,7 +72,7 @@ def install_chunked_causal_lm_loss(
             )
             if kwargs.get(name) is not None
         }
-        if unsupported:
+        if unsupported and not allow_multimodal_inputs:
             raise ValueError(
                 "Chunked SVG SFT loss is text-only; unsupported multimodal inputs: "
                 + ", ".join(sorted(unsupported))
@@ -140,6 +143,7 @@ def install_chunked_causal_lm_loss(
         "cross_entropy_dtype": "float32",
         "checkpoint": "non_reentrant_during_training_when_checkpoint_backend_selected",
         "returns_labeled_logits": False,
+        "multimodal_inputs": allow_multimodal_inputs,
     }
     base_model._svg_chunked_causal_lm_loss = provenance
     return provenance

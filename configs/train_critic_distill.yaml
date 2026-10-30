@@ -1,0 +1,66 @@
+train:
+  run:
+    pipeline_id: null
+    stage_id: "standalone"
+    stage_kind: "standalone"
+    parent_stage_id: null
+
+  model:
+    model_id: "Qwen/Qwen3.5-4B"
+    revision: "851bf6e806efd8d0a36b00ddf55e13ccb7b8cd0a"
+    dtype: "bfloat16"
+    attn_implementation: "sdpa"
+    load_in_4bit: true
+    bnb_4bit_quant_type: "nf4"
+    bnb_4bit_use_double_quant: true
+    local_files_only: true
+    trust_remote_code: false
+
+  dataset:
+    train_path: "data/processed/omnisvg_critic_distill/train.jsonl"
+    validation_path: "data/processed/omnisvg_critic_distill/validation.jsonl"
+    test_path: "data/processed/omnisvg_critic_distill/test.jsonl"
+
+  lora:
+    r: 16
+    lora_alpha: 32
+    lora_dropout: 0.05
+    bias: "none"
+
+  sft:
+    output_dir: "outputs/sft/qwen35_critic_distill"
+    multimodal_cache_dir: "/dev/shm/svg_agentic_slm/critic_sft"
+    max_seq_length: 32768
+    num_train_epochs: 3.0
+    max_steps: -1
+    per_device_train_batch_size: 1
+    per_device_eval_batch_size: 1
+    gradient_accumulation_steps: 16
+    learning_rate: 0.0001
+    weight_decay: 0.01
+    warmup_ratio: 0.03
+    lr_scheduler_type: "cosine"
+    logging_steps: 1
+    logging_nan_inf_filter: false
+    save_strategy: "steps"
+    eval_strategy: "steps"
+    save_steps: 50
+    eval_steps: 50
+    save_total_limit: 2
+    early_stopping_patience: 2
+    early_stopping_threshold: 0.0
+    bf16: true
+    fp16: false
+    gradient_checkpointing: true
+    optim: "paged_adamw_8bit"
+    seed: 42
+    dataloader_num_workers: 2
+    dataloader_pin_memory: true
+    dataloader_persistent_workers: true
+    dataloader_prefetch_factor: 2
+    length_grouping_batch_size: 16
+    lm_head_loss_chunk_size: 64
+    lm_head_loss_backend: "auto"
+    init_adapter_from: null
+    resume_from_checkpoint: null
+    report_to: []

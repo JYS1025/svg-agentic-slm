@@ -483,6 +483,12 @@ def _persist_critic_call_traces(
                 {
                     "success": call.validation_success,
                     "error": call.validation_error,
+                    "status": (
+                        "warning"
+                        if call.validation_success and call.validation_warnings
+                        else "valid" if call.validation_success else "invalid"
+                    ),
+                    "warnings": call.validation_warnings,
                 },
                 indent=2,
                 ensure_ascii=False,
@@ -512,6 +518,7 @@ def _persist_critic_call_traces(
             ),
             "validation_success": call.validation_success,
             "validation_error": call.validation_error,
+            "validation_warnings": call.validation_warnings,
             "generation_parameters": _redact_sensitive_config(
                 call.generation_parameters
             ),

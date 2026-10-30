@@ -7,7 +7,7 @@ from __future__ import annotations
 import json
 import math
 
-VLM_CRITIC_PROMPT_VERSION = "vlm-critic-grounded-v9-introsvg-strict"
+VLM_CRITIC_PROMPT_VERSION = "vlm-critic-grounded-v10-complete-scorecard"
 
 
 _OUTPUT_CONTRACT = """OUTPUT JSON FORMAT
@@ -39,6 +39,8 @@ The examples show field structure only. Do not copy their judgment.
 Contract requirements:
 
 1. evaluations must contain exactly one entry for each of the 18 valid category and type pairs. Every entry must contain exactly category, type, applicable, score, and reason.
+   Include all 18 entries in the required order, including properties that have no defect or do not apply. The issues array alone lists selected defects.
+   Keep each reason concise so the complete scorecard fits in the response. Before returning, count the evaluations and check that none of the required pairs is missing or repeated.
 2. When applicable is true, score must be an integer from 0 through 4. When applicable is false, score must be null and reason must explain why the property does not apply.
 3. issues may contain at most 3 independently actionable entries. Every entry must contain exactly category, type, scope, target_ids, observed, expected, and fix.
 4. Every issue must refer to an applicable evaluation below the configured threshold. Select the most serious corrections from the lowest scores first. If all applicable scores meet the threshold, issues must be empty.
@@ -185,7 +187,9 @@ def build_vlm_critic_prompt(
         f"{json.dumps(target_ids, ensure_ascii=False)}\n"
         "</allowed_target_ids_json>\n\n"
         f"{similarity_section}"
-        "Return one JSON object that follows the system prompt contract."
+        "Return one JSON object that follows the system prompt contract. "
+        "The evaluations array must have all 18 entries in the required order, "
+        "including correct and not applicable properties. Check the count before responding."
     )
 
 
@@ -201,7 +205,9 @@ def build_vlm_critic_evaluation_retry_prompt(
     return (
         "The previous response could not provide a complete reusable judgment. "
         "Perform the full image-grounded evaluation again using the attached rendered "
-        "SVG. Return a new response that satisfies the system prompt contract.\n\n"
+        "SVG. The previous evaluation was incomplete. Return all 18 category and type "
+        "pairs in the required order, including correct and not applicable properties. "
+        "Check the count before responding.\n\n"
         "<previous_validation_error_json>\n"
         f"{json.dumps(validation_error, ensure_ascii=False)}\n"
         "</previous_validation_error_json>\n\n"

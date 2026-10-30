@@ -11,6 +11,7 @@ import re
 from importlib.resources import files
 from typing import Literal, Protocol, cast
 from uuid import uuid4
+from xml.etree import ElementTree
 
 from svg_agentic_slm.agents.base import BaseCritic
 from svg_agentic_slm.agents.schemas import (
@@ -43,7 +44,7 @@ from svg_agentic_slm.svg.validator import SVGValidator
 
 logger = logging.getLogger(__name__)
 
-VLM_CRITIC_VERSION = "vlm-critic-v7-siglip2-score"
+VLM_CRITIC_VERSION = "vlm-critic-v8-tolerant-contract"
 _FORMAT_REPAIR_IMAGE = base64.b64decode(
     "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII="
 )
@@ -58,6 +59,7 @@ _ISSUE_KEYS = {
     "fix",
 }
 _EVALUATION_KEYS = {"category", "type", "applicable", "score", "reason"}
+_TYPE_ALIASES = {("appearance", "texture"): "surface"}
 _ISSUE_TAXONOMY = CRITIC_ISSUE_TYPES
 _CRITIC_SCHEMA = json.loads(
     files("svg_agentic_slm.agents")
@@ -70,6 +72,62 @@ _CRITIC_RESPONSE_FORMAT: dict[str, object] = {
     "strict": True,
     "schema": _CRITIC_SCHEMA,
 }
+
+
+def _openai_critic_response_format() -> dict[str, object]:
+    """Return the OpenAI Structured Outputs subset used by teacher runs."""
+    categories = list(_ISSUE_TAXONOMY)
+    issue_types = sorted(
+        {issue_type for values in _ISSUE_TAXONOMY.values() for issue_type in values}
+    )
+    evaluation = {
+        "type": "object",
+        "additionalProperties": False,
+        "required": ["category", "type", "applicable", "score", "reason"],
+        "properties": {
+            "category": {"type": "string", "enum": categories},
+            "type": {"type": "string", "enum": issue_types},
+            "applicable": {"type": "boolean"},
+            "score": {"type": ["integer", "null"]},
+            "reason": {"type": "string"},
+        },
+    }
+    issue = {
+        "type": "object",
+        "additionalProperties": False,
+        "required": [
+            "category",
+            "type",
+            "scope",
+            "target_ids",
+            "observed",
+            "expected",
+            "fix",
+        ],
+        "properties": {
+            "category": {"type": "string", "enum": categories},
+            "type": {"type": "string", "enum": issue_types},
+            "scope": {"type": "string", "enum": ["global", "object", "part"]},
+            "target_ids": {"type": "array", "items": {"type": "string"}},
+            "observed": {"type": "string"},
+            "expected": {"type": "string"},
+            "fix": {"type": "string"},
+        },
+    }
+    return {
+        "type": "json_schema",
+        "name": "critic_output",
+        "strict": True,
+        "schema": {
+            "type": "object",
+            "additionalProperties": False,
+            "required": ["evaluations", "issues"],
+            "properties": {
+                "evaluations": {"type": "array", "items": evaluation},
+                "issues": {"type": "array", "items": issue},
+            },
+        },
+    }
 
 
 class VisionModel(Protocol):
@@ -113,6 +171,7 @@ class VLMCritic(BaseCritic):
         background_color: str = "#ffffff",
         max_new_tokens: int = 2048,
         score_threshold: float = 3.0,
+        contract_mode: Literal["strict", "tolerant"] = "strict",
     ) -> None:
         if render_width <= 0 or render_height <= 0:
             raise ValueError("VLM critic render dimensions must be positive.")
@@ -126,6 +185,8 @@ class VLMCritic(BaseCritic):
             or not 0.0 <= float(score_threshold) <= 4.0
         ):
             raise ValueError("VLM critic score_threshold must be between 0 and 4.")
+        if contract_mode not in ("strict", "tolerant"):
+            raise ValueError("VLM critic contract_mode must be strict or tolerant.")
         self._model = model
         self._renderer = renderer
         self._render_width = render_width
@@ -133,6 +194,7 @@ class VLMCritic(BaseCritic):
         self._background_color = background_color
         self._max_new_tokens = max_new_tokens
         self._score_threshold = float(score_threshold)
+        self._contract_mode = contract_mode
         self._validator = SVGValidator()
         self._labeler = CriticLabeler()
 
@@ -164,6 +226,7 @@ class VLMCritic(BaseCritic):
         previous_response: str | None = None
         previous_payload: dict[str, object] | None = None
         retry_kind: Literal["format_repair", "full_evaluation"] | None = None
+        target_id_aliases = _target_id_aliases(value.labeling.labeled_svg)
 
         for retry_index in range(2):
             if retry_index == 0:
@@ -189,6 +252,18 @@ class VLMCritic(BaseCritic):
                     similarity_score=similarity_score,
                 )
             format_repair_only = retry_index > 0 and retry_kind == "format_repair"
+            generation_kwargs: dict[str, object] = {
+                "system_prompt": system_prompt,
+                "mime_type": "image/png",
+                "max_new_tokens": self._max_new_tokens,
+                "do_sample": False,
+            }
+            if getattr(self._model, "supports_response_format", False):
+                generation_kwargs["response_format"] = (
+                    _openai_critic_response_format()
+                    if getattr(self._model, "response_format_dialect", None) == "openai"
+                    else copy.deepcopy(_CRITIC_RESPONSE_FORMAT)
+                )
             response = self._model.generate_with_image(
                 prompt,
                 (
@@ -196,10 +271,7 @@ class VLMCritic(BaseCritic):
                     if format_repair_only
                     else bytes(value.render_png)
                 ),
-                system_prompt=system_prompt,
-                mime_type="image/png",
-                max_new_tokens=self._max_new_tokens,
-                do_sample=False,
+                **generation_kwargs,
             )
             if not isinstance(response, ModelResponse):
                 raise TypeError("Vision model must return ModelResponse.")
@@ -210,13 +282,21 @@ class VLMCritic(BaseCritic):
                 response=response,
                 prompt=prompt,
                 system_prompt=system_prompt,
-                response_format=copy.deepcopy(_CRITIC_RESPONSE_FORMAT),
+                response_format=copy.deepcopy(
+                    cast(
+                        dict[str, object],
+                        generation_kwargs.get(
+                            "response_format", _CRITIC_RESPONSE_FORMAT
+                        ),
+                    )
+                ),
                 generation_parameters={
                     "max_new_tokens": self._max_new_tokens,
                     "do_sample": False,
                     "mime_type": "image/png",
                     "render_width": value.render_width,
                     "render_height": value.render_height,
+                    "contract_mode": self._contract_mode,
                     "format_repair_only": format_repair_only,
                     "full_evaluation_retry": (
                         retry_index > 0 and retry_kind == "full_evaluation"
@@ -228,11 +308,30 @@ class VLMCritic(BaseCritic):
                 parsed_payload = _parse_json_object(response.text)
                 if format_repair_only and previous_payload is not None:
                     _validate_format_repair(previous_payload, parsed_payload)
-                evaluations, issues = _parse_critic_contract(
-                    parsed_payload,
-                    allowed_target_ids=set(allowed_target_ids),
-                    score_threshold=self._score_threshold,
-                )
+                contract_warnings: list[dict[str, object]] = []
+                if self._contract_mode == "tolerant":
+                    evaluations, issues, contract_warnings = (
+                        _parse_critic_contract_tolerant(
+                            parsed_payload,
+                            allowed_target_ids=set(allowed_target_ids),
+                            target_id_aliases=target_id_aliases,
+                            score_threshold=self._score_threshold,
+                        )
+                    )
+                else:
+                    evaluations, issues = _parse_critic_contract(
+                        parsed_payload,
+                        allowed_target_ids=set(allowed_target_ids),
+                        score_threshold=self._score_threshold,
+                    )
+                trace.validation_warnings = contract_warnings
+                if contract_warnings:
+                    logger.warning(
+                        "Accepted VLM critic response with contract warning(s): %s",
+                        ", ".join(
+                            str(warning["code"]) for warning in contract_warnings
+                        ),
+                    )
                 feedback = _contract_feedback(
                     evaluations=evaluations,
                     issues=issues,
@@ -241,6 +340,8 @@ class VLMCritic(BaseCritic):
                     response=response,
                     model_calls=[*calls, trace],
                     allowed_target_ids=allowed_target_ids,
+                    contract_mode=self._contract_mode,
+                    contract_warnings=contract_warnings,
                 )
             except (AttributeError, KeyError, TypeError, ValueError) as exc:
                 retry_error = f"{type(exc).__name__}: {exc}"
@@ -249,7 +350,8 @@ class VLMCritic(BaseCritic):
                     previous_payload = parsed_payload
                     retry_kind = (
                         "format_repair"
-                        if _has_complete_judgment_fields(parsed_payload)
+                        if self._contract_mode == "strict"
+                        and _has_complete_judgment_fields(parsed_payload)
                         else "full_evaluation"
                     )
                 trace.validation_error = retry_error
@@ -403,7 +505,315 @@ def _has_complete_judgment_fields(
     payload: dict[str, object] | None,
 ) -> bool:
     """Return whether serialization repair can preserve a complete judgment."""
-    return payload is not None and {"evaluations", "issues"}.issubset(payload)
+    return (
+        payload is not None
+        and isinstance(payload.get("evaluations"), list)
+        and len(payload["evaluations"]) == len(CRITIC_SCORECARD_PAIRS)
+        and isinstance(payload.get("issues"), list)
+    )
+
+
+def _contract_warning(
+    code: str,
+    message: str,
+    *,
+    path: str | None = None,
+) -> dict[str, object]:
+    warning: dict[str, object] = {"code": code, "message": message}
+    if path is not None:
+        warning["path"] = path
+    return warning
+
+
+def _target_id_aliases(labeled_svg: str) -> dict[str, str]:
+    """Return unambiguous visible id -> data-agent-id aliases from critic input."""
+    try:
+        root = ElementTree.fromstring(labeled_svg)
+    except ElementTree.ParseError:
+        return {}
+    candidates: dict[str, set[str]] = {}
+    for element in root.iter():
+        visible_id = element.attrib.get("id")
+        agent_id = element.attrib.get("data-agent-id")
+        if visible_id and agent_id and _TARGET_ID_RE.fullmatch(agent_id):
+            candidates.setdefault(visible_id, set()).add(agent_id)
+    return {
+        visible_id: next(iter(agent_ids))
+        for visible_id, agent_ids in candidates.items()
+        if len(agent_ids) == 1
+    }
+
+
+def _canonical_pair(category: object, issue_type: object) -> tuple[object, object]:
+    if isinstance(category, str) and isinstance(issue_type, str):
+        return category, _TYPE_ALIASES.get((category, issue_type), issue_type)
+    return category, issue_type
+
+
+def _parse_critic_contract_tolerant(
+    payload: dict[str, object],
+    *,
+    allowed_target_ids: set[str],
+    target_id_aliases: dict[str, str],
+    score_threshold: float,
+) -> tuple[list[CriticEvaluation], list[CriticIssue], list[dict[str, object]]]:
+    """Repair presentation-level contract defects, then run the strict validator.
+
+    Evaluation coverage, scores, applicability, and reasons are never invented or
+    coerced. Those fields are the critic judgment and remain fail-closed.
+    """
+    if not isinstance(payload, dict):
+        raise ValueError("VLM critic response JSON must be an object.")
+    warnings: list[dict[str, object]] = []
+    missing_top_level = {"evaluations", "issues"} - set(payload)
+    if missing_top_level:
+        raise ValueError(
+            "VLM critic response is missing required field(s): "
+            + ", ".join(sorted(missing_top_level))
+        )
+    unexpected = sorted(set(payload) - {"evaluations", "issues"})
+    if unexpected:
+        warnings.append(
+            _contract_warning(
+                "extra_top_level_fields_removed",
+                "Ignored unexpected top-level field(s): " + ", ".join(unexpected),
+            )
+        )
+
+    raw_evaluations = payload["evaluations"]
+    if not isinstance(raw_evaluations, list):
+        raise ValueError("VLM critic evaluations must be an array.")
+    if len(raw_evaluations) != len(CRITIC_SCORECARD_PAIRS):
+        raise ValueError("VLM critic evaluations must contain all 18 category-type pairs.")
+    normalized_evaluations: list[dict[str, object]] = []
+    for index, raw in enumerate(raw_evaluations):
+        path = f"evaluations[{index}]"
+        if not isinstance(raw, dict):
+            raise ValueError(f"{path} must be an object.")
+        required = _EVALUATION_KEYS - {"score"}
+        missing = required - set(raw)
+        if missing:
+            raise ValueError(f"{path} is missing required field(s): {', '.join(sorted(missing))}")
+        item = {key: raw[key] for key in _EVALUATION_KEYS if key in raw}
+        extras = sorted(set(raw) - _EVALUATION_KEYS)
+        if extras:
+            warnings.append(
+                _contract_warning(
+                    "extra_evaluation_fields_removed",
+                    "Ignored unexpected evaluation field(s): " + ", ".join(extras),
+                    path=path,
+                )
+            )
+        category, issue_type = _canonical_pair(item["category"], item["type"])
+        if issue_type != item["type"]:
+            warnings.append(
+                _contract_warning(
+                    "taxonomy_alias_normalized",
+                    f"Normalized {item['category']}/{item['type']} to "
+                    f"{category}/{issue_type}.",
+                    path=f"{path}.type",
+                )
+            )
+        item["category"] = category
+        item["type"] = issue_type
+        if "score" not in item:
+            if item.get("applicable") is False:
+                item["score"] = None
+                warnings.append(
+                    _contract_warning(
+                        "not_applicable_score_defaulted",
+                        "Inserted null score for a not-applicable evaluation.",
+                        path=f"{path}.score",
+                    )
+                )
+            else:
+                raise ValueError(f"{path} is missing required field: score")
+        normalized_evaluations.append(item)
+
+    # Validate the complete judgment before using it to decide which issues survive.
+    evaluations = [_parse_evaluation(item) for item in normalized_evaluations]
+    pairs = [(item.category, item.type) for item in evaluations]
+    if len(set(pairs)) != len(pairs):
+        raise ValueError("VLM critic evaluations contain a duplicate category-type pair.")
+    if set(pairs) != CRITIC_SCORECARD_PAIRS:
+        raise ValueError("VLM critic must evaluate every category-type pair exactly once.")
+    applicable = [item for item in evaluations if item.applicable]
+    if not applicable:
+        raise ValueError("VLM critic must mark at least one evaluation as applicable.")
+    below_threshold = {
+        (item.category, item.type)
+        for item in applicable
+        if item.score is not None and item.score < score_threshold
+    }
+
+    raw_issues = payload["issues"]
+    if not isinstance(raw_issues, list):
+        raise ValueError("VLM critic issues must be an array.")
+    normalized_issues: list[dict[str, object]] = []
+    for index, raw in enumerate(raw_issues):
+        path = f"issues[{index}]"
+        if not isinstance(raw, dict):
+            warnings.append(
+                _contract_warning(
+                    "malformed_issue_removed",
+                    "Ignored an issue that was not an object.",
+                    path=path,
+                )
+            )
+            continue
+        missing = _ISSUE_KEYS - set(raw)
+        if missing:
+            warnings.append(
+                _contract_warning(
+                    "malformed_issue_removed",
+                    "Ignored an issue missing field(s): " + ", ".join(sorted(missing)),
+                    path=path,
+                )
+            )
+            continue
+        item = {key: raw[key] for key in _ISSUE_KEYS}
+        extras = sorted(set(raw) - _ISSUE_KEYS)
+        if extras:
+            warnings.append(
+                _contract_warning(
+                    "extra_issue_fields_removed",
+                    "Ignored unexpected issue field(s): " + ", ".join(extras),
+                    path=path,
+                )
+            )
+        category, issue_type = _canonical_pair(item["category"], item["type"])
+        if issue_type != item["type"]:
+            warnings.append(
+                _contract_warning(
+                    "taxonomy_alias_normalized",
+                    f"Normalized {item['category']}/{item['type']} to "
+                    f"{category}/{issue_type}.",
+                    path=f"{path}.type",
+                )
+            )
+        item["category"] = category
+        item["type"] = issue_type
+        if not isinstance(category, str) or not isinstance(issue_type, str):
+            warnings.append(
+                _contract_warning(
+                    "malformed_issue_removed",
+                    "Ignored an issue with an invalid taxonomy pair.",
+                    path=path,
+                )
+            )
+            continue
+        if (category, issue_type) not in below_threshold:
+            warnings.append(
+                _contract_warning(
+                    "unmatched_issue_removed",
+                    "Ignored an issue not backed by an applicable below-threshold evaluation.",
+                    path=path,
+                )
+            )
+            continue
+        targets = item["target_ids"]
+        if not isinstance(targets, list):
+            warnings.append(
+                _contract_warning(
+                    "malformed_issue_removed",
+                    "Ignored an issue whose target_ids was not an array.",
+                    path=path,
+                )
+            )
+            continue
+        repaired_targets: list[str] = []
+        target_changed = False
+        for target in targets:
+            mapped = target_id_aliases.get(target, target) if isinstance(target, str) else None
+            if mapped in allowed_target_ids and mapped not in repaired_targets:
+                repaired_targets.append(mapped)
+                target_changed = target_changed or mapped != target
+            else:
+                target_changed = True
+        if len(repaired_targets) > 4:
+            repaired_targets = repaired_targets[:4]
+            target_changed = True
+        item["target_ids"] = repaired_targets
+        if target_changed:
+            warnings.append(
+                _contract_warning(
+                    "target_ids_normalized",
+                    "Remapped, deduplicated, or removed invalid target IDs.",
+                    path=f"{path}.target_ids",
+                )
+            )
+        try:
+            _parse_issue(item, allowed_target_ids=allowed_target_ids)
+        except (TypeError, ValueError) as exc:
+            warnings.append(
+                _contract_warning(
+                    "malformed_issue_removed",
+                    f"Ignored an unusable issue: {exc}",
+                    path=path,
+                )
+            )
+            continue
+        normalized_issues.append(item)
+
+    if not below_threshold and normalized_issues:
+        warnings.append(
+            _contract_warning(
+                "passing_issues_removed",
+                "Removed issues because every applicable score meets the threshold.",
+            )
+        )
+        normalized_issues = []
+    if len(normalized_issues) > 3:
+        warnings.append(
+            _contract_warning(
+                "excess_issues_truncated",
+                "Kept the first three valid issues.",
+            )
+        )
+        normalized_issues = normalized_issues[:3]
+    if below_threshold and not normalized_issues:
+        evaluation_by_pair = {(item.category, item.type): item for item in evaluations}
+        lowest_pairs = sorted(
+            below_threshold,
+            key=lambda pair: (
+                evaluation_by_pair[pair].score
+                if evaluation_by_pair[pair].score is not None
+                else 5,
+                pair,
+            ),
+        )[:3]
+        for category, issue_type in lowest_pairs:
+            evaluation = evaluation_by_pair[(category, issue_type)]
+            normalized_issues.append(
+                {
+                    "category": category,
+                    "type": issue_type,
+                    "scope": "global",
+                    "target_ids": [],
+                    "observed": evaluation.reason,
+                    "expected": "The visible result should satisfy this scorecard criterion.",
+                    "fix": f"Correct the visible {issue_type} problem described by the evaluation.",
+                }
+            )
+        warnings.append(
+            _contract_warning(
+                "issues_synthesized_from_evaluations",
+                "Created issue records from below-threshold evaluations because no "
+                "usable issue remained.",
+            )
+        )
+
+    normalized_payload: dict[str, object] = {
+        "evaluations": normalized_evaluations,
+        "issues": normalized_issues,
+    }
+    # Keep the strict parser as the final source of truth for accepted data.
+    parsed_evaluations, parsed_issues = _parse_critic_contract(
+        normalized_payload,
+        allowed_target_ids=allowed_target_ids,
+        score_threshold=score_threshold,
+    )
+    return parsed_evaluations, parsed_issues, warnings
 
 
 def _parse_critic_contract(
@@ -628,6 +1038,8 @@ def _contract_feedback(
     response: ModelResponse,
     model_calls: list[CriticCallTrace],
     allowed_target_ids: list[str],
+    contract_mode: Literal["strict", "tolerant"],
+    contract_warnings: list[dict[str, object]],
 ) -> CriticFeedback:
     legacy_issues = [_legacy_issue_text(issue) for issue in issues]
     legacy_suggestions = [_legacy_suggestion_text(issue) for issue in issues]
@@ -663,6 +1075,9 @@ def _contract_feedback(
                 "attempt_id": attempt_id,
                 "allowed_target_ids": allowed_target_ids,
                 "contract": "critic_scorecard_v1",
+                "contract_mode": contract_mode,
+                "contract_status": "warning" if contract_warnings else "valid",
+                "contract_warnings": contract_warnings,
                 "score_threshold": score_threshold,
             },
             model_calls=model_calls,

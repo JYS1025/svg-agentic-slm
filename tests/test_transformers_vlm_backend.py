@@ -145,3 +145,60 @@ def test_vlm_backend_selects_multimodal_auto_model(
     assert model.device == "cpu"
     assert load_calls["model_id"] == "example/gemma"
     assert load_calls["kwargs"]["revision"] == "b" * 40
+
+
+def test_vlm_backend_loads_quantized_adapter_and_saved_processor(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import peft
+    import transformers
+
+    processor = _FakeProcessor()
+    model = _FakeModel()
+    calls = {}
+
+    def load_processor(source, **kwargs):
+        calls["processor_source"] = source
+        return processor
+
+    def load_model(source, **kwargs):
+        calls["model_source"] = source
+        calls["model_kwargs"] = kwargs
+        return model
+
+    def load_adapter(base, source, **kwargs):
+        calls["adapter_source"] = source
+        calls["adapter_kwargs"] = kwargs
+        assert base is model
+        return base
+
+    monkeypatch.setattr(transformers.AutoProcessor, "from_pretrained", load_processor)
+    monkeypatch.setattr(
+        transformers.AutoModelForMultimodalLM,
+        "from_pretrained",
+        load_model,
+    )
+    monkeypatch.setattr(
+        transformers,
+        "BitsAndBytesConfig",
+        lambda **kwargs: ("quantization", kwargs),
+    )
+    monkeypatch.setattr(peft.PeftModel, "from_pretrained", load_adapter)
+    backend = TransformersVLMBackend(
+        model_id="Qwen/Qwen3.5-4B",
+        model_revision="c" * 40,
+        device="cpu",
+        dtype="float32",
+        auto_model_class="multimodal_lm",
+        adapter_path="outputs/critic/adapter",
+        processor_path="outputs/critic/processor",
+        load_in_4bit=True,
+    )
+    backend.load_model()
+
+    assert calls["processor_source"] == "outputs/critic/processor"
+    assert calls["model_source"] == "Qwen/Qwen3.5-4B"
+    assert calls["adapter_source"] == "outputs/critic/adapter"
+    assert calls["adapter_kwargs"] == {"is_trainable": False}
+    assert calls["model_kwargs"]["device_map"] == {"": "cpu"}
+    assert model.device is None  # Quantized models must not be moved with model.to().

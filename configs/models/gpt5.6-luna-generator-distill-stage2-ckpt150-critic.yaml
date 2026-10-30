@@ -1,0 +1,43 @@
+# GPT-5.6 Luna API Generator with the stage-2 checkpoint-150 local critic.
+model:
+  backend_type: "openai_compatible"
+  base_url: "https://api.bizrouter.ai/v1"
+  model_id: "openai/gpt-5.6-luna"
+  engine: "responses"
+  api_key_env: "BIZROUTER_API_KEY"
+  timeout_seconds: 300
+  max_retries: 1
+  reasoning_effort: "medium"
+
+critic_model:
+  backend_type: "transformers_vlm"
+  model_id: "Qwen/Qwen3.5-4B"
+  revision: "851bf6e806efd8d0a36b00ddf55e13ccb7b8cd0a"
+  device: "cuda:1"
+  dtype: "bfloat16"
+  attn_implementation: "sdpa"
+  auto_model_class: "multimodal_lm"
+  enable_thinking: false
+  max_new_tokens: 2048
+  do_sample: false
+  local_files_only: true
+  trust_remote_code: false
+  adapter_path: "/home/elicer/svg-agentic-slm/outputs/sft/critic_distill_pipeline_main/stages/02_new_only_1epoch/output/checkpoints/checkpoint-150"
+  processor_path: null
+  load_in_4bit: true
+  bnb_4bit_quant_type: "nf4"
+  bnb_4bit_use_double_quant: true
+  render_width: 512
+  render_height: 512
+  background_color: "#ffffff"
+
+similarity_model:
+  backend_type: "siglip2"
+  model_id: "google/siglip2-base-patch16-224"
+  revision: "75de2d55ec2d0b4efc50b3e9ad70dba96a7b2fa2"
+  device: "cuda:1"
+  dtype: "bfloat16"
+  attn_implementation: "sdpa"
+  local_files_only: true
+  trust_remote_code: false
+  text_template: "This is a photo of {instruction}."

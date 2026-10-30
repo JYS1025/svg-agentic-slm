@@ -893,6 +893,13 @@ def _validate_v2_attempt(attempt: dict[str, Any], prefix: str) -> set[str]:
         _require_optional_string(call.get("raw_output_ref"), f"{call_prefix}.raw_output_ref")
         _require_bool(call.get("validation_success"), f"{call_prefix}.validation_success")
         _require_optional_string(call.get("validation_error"), f"{call_prefix}.validation_error")
+        validation_warnings = call.get("validation_warnings", [])
+        if not isinstance(validation_warnings, list) or any(
+            not isinstance(warning, dict) for warning in validation_warnings
+        ):
+            raise ValueError(
+                f"{call_prefix}.validation_warnings must be an object array."
+            )
         if not isinstance(call.get("generation_parameters"), dict):
             raise ValueError(f"{call_prefix}.generation_parameters must be an object.")
     return call_ids
