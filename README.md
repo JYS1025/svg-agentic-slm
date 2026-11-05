@@ -14,6 +14,8 @@ An agentic pipeline utilizing Small Language Models (SLMs) to generate, validate
 
 ## Project Documents
 
+- [Elice 서버 반납 및 학습 재개 handoff](docs/elice-server-handoff-2026-11-05.md):
+  검증된 백업 ZIP, 복원 절차, checkpoint-150 재개 방법, 실행 환경과 보존 범위를 정리한다.
 - [A100 SFT 최적화 및 서버 검증 보고서](docs/a100-sft-optimization-2026-09-18.md):
   이 서버의 2×A100 하드웨어 조사, Generator/Critic 전용 프로필, 실제 GPU
   스모크 벤치마크, 데이터 준비 및 실행 명령을 정리한다.

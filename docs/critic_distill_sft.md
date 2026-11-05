@@ -1,5 +1,9 @@
 # Qwen3.5 critic distillation SFT
 
+For restoring the 2026-11-05 server backup and resuming checkpoint-150, follow
+the [server handoff](elice-server-handoff-2026-11-05.md). It records the required
+environment, model downloads, absolute paths, and the existing pipeline directory.
+
 The critic student receives exactly the production `critic_v1` evidence: one
 candidate render, the original instruction, the labeled candidate SVG, its
 allowed target IDs, and the production SigLIP2 pair probability. Reference

@@ -7,8 +7,13 @@
 코드는 이미 GitHub의 `elice_backup` 브랜치에 백업되어 있다.
 
 - 원격 브랜치: `origin/elice_backup`
-- 백업 커밋: `f4c35507c4409553d986879ed1c670a49be27e81`
-- 관련 테스트: 70 passed
+- ZIP 내부 코드 기준: `6de4583fb24884b78077327e356dfd68308094e8`
+- 코드 검증: 전체 테스트 708 passed
+- 생성된 ZIP: `/home/elicer/elice-backup-20261105.zip`, 2,002,637,029 bytes
+
+실제 다운로드 파일, SHA-256, 복원 검증 결과와 checkpoint-150 재개 절차는
+[2026년 11월 5일 서버 handoff](elice-server-handoff-2026-11-05.md)를 따른다.
+아래 절차는 백업을 다시 생성할 때 사용하는 예시다.
 
 이 문서에서 다루는 대상은 Git에 들어가지 않은 생성 결과, teacher 결과, 가공
 데이터, 학습 checkpoint와 실행 로그다.
@@ -30,7 +35,8 @@
 - Critic SFT stage 1: 완료, best checkpoint는 `checkpoint-88`
 - Critic SFT stage 2: `checkpoint-150`까지 존재하며 약 1 epoch 지점
 - Critic SFT stage 3: 결과 없음
-- Pipeline manifest는 아직 `running/new_only_stage` 상태
+- Pipeline manifest는 `running/new_only_stage`로 남아 있으나, 점검 시 실행 프로세스 없음
+- 해당 표시는 2026년 9월 29일 기록이며 Stage 2 완료 manifest는 없음
 
 Stage 2가 완결 처리되지 않았으므로 adapter만 복사해서는 안 된다. 재개에 필요한
 optimizer, scheduler, RNG state와 trainer state를 포함하도록 pipeline 디렉터리 전체를
@@ -46,7 +52,8 @@ optimizer, scheduler, RNG state와 trainer state를 포함하도록 pipeline 디
 | 04 | Benchmark·generation 결과와 일반 로그 | 약 12 MB | 필수 |
 | 05 | Git bundle과 복구 메타데이터 | 수 MB | 권장 |
 
-압축 후 전체 전송량은 데이터 특성에 따라 달라지지만 수 GB 수준으로 예상한다.
+2026년 11월 5일 생성본은 ZIP 한 개로 묶었으며 약 2.00 GB다. ZIP 안에는
+4개 `.tar.gz`, Git bundle, inventory와 복원 안내 및 체크섬 목록이 들어 있다.
 
 ## 필수 묶음 1: OmniSVG 생성 및 teacher 결과
 
@@ -66,6 +73,8 @@ optimizer, scheduler, RNG state와 trainer state를 포함하도록 pipeline 디
   - 약 8 MB
 - `.work/omnisvg_critic_distill/inspections`
   - 수동 검사 자료와 snapshot
+- `.work/omnisvg_critic_distill/smoke_input`
+  - 초기 smoke 입력 2개 파일
 
 `teacher_runs/luna_critic_v3_nonblank/results.jsonl`에는 재시도 이력이 포함되어 있어
 입력 수보다 행 수가 많을 수 있다. 정상 상태이므로 수정하지 않는다.
@@ -152,6 +161,8 @@ data/processed/
 - API key, access token, SSH private key
 - `.git-credentials`
 - Hugging Face 인증 token
+- `.work/omnisvg_critic_distill/test/api_keys.txt`
+- `~/.config/gh/` 등 GitHub 인증 저장소
 
 현재 `.env`에는 `BIZROUTER_API_KEY`가 있으므로 일반 압축 파일에 포함하면 안 된다.
 새 서버에서는 별도로 재발급하거나 안전한 비밀 저장소를 통해 전달한다.
@@ -176,32 +187,33 @@ ps -ef | rg 'run_critic|train_critic|omnisvg|accelerate launch' || true
 ### 01 OmniSVG 산출물
 
 ```bash
-tar --zstd -cf "$backup_dir/01-omnisvg-generation.tar.zst" \
+tar -czf "$backup_dir/01-omnisvg-generation.tar.gz" \
   .work/omnisvg_critic_distill/inputs \
   .work/omnisvg_critic_distill/runs \
   .work/omnisvg_critic_distill/teacher_runs \
   .work/omnisvg_critic_distill/similarity \
-  .work/omnisvg_critic_distill/inspections
+  .work/omnisvg_critic_distill/inspections \
+  .work/omnisvg_critic_distill/smoke_input
 ```
 
 ### 02 Critic SFT
 
 ```bash
-tar --zstd -cf "$backup_dir/02-critic-distill-sft.tar.zst" \
+tar -czf "$backup_dir/02-critic-distill-sft.tar.gz" \
   outputs/sft/critic_distill_pipeline_main
 ```
 
 ### 03 가공 데이터
 
 ```bash
-tar --zstd -cf "$backup_dir/03-derived-datasets.tar.zst" \
-  data/processed
+tar -czf "$backup_dir/03-derived-datasets.tar.gz" \
+  data/processed data/mmsvg_sft_sample_ids_seed42_20k.tar.gz
 ```
 
 ### 04 평가 결과와 로그
 
 ```bash
-tar --zstd -cf "$backup_dir/04-evaluations-and-logs.tar.zst" \
+tar -czf "$backup_dir/04-evaluations-and-logs.tar.gz" \
   --exclude='outputs/sft' \
   outputs logs artifacts
 ```
@@ -220,9 +232,9 @@ git bundle verify "$backup_dir/05-svg-agentic-slm.bundle"
 압축 파일이 완전히 읽히는지 검사한다.
 
 ```bash
-for archive in "$backup_dir"/*.tar.zst; do
-  zstd -t "$archive"
-  tar --zstd -tf "$archive" >/dev/null
+for archive in "$backup_dir"/*.tar.gz; do
+  gzip -t "$archive"
+  tar -tzf "$archive" >/dev/null
 done
 ```
 
@@ -231,7 +243,7 @@ SHA-256 목록을 생성한다.
 ```bash
 (
   cd "$backup_dir"
-  sha256sum *.tar.zst *.bundle > SHA256SUMS
+  sha256sum *.tar.gz *.bundle > SHA256SUMS
 )
 ```
 
@@ -246,14 +258,14 @@ ls -lh "$backup_dir"
 
 ```bash
 split -b 1900M -d -a 3 \
-  "$backup_dir/ARCHIVE_NAME.tar.zst" \
-  "$backup_dir/ARCHIVE_NAME.tar.zst.part-"
+  "$backup_dir/ARCHIVE_NAME.tar.gz" \
+  "$backup_dir/ARCHIVE_NAME.tar.gz.part-"
 ```
 
 수신 장비에서 결합할 때는 다음과 같이 처리한다.
 
 ```bash
-cat ARCHIVE_NAME.tar.zst.part-* > ARCHIVE_NAME.tar.zst
+cat ARCHIVE_NAME.tar.gz.part-* > ARCHIVE_NAME.tar.gz
 ```
 
 ## 수신 장비 검증
@@ -263,9 +275,9 @@ cat ARCHIVE_NAME.tar.zst.part-* > ARCHIVE_NAME.tar.zst
 ```bash
 sha256sum -c SHA256SUMS
 
-for archive in *.tar.zst; do
-  zstd -t "$archive"
-  tar --zstd -tf "$archive" >/dev/null
+for archive in *.tar.gz; do
+  gzip -t "$archive"
+  tar -tzf "$archive" >/dev/null
 done
 
 git bundle verify 05-svg-agentic-slm.bundle
@@ -275,7 +287,7 @@ git bundle verify 05-svg-agentic-slm.bundle
 
 ```bash
 mkdir restore-test
-tar --zstd -xf 02-critic-distill-sft.tar.zst -C restore-test
+tar -xzf 02-critic-distill-sft.tar.gz -C restore-test
 
 test -f restore-test/outputs/sft/critic_distill_pipeline_main/\
 stages/02_new_only_1epoch/output/checkpoints/checkpoint-150/adapter_model.safetensors
@@ -290,7 +302,7 @@ test -f restore-test/outputs/sft/critic_distill_pipeline_main/pipeline_manifest.
 
 - `01`~`05` 파일이 수신 장비에 존재한다.
 - 수신 장비의 `sha256sum -c SHA256SUMS`가 모두 성공한다.
-- 모든 `.tar.zst`가 `zstd -t` 및 archive listing 검사를 통과한다.
+- 모든 `.tar.gz`가 `gzip -t` 및 archive listing 검사를 통과한다.
 - Git bundle 검증이 성공한다.
 - `checkpoint-150`의 adapter, optimizer, trainer state를 복원할 수 있다.
 - OmniSVG `full_10k/results.jsonl`, teacher `results.jsonl`, similarity
