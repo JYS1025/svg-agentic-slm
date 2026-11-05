@@ -18,7 +18,10 @@ from typing import Any
 
 import yaml
 
-from svg_agentic_slm.train.critic_distill_data import prepare_critic_distill_dataset
+from svg_agentic_slm.train.critic_distill_data import (
+    _validate_candidate_hash_split_disjointness,
+    prepare_critic_distill_dataset,
+)
 from svg_agentic_slm.train.critic_similarity_data import precompute_critic_similarity
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -81,6 +84,26 @@ def _load_snapshot(path: Path) -> dict[str, list[dict[str, Any]]]:
     }
 
 
+def _copy_initial_snapshot(source: Path, destination: Path) -> None:
+    """Publish the completion manifest only after every copied split is verified."""
+    manifest = json.loads((source / "manifest.json").read_text())
+    if "similarity_contract" not in manifest:
+        raise ValueError("Initial snapshot does not contain production SigLIP2 evidence.")
+    splits = ("train", "validation", "test")
+    expected_hashes = {split: manifest["split_sha256"][split] for split in splits}
+    destination.mkdir(parents=True, exist_ok=True)
+    for split, expected in expected_hashes.items():
+        temporary = destination / f".{split}.{os.getpid()}.tmp"
+        try:
+            shutil.copy2(source / f"{split}.jsonl", temporary)
+            if _sha256(temporary) != expected:
+                raise ValueError(f"Initial snapshot changed while being copied: {split}")
+            os.replace(temporary, destination / f"{split}.jsonl")
+        finally:
+            temporary.unlink(missing_ok=True)
+    _atomic_json(destination / "manifest.json", manifest)
+
+
 def _assemble_stable_snapshots(
     *, initial_dir: Path, final_raw_dir: Path, delta_dir: Path, full_dir: Path
 ) -> dict[str, Any]:
@@ -121,6 +144,21 @@ def _assemble_stable_snapshots(
             "kind": "initial_train_plus_all_new_with_fixed_initial_holdouts",
         },
     }
+    # New candidates may belong to a held-out input or repeat a held-out SVG.
+    # Check the assembled layouts before writing any completion manifests.
+    for layout in layouts.values():
+        split_rows = {split: layout[split] for split in ("train", "validation", "test")}
+        _validate_candidate_hash_split_disjointness(split_rows)
+        owners: dict[str, str] = {}
+        for split, rows in split_rows.items():
+            for row in rows:
+                sample_id = row["sample_id"]
+                owner = owners.setdefault(sample_id, split)
+                if owner != split:
+                    raise ValueError(
+                        f"Sample ID crosses dataset split boundaries: {sample_id} "
+                        f"({owner}/{split})"
+                    )
     manifests = {}
     for destination, layout in layouts.items():
         destination.mkdir(parents=True, exist_ok=True)
@@ -399,21 +437,7 @@ def run_pipeline(args: argparse.Namespace) -> dict[str, Any]:
         if not (initial / "manifest.json").exists():
             source_snapshot = args.initial_snapshot.resolve()
             if (source_snapshot / "manifest.json").exists():
-                source_snapshot_manifest = json.loads(
-                    (source_snapshot / "manifest.json").read_text()
-                )
-                if "similarity_contract" not in source_snapshot_manifest:
-                    raise ValueError(
-                        "Initial snapshot does not contain production SigLIP2 evidence."
-                    )
-                initial.mkdir(parents=True)
-                for name in ("train.jsonl", "validation.jsonl", "test.jsonl", "manifest.json"):
-                    shutil.copy2(source_snapshot / name, initial / name)
-                for split, expected in source_snapshot_manifest["split_sha256"].items():
-                    if _sha256(initial / f"{split}.jsonl") != expected:
-                        raise ValueError(
-                            f"Initial snapshot changed while being copied: {split}"
-                        )
+                _copy_initial_snapshot(source_snapshot, initial)
                 _append_event(
                     events_path,
                     "initial_snapshot_copied",

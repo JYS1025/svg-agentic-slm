@@ -335,8 +335,15 @@ def test_composite_critic_validates_each_child_before_aggregation() -> None:
         critic.critique("Draw a circle.", "<svg/>")
 
 
-def test_generate_command_persists_svg_and_metadata(tmp_path: Path) -> None:
+@pytest.mark.parametrize("dirty", [False, True])
+def test_generate_command_persists_svg_and_metadata(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, dirty: bool
+) -> None:
     """The generate CLI should run the orchestrator and save output artifacts."""
+    git_provenance = {"sha": "a" * 40, "dirty": dirty}
+    monkeypatch.setattr(
+        "svg_agentic_slm.artifacts.writer._git_provenance", lambda: git_provenance
+    )
     output_dir = tmp_path / "outputs" / "generations"
     _write_generation_config_bundle(tmp_path, output_dir)
 
@@ -390,8 +397,7 @@ def test_generate_command_persists_svg_and_metadata(tmp_path: Path) -> None:
     assert model_call["generation_parameters"]["max_new_tokens"] == 128
     assert metadata["critic_feedback"][0]["target_attempt_id"] == attempt["attempt_id"]
     provenance = metadata["provenance"]
-    assert len(provenance["git"]["sha"]) == 40
-    assert provenance["git"]["dirty"] is True
+    assert provenance["git"] == git_provenance
     assert isinstance(provenance["execution_command"], list)
     assert set(provenance["config_sha256"]) == {
         "generation",
